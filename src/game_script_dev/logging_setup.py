@@ -13,7 +13,10 @@ class RunPaths:
     run_log: Path
 
 
-def create_run_logger(log_root: Path, profile_name: str) -> tuple[logging.Logger, RunPaths]:
+def create_run_logger(
+    log_root: Path,
+    profile_name: str,
+) -> tuple[logging.Logger, RunPaths]:
     now = datetime.now()
     day_dir = log_root / now.strftime("%Y-%m-%d")
     day_dir.mkdir(parents=True, exist_ok=True)

@@ -152,10 +152,23 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
                 f"state '{state.name}' on_success references unknown state "
                 f"'{state.on_success}'"
             )
+        if (
+            state.on_failure != "graceful_termination"
+            and state.on_failure not in profile.states
+        ):
+            errors.append(
+                f"state '{state.name}' on_failure references unknown state "
+                f"'{state.on_failure}'"
+            )
 
     for interruption in profile.interruptions:
         _validate_anchors(interruption.required_anchors, profile_dir, errors)
-        _validate_actions(interruption.recovery_actions, profile.states, profile_dir, errors)
+        _validate_actions(
+            interruption.recovery_actions,
+            profile.states,
+            profile_dir,
+            errors,
+        )
 
     if errors:
         raise ProfileValidationError("; ".join(errors))
@@ -218,7 +231,12 @@ def _actions_from_list(raw: Any) -> list[Action]:
         if not isinstance(item, dict):
             raise ValueError("action must be a mapping")
         action_type = _string(item, "type")
-        actions.append(Action(type=action_type, data={k: v for k, v in item.items() if k != "type"}))
+        actions.append(
+            Action(
+                type=action_type,
+                data={k: v for k, v in item.items() if k != "type"},
+            )
+        )
     return actions
 
 

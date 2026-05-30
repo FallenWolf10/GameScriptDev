@@ -32,7 +32,10 @@ class ActionRunner:
         action: Action,
         screenshot: Screenshot,
     ) -> None:
-        self.runtime.input_adapter.click_template(str(action.data["target"]), screenshot)
+        self.runtime.input_adapter.click_template(
+            str(action.data["target"]),
+            screenshot,
+        )
         return None
 
     def _execute_click_point(self, action: Action, screenshot: Screenshot) -> None:
