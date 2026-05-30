@@ -70,3 +70,7 @@ logs/YYYY-MM-DD/
 ## Live Mode
 
 Live mode is explicit and requires confirmation before it can control the desktop. In this skeleton, live `wait` and limited keyboard actions are enabled, while pointer actions still stop safely before sending input.
+
+## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the required next work, including the local web dashboard and game profile expansion requirements.

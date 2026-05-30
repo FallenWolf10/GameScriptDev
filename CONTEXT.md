@@ -6,6 +6,10 @@
 
 A user-operated tool that automates repetitive UI actions on the user's local machine for approved, non-competitive, ToS-compliant tasks. It does not bypass anti-cheat systems, evade detection, farm accounts, automate monetized grinding, or perform stealth behavior.
 
+### Local Web Dashboard
+
+A browser-based control surface hosted on the user's local machine for managing profiles, validation, dry runs, live-run confirmation, run logs, and artifacts without turning the runner into a cloud service.
+
 ### Robust Input Variation
 
 Small coordinate and timing variation used to reduce brittle exact-pixel assumptions in UI automation. It is not anti-detection or evasion behavior.
