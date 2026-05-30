@@ -12,16 +12,19 @@ This repository currently contains the v1 skeleton:
 - explicit state graph execution
 - dry-run action simulation
 - split runtime adapter boundaries
+- Pillow-based template matching utility
 - terminal states
 - daily log folders
 - demo profile
 
-Live input, template matching, OCR, and target window control are intentionally adapter-shaped but not implemented yet. The current adapter boundaries are:
+Live input, OCR, and target window control are intentionally adapter-shaped but not implemented yet. The current adapter boundaries are:
 
 - `WindowAdapter`
 - `ScreenAdapter`
 - `VisionAdapter`
 - `InputAdapter`
+
+The first concrete vision implementation uses Pillow and NumPy for small, testable template matching. It can be replaced by OpenCV later if performance or matching tolerance needs increase.
 
 ## Run The Demo
 

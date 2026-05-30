@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Profile-driven local automation runner for repetitive game UI workflows."
 requires-python = ">=3.11"
 dependencies = [
+    "numpy>=2.0",
+    "Pillow>=10.0",
     "PyYAML>=6.0",
 ]
 
