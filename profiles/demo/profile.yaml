@@ -1,0 +1,67 @@
+version: 1
+name: Demo Profile
+
+target:
+  process_name: demo.exe
+  window_title_contains: Demo Automation Window
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: verify_only
+
+execution:
+  default_timeout_seconds: 30
+  max_retries: 3
+
+initial_state: home_screen
+
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: log
+        message: Demo starts from the home screen.
+      - type: click_point
+        region: daily_button
+      - type: wait_for_state
+        state: daily_menu
+    on_success: daily_menu
+
+  daily_menu:
+    required_anchors:
+      - name: daily_menu_title
+        type: text
+        text: Daily Tasks
+    actions:
+      - type: press_key
+        key: F
+      - type: hold_key
+        key: W
+        seconds: 2
+      - type: wait_for_state
+        state: completion_popup
+    on_success: completion_popup
+
+  completion_popup:
+    required_anchors:
+      - name: completion_title
+        type: text
+        text: All Tasks Completed
+    terminal: true
+    result: success
+
+interruptions:
+  - name: network_disconnect
+    required_anchors:
+      - name: disconnect_message
+        type: text
+        text: Network disconnected
+    recovery_actions:
+      - type: log
+        message: Would close the disconnect popup in live mode.
+    max_retries: 1

@@ -1,0 +1,17 @@
+[project]
+name = "game-script-dev"
+version = "0.1.0"
+description = "Profile-driven local automation runner for repetitive game UI workflows."
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+game-script-dev = "game_script_dev.cli:main"
+
+[tool.ruff]
+line-length = 88
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
