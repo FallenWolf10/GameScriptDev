@@ -137,6 +137,11 @@ class KeyboardSender(Protocol):
         """Send a key-up event."""
 
 
+class FocusVerifier(Protocol):
+    def is_foreground(self, window: TargetWindow) -> bool:
+        """Return whether the target window is currently foreground."""
+
+
 class LiveScreenAdapter:
     def __init__(
         self,
@@ -193,11 +198,15 @@ class LiveVisionAdapter:
 class LiveInputAdapter:
     def __init__(
         self,
+        target_window: TargetWindow | None = None,
         sender: KeyboardSender | None = None,
+        focus_verifier: FocusVerifier | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         max_wait_seconds: float = 60.0,
     ) -> None:
+        self.target_window = target_window
         self.sender = sender
+        self.focus_verifier = focus_verifier
         self.sleeper = sleeper
         self.max_wait_seconds = max_wait_seconds
 
@@ -209,6 +218,7 @@ class LiveInputAdapter:
 
     def press_key(self, key: str) -> None:
         virtual_key = _normalize_key(key)
+        self._verify_foreground()
         sender = self._keyboard_sender()
         sender.key_down(virtual_key)
         sender.key_up(virtual_key)
@@ -216,6 +226,7 @@ class LiveInputAdapter:
     def hold_key(self, key: str, seconds: float) -> None:
         virtual_key = _normalize_key(key)
         self._validate_duration(seconds, "live key hold")
+        self._verify_foreground()
         sender = self._keyboard_sender()
         sender.key_down(virtual_key)
         try:
@@ -240,6 +251,28 @@ class LiveInputAdapter:
             return self.sender
         self.sender = Win32KeyboardSender.create()
         return self.sender
+
+    def _verify_foreground(self) -> None:
+        if self.target_window is None:
+            raise LiveAdaptersUnavailable(
+                "live keyboard input requires target window context"
+            )
+        if self.target_window.handle is None:
+            raise LiveAdaptersUnavailable(
+                "live keyboard input requires a target window handle"
+            )
+
+        verifier = self._focus_verifier()
+        if not verifier.is_foreground(self.target_window):
+            raise LiveAdaptersUnavailable(
+                "target window is not foreground; refusing live keyboard input"
+            )
+
+    def _focus_verifier(self) -> FocusVerifier:
+        if self.focus_verifier is not None:
+            return self.focus_verifier
+        self.focus_verifier = Win32FocusVerifier.create()
+        return self.focus_verifier
 
 
 class _KeyboardInput(ctypes.Structure):
@@ -337,6 +370,33 @@ class Win32KeyboardSender:
             if error_code:
                 raise ctypes.WinError(error_code)
             raise LiveAdaptersUnavailable("Win32 SendInput did not send keyboard input")
+
+
+class Win32FocusVerifier:
+    def __init__(self, user32: ctypes.WinDLL) -> None:
+        self.user32 = user32
+
+    @classmethod
+    def create(cls) -> Win32FocusVerifier:
+        if not hasattr(ctypes, "WinDLL"):
+            raise LiveAdaptersUnavailable("live focus verification requires Windows")
+
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            get_foreground_window = user32.GetForegroundWindow
+        except (AttributeError, OSError) as error:
+            raise LiveAdaptersUnavailable(
+                "live focus verification requires Win32 foreground APIs"
+            ) from error
+
+        get_foreground_window.argtypes = []
+        get_foreground_window.restype = wintypes.HWND
+        return cls(user32)
+
+    def is_foreground(self, window: TargetWindow) -> bool:
+        if window.handle is None:
+            return False
+        return int(self.user32.GetForegroundWindow()) == int(window.handle)
 
 
 def _normalize_key(key: str) -> int:

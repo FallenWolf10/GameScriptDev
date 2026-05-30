@@ -9,6 +9,18 @@ from game_script_dev.adapters.live import (
     LiveInputAdapter,
     Win32KeyboardSender,
 )
+from game_script_dev.adapters.base import TargetWindow
+
+
+TARGET_WINDOW = TargetWindow(
+    title="test",
+    process_name="test.exe",
+    left=0,
+    top=0,
+    width=1280,
+    height=720,
+    handle=100,
+)
 
 
 class FakeKeyboardSender:
@@ -22,18 +34,38 @@ class FakeKeyboardSender:
         self.events.append(("up", virtual_key))
 
 
+class FakeFocusVerifier:
+    def __init__(self, is_foreground: bool = True) -> None:
+        self.is_foreground_result = is_foreground
+        self.checked_windows: list[TargetWindow] = []
+
+    def is_foreground(self, window: TargetWindow) -> bool:
+        self.checked_windows.append(window)
+        return self.is_foreground_result
+
+
 class LiveInputAdapterTests(unittest.TestCase):
     def test_press_key_sends_down_then_up_for_allowed_key(self) -> None:
         sender = FakeKeyboardSender()
-        adapter = LiveInputAdapter(sender=sender)
+        focus = FakeFocusVerifier()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=focus,
+        )
 
         adapter.press_key("enter")
 
         self.assertEqual(sender.events, [("down", 0x0D), ("up", 0x0D)])
+        self.assertEqual(focus.checked_windows, [TARGET_WINDOW])
 
     def test_press_key_normalizes_single_letter_keys(self) -> None:
         sender = FakeKeyboardSender()
-        adapter = LiveInputAdapter(sender=sender)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+        )
 
         adapter.press_key(" w ")
 
@@ -48,8 +80,36 @@ class LiveInputAdapterTests(unittest.TestCase):
 
         self.assertEqual(sender.events, [])
 
+    def test_press_key_rejects_missing_target_context_before_sending(self) -> None:
+        sender = FakeKeyboardSender()
+        adapter = LiveInputAdapter(
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+        )
+
+        with self.assertRaises(LiveAdaptersUnavailable):
+            adapter.press_key("enter")
+
+        self.assertEqual(sender.events, [])
+
+    def test_press_key_rejects_non_foreground_target_before_sending(self) -> None:
+        sender = FakeKeyboardSender()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+        )
+
+        with self.assertRaises(LiveAdaptersUnavailable):
+            adapter.press_key("enter")
+
+        self.assertEqual(sender.events, [])
+
     def test_press_key_without_sender_fails_closed_when_win32_unavailable(self) -> None:
-        adapter = LiveInputAdapter()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            focus_verifier=FakeFocusVerifier(),
+        )
 
         with patch.object(
             Win32KeyboardSender,
@@ -62,7 +122,12 @@ class LiveInputAdapterTests(unittest.TestCase):
     def test_hold_key_sends_up_after_sleep(self) -> None:
         sender = FakeKeyboardSender()
         slept: list[float] = []
-        adapter = LiveInputAdapter(sender=sender, sleeper=slept.append)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            sleeper=slept.append,
+        )
 
         adapter.hold_key("space", 1.25)
 
@@ -75,7 +140,12 @@ class LiveInputAdapterTests(unittest.TestCase):
         def failing_sleep(seconds: float) -> None:
             raise RuntimeError(f"sleep failed at {seconds}")
 
-        adapter = LiveInputAdapter(sender=sender, sleeper=failing_sleep)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            sleeper=failing_sleep,
+        )
 
         with self.assertRaises(RuntimeError):
             adapter.hold_key("left", 0.5)
@@ -86,7 +156,9 @@ class LiveInputAdapterTests(unittest.TestCase):
         sender = FakeKeyboardSender()
         slept: list[float] = []
         adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
             sender=sender,
+            focus_verifier=FakeFocusVerifier(),
             sleeper=slept.append,
             max_wait_seconds=2,
         )

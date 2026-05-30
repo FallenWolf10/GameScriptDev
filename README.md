@@ -21,6 +21,7 @@ This repository currently contains the v1 skeleton:
 - bounded live waits for expected states
 - bounded live wait actions
 - limited live keyboard press and hold actions
+- foreground target-window verification before live keyboard input
 - terminal states
 - daily log folders
 - demo profile
@@ -38,7 +39,7 @@ State execution failures retry the current state up to the profile `max_retries`
 
 Profiles define click coordinates as named regions, then actions reference those names. This keeps coordinate data centralized and lets validation catch missing or misspelled regions before a run starts.
 
-Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Live `wait` actions and a limited allowlist of keyboard press/hold actions are available with bounded duration guards; live OCR and pointer input are still intentionally unavailable.
+Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Live `wait` actions and a limited allowlist of keyboard press/hold actions are available with bounded duration guards. Keyboard input is refused unless the matched target window is currently foreground; live OCR and pointer input are still intentionally unavailable.
 
 In live mode, `wait_for_state` is a bounded polling loop over screen capture and anchor detection. It uses the profile default timeout unless the action supplies `timeout_seconds`, and supports `poll_interval_seconds` for tuning.
 
