@@ -33,6 +33,13 @@ $env:PYTHONPATH = "src"
 python -m game_script_dev --profile profiles/demo/profile.yaml
 ```
 
+Validate a profile without running it:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_script_dev --profile profiles/demo/profile.yaml --validate-only
+```
+
 Logs are written under:
 
 ```text

@@ -32,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip live-mode confirmation. Has no effect in dry-run mode.",
     )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate the profile and exit without running the workflow.",
+    )
     return parser
 
 
@@ -45,6 +50,10 @@ def main(argv: list[str] | None = None) -> int:
     except (ProfileLoadError, ProfileValidationError) as error:
         print(f"Profile error: {error}", file=sys.stderr)
         return 2
+
+    if args.validate_only:
+        print(f"Profile is valid: {profile.name}")
+        return 0
 
     logger, run_paths = create_run_logger(Path("logs"), profile.name)
     logger.info("Starting profile '%s' in %s mode", profile.name, args.mode)
