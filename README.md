@@ -11,11 +11,17 @@ This repository currently contains the v1 skeleton:
 - strict profile loading and validation
 - explicit state graph execution
 - dry-run action simulation
+- split runtime adapter boundaries
 - terminal states
 - daily log folders
 - demo profile
 
-Live input, template matching, OCR, and target window control are intentionally adapter-shaped but not implemented yet.
+Live input, template matching, OCR, and target window control are intentionally adapter-shaped but not implemented yet. The current adapter boundaries are:
+
+- `WindowAdapter`
+- `ScreenAdapter`
+- `VisionAdapter`
+- `InputAdapter`
 
 ## Run The Demo
 

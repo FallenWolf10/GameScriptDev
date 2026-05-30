@@ -98,6 +98,26 @@ An explicit execution mode that can focus windows, capture screenshots, move the
 
 A required operator confirmation before live mode sends the first mouse or keyboard input to the target application.
 
+### Runtime Adapter
+
+A boundary between the state-machine runner and an external desktop capability such as window control, screen capture, visual detection, or input.
+
+### Window Adapter
+
+The runtime adapter responsible for finding, focusing, and preparing the target application window.
+
+### Screen Adapter
+
+The runtime adapter responsible for capturing the target window or screen.
+
+### Vision Adapter
+
+The runtime adapter responsible for detecting anchors and locating visual targets in screenshots.
+
+### Input Adapter
+
+The runtime adapter responsible for sending mouse and keyboard input.
+
 ### Strict Profile Schema
 
 A profile contract that must pass validation before execution begins. Unknown action types, missing required fields, invalid transitions, or unresolved assets prevent both dry run and live mode execution.
