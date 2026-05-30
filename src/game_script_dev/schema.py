@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,24 @@ SUPPORTED_ACTION_TYPES = {
     "wait",
     "log",
     "stop",
+}
+SUPPORTED_KEY_NAMES = {
+    *{chr(code).lower() for code in range(ord("A"), ord("Z") + 1)},
+    *{str(number) for number in range(10)},
+    "alt",
+    "backspace",
+    "control",
+    "ctrl",
+    "down",
+    "enter",
+    "esc",
+    "escape",
+    "left",
+    "right",
+    "shift",
+    "space",
+    "tab",
+    "up",
 }
 
 
@@ -150,6 +169,12 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
 
     if profile.resolution.policy not in {"verify_only", "attempt_resize", "ignore"}:
         errors.append(f"unknown resolution policy: {profile.resolution.policy}")
+
+    _validate_duration(
+        profile.default_timeout_seconds,
+        "execution default_timeout_seconds",
+        errors,
+    )
 
     if profile.initial_state not in profile.states:
         errors.append(f"initial_state is missing from states: {profile.initial_state}")
@@ -309,6 +334,18 @@ def _validate_actions(
             state_name = action.data.get("state")
             if state_name not in states:
                 errors.append(f"wait_for_state references unknown state '{state_name}'")
+            if "timeout_seconds" in action.data:
+                _validate_duration(
+                    action.data["timeout_seconds"],
+                    "wait_for_state timeout_seconds",
+                    errors,
+                )
+            if "poll_interval_seconds" in action.data:
+                _validate_duration(
+                    action.data["poll_interval_seconds"],
+                    "wait_for_state poll_interval_seconds",
+                    errors,
+                )
         if action.type in {"click_template"}:
             target = action.data.get("target")
             if not target:
@@ -321,10 +358,39 @@ def _validate_actions(
                 errors.append("click_point must define region")
             elif region not in regions:
                 errors.append(f"click_point references unknown region '{region}'")
-        if action.type in {"press_key", "hold_key"} and "key" not in action.data:
-            errors.append(f"{action.type} must define key")
-        if action.type == "wait" and "seconds" not in action.data:
-            errors.append("wait must define seconds")
+        if action.type in {"press_key", "hold_key"}:
+            if "key" not in action.data:
+                errors.append(f"{action.type} must define key")
+            else:
+                _validate_key(action.data["key"], action.type, errors)
+        if action.type == "hold_key" and "seconds" in action.data:
+            _validate_duration(action.data["seconds"], "hold_key seconds", errors)
+        if action.type == "wait":
+            if "seconds" not in action.data:
+                errors.append("wait must define seconds")
+            else:
+                _validate_duration(action.data["seconds"], "wait seconds", errors)
+
+
+def _validate_duration(value: object, label: str, errors: list[str]) -> None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        errors.append(f"{label} must be a number")
+        return
+
+    if not math.isfinite(seconds) or seconds < 0:
+        errors.append(f"{label} must be a finite non-negative number")
+
+
+def _validate_key(value: object, action_type: str, errors: list[str]) -> None:
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{action_type} key must be a non-empty string")
+        return
+
+    normalized = value.strip().lower()
+    if normalized not in SUPPORTED_KEY_NAMES:
+        errors.append(f"{action_type} uses unsupported key '{value}'")
 
 
 def _mapping(raw: dict[str, Any], key: str) -> dict[str, Any]:

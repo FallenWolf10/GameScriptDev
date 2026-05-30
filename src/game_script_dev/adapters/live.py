@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import math
+import time
 from ctypes import wintypes
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from PIL import Image
 from PIL import ImageGrab
@@ -14,6 +16,30 @@ from PIL import ImageGrab
 from game_script_dev.adapters.base import Screenshot, TargetWindow
 from game_script_dev.adapters.pillow_vision import PillowVisionAdapter
 from game_script_dev.schema import Anchor, Profile, Resolution
+
+
+INPUT_KEYBOARD = 1
+KEYEVENTF_KEYUP = 0x0002
+ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
+
+KEY_CODES: dict[str, int] = {
+    **{chr(code).lower(): code for code in range(ord("A"), ord("Z") + 1)},
+    **{str(number): ord(str(number)) for number in range(10)},
+    "backspace": 0x08,
+    "tab": 0x09,
+    "enter": 0x0D,
+    "shift": 0x10,
+    "ctrl": 0x11,
+    "control": 0x11,
+    "alt": 0x12,
+    "escape": 0x1B,
+    "esc": 0x1B,
+    "space": 0x20,
+    "left": 0x25,
+    "up": 0x26,
+    "right": 0x27,
+    "down": 0x28,
+}
 
 
 class LiveAdaptersUnavailable(Exception):
@@ -103,6 +129,14 @@ class ImageGrabber(Protocol):
         """Capture an image for the given screen bounding box."""
 
 
+class KeyboardSender(Protocol):
+    def key_down(self, virtual_key: int) -> None:
+        """Send a key-down event."""
+
+    def key_up(self, virtual_key: int) -> None:
+        """Send a key-up event."""
+
+
 class LiveScreenAdapter:
     def __init__(
         self,
@@ -157,20 +191,160 @@ class LiveVisionAdapter:
 
 
 class LiveInputAdapter:
+    def __init__(
+        self,
+        sender: KeyboardSender | None = None,
+        sleeper: Callable[[float], None] = time.sleep,
+        max_wait_seconds: float = 60.0,
+    ) -> None:
+        self.sender = sender
+        self.sleeper = sleeper
+        self.max_wait_seconds = max_wait_seconds
+
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
-        raise LiveAdaptersUnavailable("live input is not implemented yet")
+        raise LiveAdaptersUnavailable("live mouse input is not implemented yet")
 
     def click_region(self, region_name: str) -> None:
-        raise LiveAdaptersUnavailable("live input is not implemented yet")
+        raise LiveAdaptersUnavailable("live mouse input is not implemented yet")
 
     def press_key(self, key: str) -> None:
-        raise LiveAdaptersUnavailable("live input is not implemented yet")
+        virtual_key = _normalize_key(key)
+        sender = self._keyboard_sender()
+        sender.key_down(virtual_key)
+        sender.key_up(virtual_key)
 
     def hold_key(self, key: str, seconds: float) -> None:
-        raise LiveAdaptersUnavailable("live input is not implemented yet")
+        virtual_key = _normalize_key(key)
+        self._validate_duration(seconds, "live key hold")
+        sender = self._keyboard_sender()
+        sender.key_down(virtual_key)
+        try:
+            self.sleeper(seconds)
+        finally:
+            sender.key_up(virtual_key)
 
     def wait(self, seconds: float) -> None:
-        raise LiveAdaptersUnavailable("live wait is not implemented yet")
+        self._validate_duration(seconds, "live wait")
+        self.sleeper(seconds)
+
+    def _validate_duration(self, seconds: float, label: str) -> None:
+        if not math.isfinite(seconds) or seconds < 0:
+            raise ValueError(f"{label} duration must be a finite non-negative number")
+        if seconds > self.max_wait_seconds:
+            raise ValueError(
+                f"{label} duration exceeds maximum of {self.max_wait_seconds} seconds"
+            )
+
+    def _keyboard_sender(self) -> KeyboardSender:
+        if self.sender is not None:
+            return self.sender
+        self.sender = Win32KeyboardSender.create()
+        return self.sender
+
+
+class _KeyboardInput(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class _MouseInput(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class _HardwareInput(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
+class _InputUnion(ctypes.Union):
+    _fields_ = [
+        ("ki", _KeyboardInput),
+        ("mi", _MouseInput),
+        ("hi", _HardwareInput),
+    ]
+
+
+class _Input(ctypes.Structure):
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("union", _InputUnion),
+    ]
+
+
+class Win32KeyboardSender:
+    def __init__(self, user32: ctypes.WinDLL) -> None:
+        self.user32 = user32
+
+    @classmethod
+    def create(cls) -> Win32KeyboardSender:
+        if not hasattr(ctypes, "WinDLL"):
+            raise LiveAdaptersUnavailable("live keyboard input requires Windows")
+
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            send_input = user32.SendInput
+        except (AttributeError, OSError) as error:
+            raise LiveAdaptersUnavailable(
+                "live keyboard input requires Win32 SendInput"
+            ) from error
+
+        send_input.argtypes = [
+            wintypes.UINT,
+            ctypes.POINTER(_Input),
+            ctypes.c_int,
+        ]
+        send_input.restype = wintypes.UINT
+        return cls(user32)
+
+    def key_down(self, virtual_key: int) -> None:
+        self._send_key(virtual_key, flags=0)
+
+    def key_up(self, virtual_key: int) -> None:
+        self._send_key(virtual_key, flags=KEYEVENTF_KEYUP)
+
+    def _send_key(self, virtual_key: int, flags: int) -> None:
+        event = _Input(
+            type=INPUT_KEYBOARD,
+            union=_InputUnion(
+                ki=_KeyboardInput(
+                    wVk=virtual_key,
+                    wScan=0,
+                    dwFlags=flags,
+                    time=0,
+                    dwExtraInfo=0,
+                )
+            ),
+        )
+        ctypes.set_last_error(0)
+        sent = self.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event))
+        if sent != 1:
+            error_code = ctypes.get_last_error()
+            if error_code:
+                raise ctypes.WinError(error_code)
+            raise LiveAdaptersUnavailable("Win32 SendInput did not send keyboard input")
+
+
+def _normalize_key(key: str) -> int:
+    normalized = key.strip().lower()
+    if normalized not in KEY_CODES:
+        allowed = ", ".join(sorted(KEY_CODES))
+        raise ValueError(f"unsupported live key '{key}'; allowed keys: {allowed}")
+    return KEY_CODES[normalized]
 
 
 def find_matching_window(
