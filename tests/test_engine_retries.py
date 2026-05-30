@@ -6,7 +6,15 @@ import unittest
 from game_script_dev.adapters.base import Screenshot, TargetWindow
 from game_script_dev.engine import Engine
 from game_script_dev.runtime import RuntimeContext
-from game_script_dev.schema import Anchor, Profile, Resolution, State, Target
+from game_script_dev.schema import (
+    Action,
+    Anchor,
+    Interruption,
+    Profile,
+    Resolution,
+    State,
+    Target,
+)
 
 
 class StaticWindowAdapter:
@@ -23,6 +31,9 @@ class StaticScreenAdapter:
 
 
 class StaticInputAdapter:
+    def __init__(self) -> None:
+        self.wait_count = 0
+
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         return None
 
@@ -36,6 +47,7 @@ class StaticInputAdapter:
         return None
 
     def wait(self, seconds: float) -> None:
+        self.wait_count += 1
         return None
 
 
@@ -66,6 +78,19 @@ def runtime_with_anchors(
         vision_adapter=StaticVisionAdapter(present_anchor_names),
         input_adapter=StaticInputAdapter(),
     )
+
+
+def runtime_factory_with_runtime(runtime: RuntimeContext):
+    def factory(
+        _profile: Profile,
+        _mode: str,
+        _logger: logging.Logger,
+        _artifact_dir: object,
+        _profile_dir: object,
+    ) -> RuntimeContext:
+        return runtime
+
+    return factory
 
 
 def runtime_factory_with_anchors(present_anchor_names: set[str]):
@@ -186,6 +211,54 @@ class EngineRetryTests(unittest.TestCase):
         ).run()
 
         self.assertEqual(result, "failed_home")
+
+    def test_interruption_recovery_stops_after_retry_limit(self) -> None:
+        input_adapter = StaticInputAdapter()
+        runtime = RuntimeContext(
+            mode="live",
+            window=TargetWindow("test", "test.exe", 0, 0, 1280, 720),
+            window_adapter=StaticWindowAdapter(),
+            screen_adapter=StaticScreenAdapter(),
+            vision_adapter=StaticVisionAdapter({"home_title", "popup"}),
+            input_adapter=input_adapter,
+        )
+        profile = Profile(
+            version=1,
+            name="Interruption Profile",
+            target=Target(process_name="test.exe"),
+            resolution=Resolution(width=1280, height=720),
+            initial_state="home",
+            max_retries=1,
+            states={
+                "home": State(
+                    name="home",
+                    required_anchors=[
+                        Anchor(name="home_title", type="text", text="Home")
+                    ],
+                    on_success="home",
+                ),
+            },
+            interruptions=[
+                Interruption(
+                    name="popup",
+                    required_anchors=[
+                        Anchor(name="popup", type="text", text="Popup")
+                    ],
+                    recovery_actions=[Action(type="wait", data={"seconds": 0})],
+                    max_retries=1,
+                )
+            ],
+        )
+
+        result = Engine(
+            profile=profile,
+            mode="live",
+            logger=logger(),
+            runtime_factory=runtime_factory_with_runtime(runtime),
+        ).run()
+
+        self.assertEqual(result, "failed_home")
+        self.assertEqual(input_adapter.wait_count, 1)
 
 
 if __name__ == "__main__":

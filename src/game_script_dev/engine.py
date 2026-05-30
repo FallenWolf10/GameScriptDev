@@ -59,11 +59,12 @@ class Engine:
         current_state = self.profile.initial_state
         max_steps = max(1, len(self.profile.states) * (self.profile.max_retries + 2))
         failures_by_state: dict[str, int] = {}
+        interruption_attempts: dict[str, int] = {}
 
         for _ in range(max_steps):
             state = self.profile.states[current_state]
             try:
-                self._handle_interruptions(runtime, actions)
+                self._handle_interruptions(runtime, actions, interruption_attempts)
                 screenshot = runtime.screen_adapter.capture(runtime.window)
                 self._confirm_state(state, runtime, screenshot)
 
@@ -134,6 +135,7 @@ class Engine:
         self,
         runtime: RuntimeContext,
         actions: ActionRunner,
+        attempts_by_name: dict[str, int],
     ) -> None:
         if runtime.mode == "dry-run":
             self.logger.info("Dry-run global interruption scan")
@@ -142,12 +144,24 @@ class Engine:
         for interruption in self.profile.interruptions:
             screenshot = runtime.screen_adapter.capture(runtime.window)
             if self._interruption_present(interruption, runtime, screenshot):
+                attempts = attempts_by_name.get(interruption.name, 0) + 1
+                attempts_by_name[interruption.name] = attempts
+                if attempts > interruption.max_retries:
+                    raise StateExecutionError(
+                        "global interruption "
+                        f"'{interruption.name}' exceeded recovery retry limit "
+                        f"of {interruption.max_retries}"
+                    )
                 self.logger.warning(
-                    "Global interruption detected: %s",
+                    "Global interruption detected: %s attempt %s/%s",
                     interruption.name,
+                    attempts,
+                    interruption.max_retries,
                 )
                 for action in interruption.recovery_actions:
                     actions.execute(action, screenshot)
+            else:
+                attempts_by_name[interruption.name] = 0
 
     def _interruption_present(
         self,
