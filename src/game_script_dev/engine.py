@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -74,7 +75,12 @@ class Engine:
                     )
                     return result
 
-                stop_result = self._execute_state_actions(state, actions, screenshot)
+                stop_result = self._execute_state_actions(
+                    state,
+                    actions,
+                    runtime,
+                    screenshot,
+                )
                 if stop_result is not None:
                     return stop_result
 
@@ -204,10 +210,47 @@ class Engine:
         self,
         state: State,
         actions: ActionRunner,
+        runtime: RuntimeContext,
         screenshot: Screenshot,
     ) -> str | None:
         for action in state.actions:
+            if action.type == "wait_for_state" and runtime.mode != "dry-run":
+                self._wait_for_state(action.data, runtime)
+                continue
             result = actions.execute(action, screenshot)
             if action.type == "stop":
                 return result or "stopped"
         return None
+
+    def _wait_for_state(
+        self,
+        action_data: dict[str, object],
+        runtime: RuntimeContext,
+    ) -> None:
+        state_name = str(action_data["state"])
+        expected_state = self.profile.states[state_name]
+        timeout_seconds = float(
+            action_data.get("timeout_seconds", self.profile.default_timeout_seconds)
+        )
+        poll_interval_seconds = float(action_data.get("poll_interval_seconds", 0.5))
+        deadline = time.monotonic() + timeout_seconds
+
+        self.logger.info(
+            "Waiting for state '%s' for up to %s seconds",
+            state_name,
+            timeout_seconds,
+        )
+
+        while True:
+            screenshot = runtime.screen_adapter.capture(runtime.window)
+            try:
+                self._confirm_state(expected_state, runtime, screenshot)
+                self.logger.info("Wait for state succeeded: %s", state_name)
+                return
+            except StateExecutionError as error:
+                if time.monotonic() >= deadline:
+                    raise StateExecutionError(
+                        f"timed out waiting for state '{state_name}': {error}"
+                    ) from error
+                if poll_interval_seconds > 0:
+                    time.sleep(poll_interval_seconds)
