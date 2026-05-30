@@ -7,6 +7,7 @@ from pathlib import Path
 
 from game_script_dev.actions import ActionRunner
 from game_script_dev.adapters.base import Screenshot
+from game_script_dev.adapters.live import LiveAdaptersUnavailable
 from game_script_dev.runtime import RuntimeContext, create_runtime
 from game_script_dev.schema import Anchor, Interruption, Profile, State
 
@@ -121,6 +122,10 @@ class Engine:
                     state.on_failure,
                 )
                 current_state = state.on_failure
+            except LiveAdaptersUnavailable as error:
+                if runtime.mode == "live":
+                    raise LiveModeUnavailable(str(error)) from error
+                raise
 
         self.logger.error("Exceeded maximum dry-run steps: %s", max_steps)
         return "failed_max_steps"
