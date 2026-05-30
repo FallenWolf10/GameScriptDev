@@ -58,3 +58,15 @@ This roadmap captures the required next work before GameScriptDev moves from the
 ## Current Checkpoint
 
 The project currently has the base runner structure, validation, dry-run execution, live adapter boundaries, Windows target detection, screenshots, template matching, bounded waits, limited keyboard input, logs, tests, and demo profile in place. The UI and expansion work should proceed after the live-runtime safety foundation is stronger.
+
+## Source Coverage
+
+This roadmap includes the actionable requirements from the current markdown documentation:
+
+- `README.md`: current runner status, dry-run usage, live-mode limitations, logs, demo profile, OCR gap, pointer-input gap, and target-window-control gap.
+- `CONTEXT.md`: safety boundary, local automation vocabulary, local web dashboard term, profile vocabulary, live confirmation, runtime adapters, detection strategies, named regions, and graceful termination.
+- `docs/adr/0001-yaml-profiles-with-explicit-state-graphs.md`: game behavior stays in strict declarative YAML profiles with explicit state graphs.
+- `docs/adr/0002-python-runner-with-dry-run-first.md`: Python remains the runner platform and dry-run remains the default before live input is allowed.
+- `docs/adr/0003-split-live-runtime-adapters.md`: window, screen, vision, and input capabilities stay behind separate runtime adapters.
+
+Future implementation work should proceed from this roadmap while preserving those documented decisions unless a new ADR deliberately changes them.
