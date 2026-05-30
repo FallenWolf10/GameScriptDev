@@ -13,6 +13,7 @@ class TargetWindow:
     process_name: str | None
     width: int
     height: int
+    handle: int | None = None
 
 
 @dataclass(frozen=True)

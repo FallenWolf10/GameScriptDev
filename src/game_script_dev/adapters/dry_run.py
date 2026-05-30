@@ -22,6 +22,7 @@ class DryRunWindowAdapter:
             process_name=profile.target.process_name,
             width=profile.resolution.width,
             height=profile.resolution.height,
+            handle=None,
         )
 
     def prepare_window(self, window: TargetWindow, resolution: Resolution) -> None:

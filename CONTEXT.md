@@ -106,6 +106,10 @@ A boundary between the state-machine runner and an external desktop capability s
 
 The runtime adapter responsible for finding, focusing, and preparing the target application window.
 
+### Target Window Detection
+
+The process of finding the target application's visible window by comparing the profile's target identity against live operating-system windows.
+
 ### Screen Adapter
 
 The runtime adapter responsible for capturing the target window or screen.

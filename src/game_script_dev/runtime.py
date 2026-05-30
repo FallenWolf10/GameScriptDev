@@ -16,7 +16,10 @@ from game_script_dev.adapters.dry_run import (
     DryRunVisionAdapter,
     DryRunWindowAdapter,
 )
-from game_script_dev.adapters.live import LiveAdaptersUnavailable
+from game_script_dev.adapters.live import LiveInputAdapter
+from game_script_dev.adapters.live import LiveScreenAdapter
+from game_script_dev.adapters.live import LiveVisionAdapter
+from game_script_dev.adapters.live import WindowsWindowAdapter
 from game_script_dev.schema import Profile
 
 
@@ -36,15 +39,15 @@ def create_runtime(
     logger: logging.Logger,
 ) -> RuntimeContext:
     if mode == "live":
-        raise LiveAdaptersUnavailable(
-            "Live mode confirmation is wired, but live desktop adapters are not "
-            "implemented yet."
-        )
-
-    window_adapter = DryRunWindowAdapter(logger)
-    screen_adapter = DryRunScreenAdapter(logger)
-    vision_adapter = DryRunVisionAdapter(logger)
-    input_adapter = DryRunInputAdapter(logger)
+        window_adapter = WindowsWindowAdapter(logger)
+        screen_adapter = LiveScreenAdapter()
+        vision_adapter = LiveVisionAdapter()
+        input_adapter = LiveInputAdapter()
+    else:
+        window_adapter = DryRunWindowAdapter(logger)
+        screen_adapter = DryRunScreenAdapter(logger)
+        vision_adapter = DryRunVisionAdapter(logger)
+        input_adapter = DryRunInputAdapter(logger)
 
     window = window_adapter.find_target(profile)
     if window is None:
