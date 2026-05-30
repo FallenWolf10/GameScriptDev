@@ -22,6 +22,8 @@ class WindowsWindowAdapterTests(unittest.TestCase):
                 title="Launcher",
                 process_id=10,
                 process_name="launcher.exe",
+                left=0,
+                top=0,
                 width=800,
                 height=600,
             ),
@@ -30,6 +32,8 @@ class WindowsWindowAdapterTests(unittest.TestCase):
                 title="Neverness to Everness",
                 process_id=20,
                 process_name="NTE.exe",
+                left=100,
+                top=200,
                 width=1280,
                 height=720,
             ),
@@ -51,6 +55,8 @@ class WindowsWindowAdapterTests(unittest.TestCase):
                 title="Neverness to Everness",
                 process_id=20,
                 process_name="launcher.exe",
+                left=0,
+                top=0,
                 width=1280,
                 height=720,
             )
@@ -68,7 +74,7 @@ class WindowsWindowAdapterTests(unittest.TestCase):
         adapter = WindowsWindowAdapter(logging.getLogger("tests.window"))
 
         adapter.prepare_window(
-            TargetWindow("test", "test.exe", 1280, 720, handle=1),
+            TargetWindow("test", "test.exe", 0, 0, 1280, 720, handle=1),
             Resolution(width=1280, height=720, policy="verify_only"),
         )
 
@@ -77,7 +83,7 @@ class WindowsWindowAdapterTests(unittest.TestCase):
 
         with self.assertRaises(TargetWindowNotReady):
             adapter.prepare_window(
-                TargetWindow("test", "test.exe", 1024, 768, handle=1),
+                TargetWindow("test", "test.exe", 0, 0, 1024, 768, handle=1),
                 Resolution(width=1280, height=720, policy="verify_only"),
             )
 
@@ -86,7 +92,7 @@ class WindowsWindowAdapterTests(unittest.TestCase):
 
         with self.assertRaises(LiveAdaptersUnavailable):
             adapter.prepare_window(
-                TargetWindow("test", "test.exe", 1024, 768, handle=1),
+                TargetWindow("test", "test.exe", 0, 0, 1024, 768, handle=1),
                 Resolution(width=1280, height=720, policy="attempt_resize"),
             )
 

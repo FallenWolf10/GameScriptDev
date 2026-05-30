@@ -11,7 +11,7 @@ from game_script_dev.schema import Anchor, Profile, Resolution, State, Target
 
 class StaticWindowAdapter:
     def find_target(self, profile: Profile) -> TargetWindow:
-        return TargetWindow("test", "test.exe", 1280, 720)
+        return TargetWindow("test", "test.exe", 0, 0, 1280, 720)
 
     def prepare_window(self, window: TargetWindow, resolution: Resolution) -> None:
         return None
@@ -57,7 +57,7 @@ class StaticVisionAdapter:
 def runtime_with_anchors(
     present_anchor_names: set[str],
 ) -> RuntimeContext:
-    window = TargetWindow("test", "test.exe", 1280, 720)
+    window = TargetWindow("test", "test.exe", 0, 0, 1280, 720)
     return RuntimeContext(
         mode="test",
         window=window,
@@ -100,8 +100,8 @@ class EngineRetryTests(unittest.TestCase):
             profile=profile,
             mode="test",
             logger=logger(),
-            runtime_factory=lambda _profile, _mode, _logger: runtime_with_anchors(
-                set()
+            runtime_factory=lambda _profile, _mode, _logger, _artifact_dir: (
+                runtime_with_anchors(set())
             ),
         ).run()
 
@@ -137,8 +137,8 @@ class EngineRetryTests(unittest.TestCase):
             profile=profile,
             mode="test",
             logger=logger(),
-            runtime_factory=lambda _profile, _mode, _logger: runtime_with_anchors(
-                {"known_failure_title"}
+            runtime_factory=lambda _profile, _mode, _logger, _artifact_dir: (
+                runtime_with_anchors({"known_failure_title"})
             ),
         ).run()
 
@@ -171,8 +171,8 @@ class EngineRetryTests(unittest.TestCase):
             profile=profile,
             mode="test",
             logger=logger(),
-            runtime_factory=lambda _profile, _mode, _logger: runtime_with_anchors(
-                {"home_title", "disconnect"}
+            runtime_factory=lambda _profile, _mode, _logger, _artifact_dir: (
+                runtime_with_anchors({"home_title", "disconnect"})
             ),
         ).run()
 

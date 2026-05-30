@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from game_script_dev.adapters.base import (
     InputAdapter,
@@ -37,10 +38,11 @@ def create_runtime(
     profile: Profile,
     mode: str,
     logger: logging.Logger,
+    artifact_dir: Path | None = None,
 ) -> RuntimeContext:
     if mode == "live":
         window_adapter = WindowsWindowAdapter(logger)
-        screen_adapter = LiveScreenAdapter()
+        screen_adapter = LiveScreenAdapter(artifact_dir or Path("logs/live_captures"))
         vision_adapter = LiveVisionAdapter()
         input_adapter = LiveInputAdapter()
     else:

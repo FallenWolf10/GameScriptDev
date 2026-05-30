@@ -69,7 +69,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     try:
-        result = Engine(profile=profile, mode=args.mode, logger=logger).run()
+        result = Engine(
+            profile=profile,
+            mode=args.mode,
+            logger=logger,
+            artifact_dir=run_paths.day_dir,
+        ).run()
     except LiveModeUnavailable as error:
         logger.error("%s", error)
         print(str(error), file=sys.stderr)

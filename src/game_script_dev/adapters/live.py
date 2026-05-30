@@ -4,7 +4,12 @@ import ctypes
 import logging
 from ctypes import wintypes
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Protocol
+
+from PIL import Image
+from PIL import ImageGrab
 
 from game_script_dev.adapters.base import Screenshot, TargetWindow
 from game_script_dev.schema import Anchor, Profile, Resolution
@@ -24,6 +29,8 @@ class WindowCandidate:
     title: str
     process_id: int
     process_name: str | None
+    left: int
+    top: int
     width: int
     height: int
 
@@ -58,6 +65,8 @@ class WindowsWindowAdapter:
         return TargetWindow(
             title=match.title,
             process_name=match.process_name,
+            left=match.left,
+            top=match.top,
             width=match.width,
             height=match.height,
             handle=match.handle,
@@ -88,9 +97,38 @@ class WindowsWindowAdapter:
         )
 
 
+class ImageGrabber(Protocol):
+    def __call__(self, bbox: tuple[int, int, int, int]) -> Image.Image:
+        """Capture an image for the given screen bounding box."""
+
+
 class LiveScreenAdapter:
+    def __init__(
+        self,
+        capture_dir: Path,
+        grabber: ImageGrabber = ImageGrab.grab,
+    ) -> None:
+        self.capture_dir = capture_dir
+        self.grabber = grabber
+
     def capture(self, window: TargetWindow) -> Screenshot:
-        raise LiveAdaptersUnavailable("live screen capture is not implemented yet")
+        if window.handle is None:
+            raise LiveAdaptersUnavailable(
+                "live screen capture requires a window handle"
+            )
+
+        self.capture_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%H%M%S_%f")
+        path = self.capture_dir / f"capture_{timestamp}.png"
+        bbox = (
+            window.left,
+            window.top,
+            window.left + window.width,
+            window.top + window.height,
+        )
+        image = self.grabber(bbox)
+        image.save(path)
+        return Screenshot(source=window.title, path=path)
 
 
 class LiveVisionAdapter:
@@ -187,14 +225,16 @@ def enumerate_windows() -> list[WindowCandidate]:
             process_name = _get_process_name(process_id.value)
 
             candidates.append(
-                WindowCandidate(
-                    handle=int(hwnd),
-                    title=title,
-                    process_id=int(process_id.value),
-                    process_name=process_name,
-                    width=int(rect.right - rect.left),
-                    height=int(rect.bottom - rect.top),
-                )
+            WindowCandidate(
+                handle=int(hwnd),
+                title=title,
+                process_id=int(process_id.value),
+                process_name=process_name,
+                left=int(rect.left),
+                top=int(rect.top),
+                width=int(rect.right - rect.left),
+                height=int(rect.bottom - rect.top),
+            )
             )
         except OSError:
             return True

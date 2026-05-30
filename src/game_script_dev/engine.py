@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from game_script_dev.actions import ActionRunner
 from game_script_dev.adapters.base import Screenshot
@@ -24,18 +25,25 @@ class Engine:
         mode: str,
         logger: logging.Logger,
         runtime_factory: Callable[
-            [Profile, str, logging.Logger],
+            [Profile, str, logging.Logger, Path | None],
             RuntimeContext,
         ] = create_runtime,
+        artifact_dir: Path | None = None,
     ) -> None:
         self.profile = profile
         self.mode = mode
         self.logger = logger
         self.runtime_factory = runtime_factory
+        self.artifact_dir = artifact_dir
 
     def run(self) -> str:
         try:
-            runtime = self.runtime_factory(self.profile, self.mode, self.logger)
+            runtime = self.runtime_factory(
+                self.profile,
+                self.mode,
+                self.logger,
+                self.artifact_dir,
+            )
         except Exception as error:
             raise LiveModeUnavailable(
                 str(error)

@@ -20,6 +20,8 @@ class DryRunWindowAdapter:
         return TargetWindow(
             title=title,
             process_name=profile.target.process_name,
+            left=0,
+            top=0,
             width=profile.resolution.width,
             height=profile.resolution.height,
             handle=None,

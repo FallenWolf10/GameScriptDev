@@ -11,6 +11,8 @@ from game_script_dev.schema import Anchor, Profile, Resolution
 class TargetWindow:
     title: str
     process_name: str | None
+    left: int
+    top: int
     width: int
     height: int
     handle: int | None = None
