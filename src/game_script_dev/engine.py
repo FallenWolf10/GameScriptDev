@@ -25,16 +25,18 @@ class Engine:
         mode: str,
         logger: logging.Logger,
         runtime_factory: Callable[
-            [Profile, str, logging.Logger, Path | None],
+            [Profile, str, logging.Logger, Path | None, Path | None],
             RuntimeContext,
         ] = create_runtime,
         artifact_dir: Path | None = None,
+        profile_dir: Path | None = None,
     ) -> None:
         self.profile = profile
         self.mode = mode
         self.logger = logger
         self.runtime_factory = runtime_factory
         self.artifact_dir = artifact_dir
+        self.profile_dir = profile_dir
 
     def run(self) -> str:
         try:
@@ -43,6 +45,7 @@ class Engine:
                 self.mode,
                 self.logger,
                 self.artifact_dir,
+                self.profile_dir,
             )
         except Exception as error:
             raise LiveModeUnavailable(

@@ -17,6 +17,7 @@ This repository currently contains the v1 skeleton:
 - validated named click regions
 - Windows target-window detection for live mode
 - live target-window screenshot capture
+- live template-anchor detection from captured screenshots
 - terminal states
 - daily log folders
 - demo profile
@@ -34,7 +35,7 @@ State execution failures retry the current state up to the profile `max_retries`
 
 Profiles define click coordinates as named regions, then actions reference those names. This keeps coordinate data centralized and lets validation catch missing or misspelled regions before a run starts.
 
-Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy and can capture the matched target window into the run artifact folder. Live vision and input are still intentionally unavailable.
+Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Live OCR and input are still intentionally unavailable.
 
 ## Run The Demo
 

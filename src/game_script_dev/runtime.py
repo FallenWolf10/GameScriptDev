@@ -39,11 +39,12 @@ def create_runtime(
     mode: str,
     logger: logging.Logger,
     artifact_dir: Path | None = None,
+    profile_dir: Path | None = None,
 ) -> RuntimeContext:
     if mode == "live":
         window_adapter = WindowsWindowAdapter(logger)
         screen_adapter = LiveScreenAdapter(artifact_dir or Path("logs/live_captures"))
-        vision_adapter = LiveVisionAdapter()
+        vision_adapter = LiveVisionAdapter(profile_dir or Path("."), logger)
         input_adapter = LiveInputAdapter()
     else:
         window_adapter = DryRunWindowAdapter(logger)

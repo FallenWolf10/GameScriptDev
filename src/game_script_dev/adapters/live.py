@@ -12,6 +12,7 @@ from PIL import Image
 from PIL import ImageGrab
 
 from game_script_dev.adapters.base import Screenshot, TargetWindow
+from game_script_dev.adapters.pillow_vision import PillowVisionAdapter
 from game_script_dev.schema import Anchor, Profile, Resolution
 
 
@@ -132,15 +133,27 @@ class LiveScreenAdapter:
 
 
 class LiveVisionAdapter:
+    def __init__(
+        self,
+        profile_dir: Path,
+        logger: logging.Logger,
+        default_threshold: float = 0.98,
+    ) -> None:
+        self.delegate = PillowVisionAdapter(
+            profile_dir=profile_dir,
+            logger=logger,
+            default_threshold=default_threshold,
+        )
+
     def anchor_present(self, anchor: Anchor, screenshot: Screenshot) -> bool:
-        raise LiveAdaptersUnavailable("live vision detection is not implemented yet")
+        return self.delegate.anchor_present(anchor, screenshot)
 
     def find_template_center(
         self,
         asset: str,
         screenshot: Screenshot,
     ) -> tuple[int, int] | None:
-        raise LiveAdaptersUnavailable("live template detection is not implemented yet")
+        return self.delegate.find_template_center(asset, screenshot)
 
 
 class LiveInputAdapter:
@@ -225,16 +238,16 @@ def enumerate_windows() -> list[WindowCandidate]:
             process_name = _get_process_name(process_id.value)
 
             candidates.append(
-            WindowCandidate(
-                handle=int(hwnd),
-                title=title,
-                process_id=int(process_id.value),
-                process_name=process_name,
-                left=int(rect.left),
-                top=int(rect.top),
-                width=int(rect.right - rect.left),
-                height=int(rect.bottom - rect.top),
-            )
+                WindowCandidate(
+                    handle=int(hwnd),
+                    title=title,
+                    process_id=int(process_id.value),
+                    process_name=process_name,
+                    left=int(rect.left),
+                    top=int(rect.top),
+                    width=int(rect.right - rect.left),
+                    height=int(rect.bottom - rect.top),
+                )
             )
         except OSError:
             return True

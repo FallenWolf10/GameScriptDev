@@ -74,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             mode=args.mode,
             logger=logger,
             artifact_dir=run_paths.day_dir,
+            profile_dir=args.profile.parent,
         ).run()
     except LiveModeUnavailable as error:
         logger.error("%s", error)

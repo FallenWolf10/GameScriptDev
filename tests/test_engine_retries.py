@@ -68,6 +68,19 @@ def runtime_with_anchors(
     )
 
 
+def runtime_factory_with_anchors(present_anchor_names: set[str]):
+    def factory(
+        _profile: Profile,
+        _mode: str,
+        _logger: logging.Logger,
+        _artifact_dir: object,
+        _profile_dir: object,
+    ) -> RuntimeContext:
+        return runtime_with_anchors(present_anchor_names)
+
+    return factory
+
+
 def logger() -> logging.Logger:
     test_logger = logging.getLogger("tests.engine_retries")
     test_logger.handlers.clear()
@@ -100,9 +113,7 @@ class EngineRetryTests(unittest.TestCase):
             profile=profile,
             mode="test",
             logger=logger(),
-            runtime_factory=lambda _profile, _mode, _logger, _artifact_dir: (
-                runtime_with_anchors(set())
-            ),
+            runtime_factory=runtime_factory_with_anchors(set()),
         ).run()
 
         self.assertEqual(result, "failed_home")
@@ -137,9 +148,7 @@ class EngineRetryTests(unittest.TestCase):
             profile=profile,
             mode="test",
             logger=logger(),
-            runtime_factory=lambda _profile, _mode, _logger, _artifact_dir: (
-                runtime_with_anchors({"known_failure_title"})
-            ),
+            runtime_factory=runtime_factory_with_anchors({"known_failure_title"}),
         ).run()
 
         self.assertEqual(result, "failure_known_screen")
@@ -171,8 +180,8 @@ class EngineRetryTests(unittest.TestCase):
             profile=profile,
             mode="test",
             logger=logger(),
-            runtime_factory=lambda _profile, _mode, _logger, _artifact_dir: (
-                runtime_with_anchors({"home_title", "disconnect"})
+            runtime_factory=runtime_factory_with_anchors(
+                {"home_title", "disconnect"}
             ),
         ).run()
 
