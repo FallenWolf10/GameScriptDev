@@ -50,6 +50,15 @@ class Action:
 
 
 @dataclass(frozen=True)
+class ClickRegion:
+    name: str
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
 class State:
     name: str
     required_anchors: list[Anchor] = field(default_factory=list)
@@ -78,6 +87,7 @@ class Profile:
     resolution: Resolution
     initial_state: str
     states: dict[str, State]
+    regions: dict[str, ClickRegion] = field(default_factory=dict)
     interruptions: list[Interruption] = field(default_factory=list)
     default_timeout_seconds: float = 30.0
     max_retries: int = 3
@@ -95,6 +105,13 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
     states = {
         state_name: _state_from_mapping(state_name, state_raw)
         for state_name, state_raw in states_raw.items()
+    }
+    regions_raw = raw.get("regions", {})
+    if not isinstance(regions_raw, dict):
+        raise ValueError("regions must be a mapping")
+    regions = {
+        region_name: _region_from_mapping(region_name, region_raw)
+        for region_name, region_raw in regions_raw.items()
     }
 
     interruptions_raw = raw.get("interruptions", [])
@@ -115,6 +132,7 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
         ),
         initial_state=_string(raw, "initial_state"),
         states=states,
+        regions=regions,
         interruptions=[
             _interruption_from_mapping(interruption_raw)
             for interruption_raw in interruptions_raw
@@ -140,7 +158,13 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
         _validate_anchors(state.required_anchors, profile_dir, errors)
         _validate_anchors(state.optional_anchors, profile_dir, errors)
         _validate_anchors(state.forbidden_anchors, profile_dir, errors)
-        _validate_actions(state.actions, profile.states, profile_dir, errors)
+        _validate_actions(
+            state.actions,
+            profile.states,
+            profile.regions,
+            profile_dir,
+            errors,
+        )
 
         if state.terminal:
             if not state.result:
@@ -166,6 +190,7 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
         _validate_actions(
             interruption.recovery_actions,
             profile.states,
+            profile.regions,
             profile_dir,
             errors,
         )
@@ -200,6 +225,19 @@ def _interruption_from_mapping(raw: Any) -> Interruption:
         required_anchors=_anchors_from_list(raw.get("required_anchors", [])),
         recovery_actions=_actions_from_list(raw.get("recovery_actions", [])),
         max_retries=int(raw.get("max_retries", 1)),
+    )
+
+
+def _region_from_mapping(name: str, raw: Any) -> ClickRegion:
+    if not isinstance(raw, dict):
+        raise ValueError(f"region '{name}' must be a mapping")
+
+    return ClickRegion(
+        name=name,
+        x=int(raw["x"]),
+        y=int(raw["y"]),
+        width=int(raw["width"]),
+        height=int(raw["height"]),
     )
 
 
@@ -260,6 +298,7 @@ def _validate_anchors(
 def _validate_actions(
     actions: list[Action],
     states: dict[str, State],
+    regions: dict[str, ClickRegion],
     profile_dir: Path,
     errors: list[str],
 ) -> None:
@@ -276,8 +315,12 @@ def _validate_actions(
                 errors.append(f"{action.type} must define target")
             elif not (profile_dir / str(target)).exists():
                 errors.append(f"{action.type} target asset missing: {target}")
-        if action.type == "click_point" and "region" not in action.data:
-            errors.append("click_point must define region")
+        if action.type == "click_point":
+            region = action.data.get("region")
+            if not region:
+                errors.append("click_point must define region")
+            elif region not in regions:
+                errors.append(f"click_point references unknown region '{region}'")
         if action.type in {"press_key", "hold_key"} and "key" not in action.data:
             errors.append(f"{action.type} must define key")
         if action.type == "wait" and "seconds" not in action.data:

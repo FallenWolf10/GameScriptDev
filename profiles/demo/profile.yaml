@@ -15,6 +15,13 @@ execution:
   default_timeout_seconds: 30
   max_retries: 3
 
+regions:
+  daily_button:
+    x: 510
+    y: 420
+    width: 260
+    height: 72
+
 initial_state: home_screen
 
 states:

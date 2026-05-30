@@ -14,6 +14,7 @@ This repository currently contains the v1 skeleton:
 - split runtime adapter boundaries
 - Pillow-based template matching utility
 - retry-aware state failure handling
+- validated named click regions
 - terminal states
 - daily log folders
 - demo profile
@@ -28,6 +29,8 @@ Live input, OCR, and target window control are intentionally adapter-shaped but 
 The first concrete vision implementation uses Pillow and NumPy for small, testable template matching. It can be replaced by OpenCV later if performance or matching tolerance needs increase.
 
 State execution failures retry the current state up to the profile `max_retries` value. After that, the runner follows `on_failure` when it names another state, or gracefully terminates when `on_failure` is `graceful_termination`.
+
+Profiles define click coordinates as named regions, then actions reference those names. This keeps coordinate data centralized and lets validation catch missing or misspelled regions before a run starts.
 
 ## Run The Demo
 
