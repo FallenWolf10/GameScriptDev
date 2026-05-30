@@ -10,6 +10,7 @@ This repository currently contains the v1 skeleton:
 
 - strict profile loading and validation
 - explicit state graph execution
+- reachable terminal state graph validation
 - dry-run action simulation
 - split runtime adapter boundaries
 - Pillow-based template matching utility

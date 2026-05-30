@@ -220,8 +220,39 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
             errors,
         )
 
+    _validate_state_graph(profile, errors)
+
     if errors:
         raise ProfileValidationError("; ".join(errors))
+
+
+def _validate_state_graph(profile: Profile, errors: list[str]) -> None:
+    if profile.initial_state not in profile.states:
+        return
+
+    reachable = {profile.initial_state}
+    pending = [profile.initial_state]
+    while pending:
+        state = profile.states[pending.pop()]
+        for next_state in _state_successors(state):
+            if next_state in profile.states and next_state not in reachable:
+                reachable.add(next_state)
+                pending.append(next_state)
+
+    for state_name in sorted(set(profile.states) - reachable):
+        errors.append(f"state '{state_name}' is unreachable from initial_state")
+
+    if not any(profile.states[state_name].terminal for state_name in reachable):
+        errors.append("state graph must include a reachable terminal state")
+
+
+def _state_successors(state: State) -> list[str]:
+    successors: list[str] = []
+    if state.on_success is not None:
+        successors.append(state.on_success)
+    if state.on_failure != "graceful_termination":
+        successors.append(state.on_failure)
+    return successors
 
 
 def _state_from_mapping(name: str, raw: Any) -> State:
