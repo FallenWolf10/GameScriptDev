@@ -139,14 +139,18 @@ def quiet_logger(name: str) -> logging.Logger:
 
 class EngineWaitForStateTests(unittest.TestCase):
     def test_wait_for_state_polls_until_anchor_is_present(self) -> None:
+        slept: list[float] = []
+
         result = Engine(
             profile=profile_for_wait(timeout_seconds=1),
             mode="live",
             logger=quiet_logger("tests.wait_success"),
             runtime_factory=runtime_factory(ready_after_capture=3),
+            sleeper=slept.append,
         ).run()
 
         self.assertEqual(result, "success")
+        self.assertEqual(slept, [0.05])
 
     def test_wait_for_state_times_out(self) -> None:
         result = Engine(

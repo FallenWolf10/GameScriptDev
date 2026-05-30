@@ -12,6 +12,9 @@ from game_script_dev.runtime import RuntimeContext, create_runtime
 from game_script_dev.schema import Anchor, Interruption, Profile, State
 
 
+MIN_LIVE_POLL_INTERVAL_SECONDS = 0.05
+
+
 class LiveModeUnavailable(Exception):
     """Raised when live mode reaches an adapter that is not implemented yet."""
 
@@ -32,6 +35,7 @@ class Engine:
         ] = create_runtime,
         artifact_dir: Path | None = None,
         profile_dir: Path | None = None,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.profile = profile
         self.mode = mode
@@ -39,6 +43,7 @@ class Engine:
         self.runtime_factory = runtime_factory
         self.artifact_dir = artifact_dir
         self.profile_dir = profile_dir
+        self.sleeper = sleeper
 
     def run(self) -> str:
         try:
@@ -252,6 +257,13 @@ class Engine:
             action_data.get("timeout_seconds", self.profile.default_timeout_seconds)
         )
         poll_interval_seconds = float(action_data.get("poll_interval_seconds", 0.5))
+        if poll_interval_seconds < MIN_LIVE_POLL_INTERVAL_SECONDS:
+            self.logger.info(
+                "Using minimum live poll interval %s seconds instead of %s",
+                MIN_LIVE_POLL_INTERVAL_SECONDS,
+                poll_interval_seconds,
+            )
+            poll_interval_seconds = MIN_LIVE_POLL_INTERVAL_SECONDS
         deadline = time.monotonic() + timeout_seconds
 
         self.logger.info(
@@ -271,5 +283,4 @@ class Engine:
                     raise StateExecutionError(
                         f"timed out waiting for state '{state_name}': {error}"
                     ) from error
-                if poll_interval_seconds > 0:
-                    time.sleep(poll_interval_seconds)
+                self.sleeper(poll_interval_seconds)

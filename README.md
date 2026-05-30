@@ -44,7 +44,7 @@ Profiles define click coordinates as named regions, then actions reference those
 
 Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Live `wait` actions and a limited allowlist of keyboard press/hold actions are available with bounded duration guards. Keyboard input is refused unless the matched target window is currently foreground; live OCR and pointer input are still intentionally unavailable.
 
-In live mode, `wait_for_state` is a bounded polling loop over screen capture and anchor detection. It uses the profile default timeout unless the action supplies `timeout_seconds`, and supports `poll_interval_seconds` for tuning.
+In live mode, `wait_for_state` is a bounded polling loop over screen capture and anchor detection. It uses the profile default timeout unless the action supplies `timeout_seconds`, and supports `poll_interval_seconds` for tuning. Live polling uses a small positive minimum interval to avoid tight screenshot loops.
 
 ## Run The Demo
 
