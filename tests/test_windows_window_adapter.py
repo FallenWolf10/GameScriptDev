@@ -124,6 +124,22 @@ class WindowsWindowAdapterTests(unittest.TestCase):
                 Resolution(width=1280, height=720, policy="verify_only"),
             )
 
+    def test_background_input_mode_skips_foreground_requirement(self) -> None:
+        controller = FakeWindowController(foreground_after_focus=False)
+        adapter = WindowsWindowAdapter(
+            logging.getLogger("tests.window"),
+            candidates_provider=lambda: [candidate(width=1280, height=720)],
+            window_controller=controller,
+            require_foreground=False,
+        )
+
+        adapter.prepare_window(
+            TargetWindow("test", "test.exe", 0, 0, 1280, 720, handle=1),
+            Resolution(width=1280, height=720, policy="verify_only"),
+        )
+
+        self.assertEqual(controller.focused_handles, [])
+
     def test_verify_window_rejects_identity_change(self) -> None:
         adapter = WindowsWindowAdapter(
             logging.getLogger("tests.window"),

@@ -22,6 +22,11 @@ INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MK_LBUTTON = 0x0001
+WM_KEYDOWN = 0x0100
+WM_KEYUP = 0x0101
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
 ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
 
 KEY_CODES: dict[str, int] = {
@@ -71,10 +76,12 @@ class WindowsWindowAdapter:
         logger: logging.Logger,
         candidates_provider: Callable[[], list[WindowCandidate]] | None = None,
         window_controller: WindowController | None = None,
+        require_foreground: bool = True,
     ) -> None:
         self.logger = logger
         self.candidates_provider = candidates_provider or enumerate_windows
         self.window_controller = window_controller
+        self.require_foreground = require_foreground
 
     def find_target(self, profile: Profile) -> TargetWindow | None:
         candidates = self.candidates_provider()
@@ -131,8 +138,15 @@ class WindowsWindowAdapter:
                 f"expected={resolution.width}x{resolution.height}"
             )
 
-        controller = self._controller()
         refreshed = _target_window_from_candidate(current)
+        if not self.require_foreground:
+            self.logger.info(
+                "Skipping foreground requirement for '%s' input_mode=background_window_messages",
+                refreshed.title,
+            )
+            return
+
+        controller = self._controller()
         if not controller.is_foreground(refreshed):
             controller.focus(refreshed)
 
@@ -196,6 +210,11 @@ class ImageGrabber(Protocol):
         """Capture an image for the given screen bounding box."""
 
 
+class WindowCapture(Protocol):
+    def capture_client(self, window: TargetWindow) -> Image.Image:
+        """Capture the target window client area by handle."""
+
+
 class KeyboardSender(Protocol):
     def key_down(self, virtual_key: int) -> None:
         """Send a key-down event."""
@@ -222,6 +241,19 @@ class WindowController(Protocol):
         """Return whether the target window is currently foreground."""
 
 
+class BackgroundKeyboardSender(Protocol):
+    def key_down(self, window: TargetWindow, virtual_key: int) -> None:
+        """Send a key-down event to the target window."""
+
+    def key_up(self, window: TargetWindow, virtual_key: int) -> None:
+        """Send a key-up event to the target window."""
+
+
+class BackgroundMouseSender(Protocol):
+    def click(self, window: TargetWindow, x: int, y: int) -> None:
+        """Send one left-click at target-window client coordinates."""
+
+
 class LiveScreenAdapter:
     def __init__(
         self,
@@ -229,11 +261,13 @@ class LiveScreenAdapter:
         grabber: ImageGrabber = ImageGrab.grab,
         window_adapter: WindowsWindowAdapter | None = None,
         profile: Profile | None = None,
+        window_capture: WindowCapture | None = None,
     ) -> None:
         self.capture_dir = capture_dir
         self.grabber = grabber
         self.window_adapter = window_adapter
         self.profile = profile
+        self.window_capture = window_capture
         self._capture_counts: dict[str, int] = {}
 
     def capture(
@@ -256,15 +290,30 @@ class LiveScreenAdapter:
         path = self.capture_dir / (
             f"capture_{timestamp}_{context_name}_{sequence:02d}.png"
         )
+        image = self._capture_image(window)
+        image.save(path)
+        return Screenshot(source=window.title, path=path)
+
+    def _capture_image(self, window: TargetWindow) -> Image.Image:
+        if (
+            self.profile is not None
+            and self.profile.target.input_mode == "background_window_messages"
+        ):
+            capture = self._window_capture()
+            return capture.capture_client(window)
         bbox = (
             window.left,
             window.top,
             window.left + window.width,
             window.top + window.height,
         )
-        image = self.grabber(bbox)
-        image.save(path)
-        return Screenshot(source=window.title, path=path)
+        return self.grabber(bbox)
+
+    def _window_capture(self) -> WindowCapture:
+        if self.window_capture is not None:
+            return self.window_capture
+        self.window_capture = Win32WindowCapture.create()
+        return self.window_capture
 
 
 class LiveVisionAdapter:
@@ -302,9 +351,12 @@ class LiveInputAdapter:
         window_adapter: WindowsWindowAdapter | None = None,
         sender: KeyboardSender | None = None,
         mouse_sender: MouseSender | None = None,
+        background_sender: BackgroundKeyboardSender | None = None,
+        background_mouse_sender: BackgroundMouseSender | None = None,
         focus_verifier: FocusVerifier | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         max_wait_seconds: float = 60.0,
+        input_mode: str = "foreground",
     ) -> None:
         self.target_window = target_window
         self.profile = profile
@@ -312,9 +364,12 @@ class LiveInputAdapter:
         self.window_adapter = window_adapter
         self.sender = sender
         self.mouse_sender = mouse_sender
+        self.background_sender = background_sender
+        self.background_mouse_sender = background_mouse_sender
         self.focus_verifier = focus_verifier
         self.sleeper = sleeper
         self.max_wait_seconds = max_wait_seconds
+        self.input_mode = input_mode
 
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         raise LiveAdaptersUnavailable(
@@ -333,6 +388,10 @@ class LiveInputAdapter:
 
     def click_coordinates(self, x: int, y: int, label: str) -> None:
         window = self._verify_live_target()
+        if self.input_mode == "background_window_messages":
+            sender = self._background_mouse_sender()
+            sender.click(window, int(x), int(y))
+            return
         absolute_x = window.left + int(x)
         absolute_y = window.top + int(y)
         sender = self._mouse_sender()
@@ -340,7 +399,12 @@ class LiveInputAdapter:
 
     def press_key(self, key: str) -> None:
         virtual_key = _normalize_key(key)
-        self._verify_live_target()
+        window = self._verify_live_target()
+        if self.input_mode == "background_window_messages":
+            sender = self._background_keyboard_sender()
+            sender.key_down(window, virtual_key)
+            sender.key_up(window, virtual_key)
+            return
         sender = self._keyboard_sender()
         sender.key_down(virtual_key)
         sender.key_up(virtual_key)
@@ -348,7 +412,15 @@ class LiveInputAdapter:
     def hold_key(self, key: str, seconds: float) -> None:
         virtual_key = _normalize_key(key)
         self._validate_duration(seconds, "live key hold")
-        self._verify_live_target()
+        window = self._verify_live_target()
+        if self.input_mode == "background_window_messages":
+            sender = self._background_keyboard_sender()
+            sender.key_down(window, virtual_key)
+            try:
+                self.sleeper(seconds)
+            finally:
+                sender.key_up(window, virtual_key)
+            return
         sender = self._keyboard_sender()
         sender.key_down(virtual_key)
         try:
@@ -380,6 +452,18 @@ class LiveInputAdapter:
         self.mouse_sender = Win32MouseSender.create()
         return self.mouse_sender
 
+    def _background_keyboard_sender(self) -> BackgroundKeyboardSender:
+        if self.background_sender is not None:
+            return self.background_sender
+        self.background_sender = Win32BackgroundKeyboardSender.create()
+        return self.background_sender
+
+    def _background_mouse_sender(self) -> BackgroundMouseSender:
+        if self.background_mouse_sender is not None:
+            return self.background_mouse_sender
+        self.background_mouse_sender = Win32BackgroundMouseSender.create()
+        return self.background_mouse_sender
+
     def _verify_live_target(self) -> TargetWindow:
         if self.target_window is None:
             raise LiveAdaptersUnavailable("live input requires target window context")
@@ -389,6 +473,9 @@ class LiveInputAdapter:
         window = self.target_window
         if self.window_adapter is not None and self.profile is not None:
             window = self.window_adapter.verify_window(window, self.profile)
+
+        if self.input_mode == "background_window_messages":
+            return window
 
         verifier = self._focus_verifier()
         if not verifier.is_foreground(window):
@@ -542,6 +629,220 @@ class Win32MouseSender:
         self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
 
+class Win32WindowCapture:
+    def __init__(self, user32: ctypes.WinDLL, gdi32: ctypes.WinDLL) -> None:
+        self.user32 = user32
+        self.gdi32 = gdi32
+
+    @classmethod
+    def create(cls) -> Win32WindowCapture:
+        if not hasattr(ctypes, "WinDLL"):
+            raise LiveAdaptersUnavailable("background window capture requires Windows")
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+        except OSError as error:
+            raise LiveAdaptersUnavailable(
+                "background window capture requires Win32 window capture APIs"
+            ) from error
+        return cls(user32, gdi32)
+
+    def capture_client(self, window: TargetWindow) -> Image.Image:
+        if window.handle is None:
+            raise LiveAdaptersUnavailable(
+                "background window capture requires a target window handle"
+            )
+
+        user32 = self.user32
+        gdi32 = self.gdi32
+        hwnd = int(window.handle)
+
+        get_dc = user32.GetDC
+        release_dc = user32.ReleaseDC
+        get_client_rect = user32.GetClientRect
+        print_window = user32.PrintWindow
+        create_compatible_dc = gdi32.CreateCompatibleDC
+        create_compatible_bitmap = gdi32.CreateCompatibleBitmap
+        select_object = gdi32.SelectObject
+        delete_object = gdi32.DeleteObject
+        delete_dc = gdi32.DeleteDC
+        get_dibits = gdi32.GetDIBits
+
+        get_dc.argtypes = [wintypes.HWND]
+        get_dc.restype = wintypes.HDC
+        release_dc.argtypes = [wintypes.HWND, wintypes.HDC]
+        release_dc.restype = ctypes.c_int
+        get_client_rect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        get_client_rect.restype = wintypes.BOOL
+        print_window.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+        print_window.restype = wintypes.BOOL
+        create_compatible_dc.argtypes = [wintypes.HDC]
+        create_compatible_dc.restype = wintypes.HDC
+        create_compatible_bitmap.argtypes = [
+            wintypes.HDC,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        create_compatible_bitmap.restype = wintypes.HBITMAP
+        select_object.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+        select_object.restype = wintypes.HGDIOBJ
+        delete_object.argtypes = [wintypes.HGDIOBJ]
+        delete_object.restype = wintypes.BOOL
+        delete_dc.argtypes = [wintypes.HDC]
+        delete_dc.restype = wintypes.BOOL
+
+        rect = wintypes.RECT()
+        if not get_client_rect(hwnd, ctypes.byref(rect)):
+            raise LiveAdaptersUnavailable("Win32 GetClientRect failed")
+        width = int(rect.right - rect.left)
+        height = int(rect.bottom - rect.top)
+        if width <= 0 or height <= 0:
+            raise LiveAdaptersUnavailable("target window client area is empty")
+
+        hwnd_dc = get_dc(hwnd)
+        if not hwnd_dc:
+            raise LiveAdaptersUnavailable("Win32 GetDC failed")
+
+        mem_dc = create_compatible_dc(hwnd_dc)
+        if not mem_dc:
+            release_dc(hwnd, hwnd_dc)
+            raise LiveAdaptersUnavailable("Win32 CreateCompatibleDC failed")
+
+        bitmap = create_compatible_bitmap(hwnd_dc, width, height)
+        if not bitmap:
+            delete_dc(mem_dc)
+            release_dc(hwnd, hwnd_dc)
+            raise LiveAdaptersUnavailable("Win32 CreateCompatibleBitmap failed")
+
+        old_bitmap = select_object(mem_dc, bitmap)
+        try:
+            if not print_window(hwnd, mem_dc, 0x00000001):
+                raise LiveAdaptersUnavailable("Win32 PrintWindow failed")
+            return _bitmap_to_image(gdi32, mem_dc, bitmap, width, height, get_dibits)
+        finally:
+            select_object(mem_dc, old_bitmap)
+            delete_object(bitmap)
+            delete_dc(mem_dc)
+            release_dc(hwnd, hwnd_dc)
+
+
+class Win32BackgroundKeyboardSender:
+    def __init__(self, user32: ctypes.WinDLL) -> None:
+        self.user32 = user32
+
+    @classmethod
+    def create(cls) -> Win32BackgroundKeyboardSender:
+        if not hasattr(ctypes, "WinDLL"):
+            raise LiveAdaptersUnavailable(
+                "background keyboard input requires Windows"
+            )
+
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            post_message = user32.PostMessageW
+        except (AttributeError, OSError) as error:
+            raise LiveAdaptersUnavailable(
+                "background keyboard input requires Win32 window messaging"
+            ) from error
+
+        post_message.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        post_message.restype = wintypes.BOOL
+        return cls(user32)
+
+    def key_down(self, window: TargetWindow, virtual_key: int) -> None:
+        self._post(window, WM_KEYDOWN, virtual_key, 1)
+
+    def key_up(self, window: TargetWindow, virtual_key: int) -> None:
+        self._post(window, WM_KEYUP, virtual_key, 0xC0000001)
+
+    def _post(
+        self,
+        window: TargetWindow,
+        message: int,
+        w_param: int,
+        l_param: int,
+    ) -> None:
+        if window.handle is None:
+            raise LiveAdaptersUnavailable(
+                "background keyboard input requires a target window handle"
+            )
+        ctypes.set_last_error(0)
+        if not self.user32.PostMessageW(
+            int(window.handle),
+            int(message),
+            int(w_param),
+            int(l_param),
+        ):
+            error_code = ctypes.get_last_error()
+            if error_code:
+                raise ctypes.WinError(error_code)
+            raise LiveAdaptersUnavailable(
+                "Win32 PostMessageW did not queue keyboard input"
+            )
+
+
+class Win32BackgroundMouseSender:
+    def __init__(self, user32: ctypes.WinDLL) -> None:
+        self.user32 = user32
+
+    @classmethod
+    def create(cls) -> Win32BackgroundMouseSender:
+        if not hasattr(ctypes, "WinDLL"):
+            raise LiveAdaptersUnavailable("background mouse input requires Windows")
+
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            post_message = user32.PostMessageW
+        except (AttributeError, OSError) as error:
+            raise LiveAdaptersUnavailable(
+                "background mouse input requires Win32 window messaging"
+            ) from error
+
+        post_message.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        post_message.restype = wintypes.BOOL
+        return cls(user32)
+
+    def click(self, window: TargetWindow, x: int, y: int) -> None:
+        l_param = _client_coordinates_lparam(x, y)
+        self._post(window, WM_LBUTTONDOWN, MK_LBUTTON, l_param)
+        self._post(window, WM_LBUTTONUP, 0, l_param)
+
+    def _post(
+        self,
+        window: TargetWindow,
+        message: int,
+        w_param: int,
+        l_param: int,
+    ) -> None:
+        if window.handle is None:
+            raise LiveAdaptersUnavailable(
+                "background mouse input requires a target window handle"
+            )
+        ctypes.set_last_error(0)
+        if not self.user32.PostMessageW(
+            int(window.handle),
+            int(message),
+            int(w_param),
+            int(l_param),
+        ):
+            error_code = ctypes.get_last_error()
+            if error_code:
+                raise ctypes.WinError(error_code)
+            raise LiveAdaptersUnavailable(
+                "Win32 PostMessageW did not queue mouse input"
+            )
+
+
 class Win32WindowController:
     def __init__(self, user32: ctypes.WinDLL) -> None:
         self.user32 = user32
@@ -636,6 +937,83 @@ def _safe_name(value: str | None) -> str:
         character.lower() if character.isalnum() else "-" for character in str(value)
     ).strip("-")
     return safe[:80] or "capture"
+
+
+def _client_coordinates_lparam(x: int, y: int) -> int:
+    return ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF)
+
+
+class _BitmapInfoHeader(ctypes.Structure):
+    _fields_ = [
+        ("biSize", wintypes.DWORD),
+        ("biWidth", ctypes.c_long),
+        ("biHeight", ctypes.c_long),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", ctypes.c_long),
+        ("biYPelsPerMeter", ctypes.c_long),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD),
+    ]
+
+
+class _BitmapInfo(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", _BitmapInfoHeader),
+        ("bmiColors", wintypes.DWORD * 3),
+    ]
+
+
+def _bitmap_to_image(
+    gdi32: ctypes.WinDLL,
+    device_context: wintypes.HDC,
+    bitmap: wintypes.HBITMAP,
+    width: int,
+    height: int,
+    get_dibits: object,
+) -> Image.Image:
+    bitmap_info = _BitmapInfo()
+    bitmap_info.bmiHeader.biSize = ctypes.sizeof(_BitmapInfoHeader)
+    bitmap_info.bmiHeader.biWidth = width
+    bitmap_info.bmiHeader.biHeight = -height
+    bitmap_info.bmiHeader.biPlanes = 1
+    bitmap_info.bmiHeader.biBitCount = 32
+    bitmap_info.bmiHeader.biCompression = 0
+
+    get_dibits.argtypes = [
+        wintypes.HDC,
+        wintypes.HBITMAP,
+        wintypes.UINT,
+        wintypes.UINT,
+        ctypes.c_void_p,
+        ctypes.POINTER(_BitmapInfo),
+        wintypes.UINT,
+    ]
+    get_dibits.restype = ctypes.c_int
+
+    buffer = ctypes.create_string_buffer(width * height * 4)
+    rows = get_dibits(
+        device_context,
+        bitmap,
+        0,
+        height,
+        buffer,
+        ctypes.byref(bitmap_info),
+        0,
+    )
+    if rows != height:
+        raise LiveAdaptersUnavailable("Win32 GetDIBits failed")
+    return Image.frombuffer(
+        "RGB",
+        (width, height),
+        buffer,
+        "raw",
+        "BGRX",
+        0,
+        1,
+    )
 
 
 def find_matching_window(

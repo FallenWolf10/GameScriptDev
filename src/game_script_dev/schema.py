@@ -35,6 +35,7 @@ SUPPORTED_KEY_NAMES = {
     "tab",
     "up",
 }
+SUPPORTED_INPUT_MODES = {"foreground", "background_window_messages"}
 SUPPORTED_DETECTION_STRATEGIES = {"template_matching", "ocr_matching", "template_and_ocr"}
 REQUIRED_COMPATIBILITY_CHECKS = {
     "target_identity",
@@ -57,6 +58,7 @@ class ProfileValidationError(Exception):
 class Target:
     process_name: str | None = None
     window_title_contains: str | None = None
+    input_mode: str = "foreground"
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,7 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
         target=Target(
             process_name=target_raw.get("process_name"),
             window_title_contains=target_raw.get("window_title_contains"),
+            input_mode=str(target_raw.get("input_mode", "foreground")),
         ),
         resolution=Resolution(
             width=_integer(resolution_raw, "width", "window.resolution.width"),
@@ -209,6 +212,8 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
 
     if not profile.target.process_name and not profile.target.window_title_contains:
         errors.append("target must define process_name or window_title_contains")
+    if profile.target.input_mode not in SUPPORTED_INPUT_MODES:
+        errors.append(f"unknown target input_mode: {profile.target.input_mode}")
 
     if profile.resolution.policy not in {"verify_only", "attempt_resize", "ignore"}:
         errors.append(f"unknown resolution policy: {profile.resolution.policy}")

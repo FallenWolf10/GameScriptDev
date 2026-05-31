@@ -275,6 +275,38 @@ states:
             with self.assertRaises(ProfileValidationError):
                 validate_profile(profile, profile_path.parent)
 
+    def test_rejects_unknown_target_input_mode(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Profile
+target:
+  process_name: demo.exe
+  input_mode: teleport
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError) as captured:
+                validate_profile(profile, profile_path.parent)
+
+            self.assertIn("unknown target input_mode", str(captured.exception))
+
     def test_rejects_unreachable_state(self) -> None:
         profile_yaml = """
 version: 1

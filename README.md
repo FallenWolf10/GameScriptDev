@@ -113,6 +113,11 @@ http://127.0.0.1:8765
 
 The dashboard discovers profiles, validates them, launches dry runs, shows readiness blockers before live mode, requires `RUN` confirmation for live runs, and surfaces run history, logs, artifacts, current state, final result, and failure reason. New contributors should use the `Local Demo Target` profile pack before any real game profile work.
 
+The Local Demo Target pack uses `target.input_mode: background_window_messages`
+so live input can be posted to the demo window without requiring foreground
+ownership. The target still needs to remain visible for screenshot-based state
+detection.
+
 Run the operator startup checks from source:
 
 ```powershell

@@ -42,7 +42,10 @@ def create_runtime(
     profile_dir: Path | None = None,
 ) -> RuntimeContext:
     if mode == "live":
-        window_adapter = WindowsWindowAdapter(logger)
+        window_adapter = WindowsWindowAdapter(
+            logger,
+            require_foreground=(profile.target.input_mode == "foreground"),
+        )
         screen_adapter = LiveScreenAdapter(
             artifact_dir or Path("logs/live_captures"),
             window_adapter=window_adapter,
@@ -67,6 +70,7 @@ def create_runtime(
             profile=profile,
             regions=profile.regions,
             window_adapter=window_adapter,
+            input_mode=profile.target.input_mode,
         )
 
     return RuntimeContext(

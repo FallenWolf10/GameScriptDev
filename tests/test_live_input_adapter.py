@@ -44,6 +44,28 @@ class FakeFocusVerifier:
         return self.is_foreground_result
 
 
+class FakeBackgroundKeyboardSender:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, int, int]] = []
+
+    def key_down(self, window: TargetWindow, virtual_key: int) -> None:
+        assert window.handle is not None
+        self.events.append(("down", window.handle, virtual_key))
+
+    def key_up(self, window: TargetWindow, virtual_key: int) -> None:
+        assert window.handle is not None
+        self.events.append(("up", window.handle, virtual_key))
+
+
+class FakeBackgroundMouseSender:
+    def __init__(self) -> None:
+        self.events: list[tuple[int, int, int]] = []
+
+    def click(self, window: TargetWindow, x: int, y: int) -> None:
+        assert window.handle is not None
+        self.events.append((window.handle, x, y))
+
+
 class LiveInputAdapterTests(unittest.TestCase):
     def test_press_key_sends_down_then_up_for_allowed_key(self) -> None:
         sender = FakeKeyboardSender()
@@ -119,6 +141,24 @@ class LiveInputAdapterTests(unittest.TestCase):
             with self.assertRaises(LiveAdaptersUnavailable):
                 adapter.press_key("enter")
 
+    def test_background_mode_sends_key_without_foreground_check(self) -> None:
+        sender = FakeBackgroundKeyboardSender()
+        focus = FakeFocusVerifier(is_foreground=False)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            background_sender=sender,
+            focus_verifier=focus,
+            input_mode="background_window_messages",
+        )
+
+        adapter.press_key("enter")
+
+        self.assertEqual(
+            sender.events,
+            [("down", 100, 0x0D), ("up", 100, 0x0D)],
+        )
+        self.assertEqual(focus.checked_windows, [])
+
     def test_hold_key_sends_up_after_sleep(self) -> None:
         sender = FakeKeyboardSender()
         slept: list[float] = []
@@ -182,6 +222,22 @@ class LiveInputAdapterTests(unittest.TestCase):
                 "button.png",
                 screenshot=object(),  # type: ignore[arg-type]
             )
+
+    def test_background_mode_clicks_region_without_foreground_check(self) -> None:
+        sender = FakeBackgroundMouseSender()
+        focus = FakeFocusVerifier(is_foreground=False)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            background_mouse_sender=sender,
+            focus_verifier=focus,
+            regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
+            input_mode="background_window_messages",
+        )
+
+        adapter.click_region("start")
+
+        self.assertEqual(sender.events, [(100, 25, 40)])
+        self.assertEqual(focus.checked_windows, [])
 
     def test_wait_sleeps_for_requested_duration(self) -> None:
         slept: list[float] = []

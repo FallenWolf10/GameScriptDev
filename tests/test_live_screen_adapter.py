@@ -8,6 +8,7 @@ from PIL import Image
 
 from game_script_dev.adapters.base import TargetWindow
 from game_script_dev.adapters.live import LiveAdaptersUnavailable, LiveScreenAdapter
+from game_script_dev.schema import Profile, Resolution, Target
 
 
 class LiveScreenAdapterTests(unittest.TestCase):
@@ -77,6 +78,46 @@ class LiveScreenAdapterTests(unittest.TestCase):
                     handle=None,
                 )
             )
+
+    def test_background_input_mode_uses_window_handle_capture(self) -> None:
+        class FakeWindowCapture:
+            def __init__(self) -> None:
+                self.windows: list[TargetWindow] = []
+
+            def capture_client(self, window: TargetWindow) -> Image.Image:
+                self.windows.append(window)
+                return Image.new("RGB", (12, 8), "red")
+
+        fake_capture = FakeWindowCapture()
+        profile = Profile(
+            version=1,
+            name="Demo",
+            target=Target(window_title_contains="Demo", input_mode="background_window_messages"),
+            resolution=Resolution(width=1280, height=720, policy="ignore"),
+            initial_state="done",
+            states={},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = LiveScreenAdapter(
+                Path(temp_dir),
+                profile=profile,
+                window_capture=fake_capture,
+            )
+            window = TargetWindow(
+                title="Demo",
+                process_name="demo.exe",
+                left=100,
+                top=200,
+                width=20,
+                height=10,
+                handle=123,
+            )
+
+            screenshot = adapter.capture(window)
+
+            self.assertEqual(fake_capture.windows, [window])
+            assert screenshot.path is not None
+            self.assertTrue(screenshot.path.exists())
 
 
 if __name__ == "__main__":

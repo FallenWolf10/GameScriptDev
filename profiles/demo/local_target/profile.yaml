@@ -21,6 +21,7 @@ profile_pack:
 
 target:
   window_title_contains: Demo Automation Window
+  input_mode: background_window_messages
 
 window:
   resolution:

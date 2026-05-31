@@ -61,6 +61,21 @@ The standard profile fields still declare target identity, supported
 resolution, states, regions, actions, interruptions, and execution settings.
 The profile-pack block records the compatibility review status for live mode.
 
+Targets may also declare:
+
+```yaml
+target:
+  window_title_contains: Example Window
+  input_mode: foreground
+```
+
+Supported input modes are:
+
+- `foreground`: use OS foreground focus plus global input injection.
+- `background_window_messages`: post keyboard and mouse messages directly to the
+  target window handle. This avoids foreground ownership but still requires the
+  window to remain visible for screenshot-based state detection.
+
 ## Compatibility Checklist
 
 Every checklist key must be present and boolean. A profile can pass schema
