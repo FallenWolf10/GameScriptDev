@@ -33,6 +33,7 @@ class DemoProfilePackTests(unittest.TestCase):
 
         self.assertIsNotNone(profile.profile_pack)
         self.assertTrue(profile.profile_pack.compatibility_complete)
+        self.assertEqual(profile.target.input_mode, "foreground")
 
     def test_local_target_pack_readiness_requires_dashboard_dry_run(self) -> None:
         report = evaluate_readiness(

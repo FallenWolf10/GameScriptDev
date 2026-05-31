@@ -18,6 +18,9 @@ from game_script_dev.demo_target import (
     STATE_INTERRUPTION,
     STATE_KNOWN_FAILURE,
     DemoTargetModel,
+    _char_message_to_demo_key,
+    _point_from_lparam,
+    _virtual_key_to_demo_key,
 )
 from game_script_dev.dashboard.readiness import evaluate_readiness
 
@@ -57,6 +60,22 @@ class DemoTargetModelTests(unittest.TestCase):
         model.key("I")
         self.assertEqual(model.state, STATE_INTERRUPTION)
         self.assertEqual(model.signal, INTERRUPTION_SIGNAL)
+
+    def test_virtual_key_translation_matches_demo_controls(self) -> None:
+        self.assertEqual(_virtual_key_to_demo_key(ord("K")), "k")
+        self.assertEqual(_virtual_key_to_demo_key(ord("W")), "w")
+        self.assertEqual(_virtual_key_to_demo_key(ord("3")), "3")
+        self.assertIsNone(_virtual_key_to_demo_key(0x0D))
+
+    def test_char_message_translation_matches_demo_controls(self) -> None:
+        self.assertEqual(_char_message_to_demo_key(ord("K")), "k")
+        self.assertEqual(_char_message_to_demo_key(ord("k")), "k")
+        self.assertEqual(_char_message_to_demo_key(ord("3")), "3")
+        self.assertIsNone(_char_message_to_demo_key(0x0D))
+
+    def test_lparam_point_decodes_signed_coordinates(self) -> None:
+        self.assertEqual(_point_from_lparam((20 << 16) | 10), (10, 20))
+        self.assertEqual(_point_from_lparam((0xFFFE << 16) | 0xFFFF), (-1, -2))
 
     def test_module_entrypoint_uses_main_exit_code(self) -> None:
         with patch("game_script_dev.demo_target.main", return_value=7):

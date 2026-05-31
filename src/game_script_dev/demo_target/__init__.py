@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import os
 from dataclasses import dataclass
 
 WINDOW_TITLE = "Demo Automation Window"
@@ -27,6 +29,11 @@ MARKERS = {
 }
 
 DAILY_BUTTON_REGION = (510, 360, 770, 500)
+WM_KEYUP = 0x0101
+WM_CHAR = 0x0102
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+GWL_WNDPROC = -4
 
 
 @dataclass
@@ -100,6 +107,7 @@ class DemoTargetApp:
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Button-1>", self._on_click)
         self.root.bind("<KeyPress>", self._on_key)
+        self._message_bridge_handles: list[object] = []
         self.render()
 
     def run(self) -> int:
@@ -209,16 +217,105 @@ class DemoTargetApp:
         )
 
     def _focus(self) -> None:
+        self.root.deiconify()
+        self.root.state("normal")
+        self.root.lift()
         self.root.focus_force()
         self.canvas.focus_set()
 
     def _on_click(self, event: object) -> None:
-        self.model.click(int(event.x), int(event.y))
-        self.render()
+        self._apply_click(int(event.x), int(event.y))
 
     def _on_key(self, event: object) -> None:
-        self.model.key(str(event.keysym))
+        self._apply_key(str(event.keysym))
+
+    def _apply_click(self, x: int, y: int) -> None:
+        self.model.click(x, y)
         self.render()
+
+    def _apply_key(self, key: str) -> None:
+        self.model.key(key)
+        self.render()
+
+    def _install_windows_message_bridge(self) -> None:
+        if os.name != "nt" or not hasattr(ctypes, "WinDLL"):
+            return
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        call_window_proc = user32.CallWindowProcW
+        call_window_proc.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        ]
+        call_window_proc.restype = ctypes.c_ssize_t
+
+        get_window_long_ptr = user32.GetWindowLongPtrW
+        get_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        get_window_long_ptr.restype = ctypes.c_void_p
+
+        set_window_long_ptr = user32.SetWindowLongPtrW
+        set_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        set_window_long_ptr.restype = ctypes.c_void_p
+
+        wndproc_type = ctypes.WINFUNCTYPE(
+            ctypes.c_ssize_t,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        )
+
+        def install(widget: object, *, keyboard: bool, mouse: bool) -> None:
+            handle = int(widget.winfo_id())
+            previous = get_window_long_ptr(handle, GWL_WNDPROC)
+
+            @wndproc_type
+            def bridge(hwnd: int, message: int, w_param: int, l_param: int) -> int:
+                if mouse and message in {WM_LBUTTONDOWN, WM_LBUTTONUP}:
+                    x, y = _point_from_lparam(l_param)
+                    self.root.after_idle(self._apply_click, x, y)
+                if keyboard and message in {WM_KEYUP, WM_CHAR}:
+                    key = (
+                        _char_message_to_demo_key(int(w_param))
+                        if message == WM_CHAR
+                        else _virtual_key_to_demo_key(int(w_param))
+                    )
+                    if key is not None:
+                        self.root.after_idle(self._apply_key, key)
+                return int(call_window_proc(previous, hwnd, message, w_param, l_param))
+
+            set_window_long_ptr(handle, GWL_WNDPROC, bridge)
+            self._message_bridge_handles.append((handle, previous, bridge))
+
+        install(self.root, keyboard=True, mouse=False)
+        install(self.canvas, keyboard=True, mouse=True)
+
+
+def _point_from_lparam(l_param: int) -> tuple[int, int]:
+    x = ctypes.c_short(l_param & 0xFFFF).value
+    y = ctypes.c_short((l_param >> 16) & 0xFFFF).value
+    return x, y
+
+
+def _virtual_key_to_demo_key(virtual_key: int) -> str | None:
+    if ord("A") <= virtual_key <= ord("Z"):
+        return chr(virtual_key).lower()
+    if ord("0") <= virtual_key <= ord("9"):
+        return chr(virtual_key)
+    return None
+
+
+def _char_message_to_demo_key(code_point: int) -> str | None:
+    if ord("A") <= code_point <= ord("Z"):
+        return chr(code_point).lower()
+    if ord("a") <= code_point <= ord("z"):
+        return chr(code_point).lower()
+    if ord("0") <= code_point <= ord("9"):
+        return chr(code_point)
+    return None
 
 
 def main() -> int:

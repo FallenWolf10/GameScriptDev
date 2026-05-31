@@ -274,9 +274,12 @@ function renderRunReview(timeline) {
   for (const event of timeline) {
     const item = document.createElement("li");
     const state = event.state ? ` state=${event.state}` : "";
+    const action = event.action_type ? ` action=${event.action_type}` : "";
+    const index = Number.isInteger(event.action_index) ? ` #${event.action_index}` : "";
+    const summary = event.action_summary ? ` ${event.action_summary}` : "";
     const result = event.result ? ` result=${event.result}` : "";
     const reason = event.failure_reason ? ` reason=${event.failure_reason}` : "";
-    item.textContent = `${event.at || ""} ${event.event || "event"}${state}${result}${reason}`.trim();
+    item.textContent = `${event.at || ""} ${event.event || "event"}${state}${action}${index}${summary}${result}${reason}`.trim();
     target.appendChild(item);
   }
   if (!timeline.length) {

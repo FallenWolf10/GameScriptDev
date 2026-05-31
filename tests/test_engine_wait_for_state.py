@@ -247,12 +247,14 @@ class EngineWaitForStateTests(unittest.TestCase):
 
     def test_live_stop_action_captures_final_screenshot(self) -> None:
         screen_adapter = RecordingScreenAdapter()
+        events: list[dict[str, object]] = []
 
         result = Engine(
             profile=stop_profile(),
             mode="live",
             logger=quiet_logger("tests.stop_success"),
             runtime_factory=runtime_factory_with_screen(screen_adapter),
+            event_handler=events.append,
         ).run()
 
         self.assertEqual(result, "operator_stopped")
@@ -260,6 +262,13 @@ class EngineWaitForStateTests(unittest.TestCase):
             screen_adapter.contexts,
             ["state-home-confirm", "final-state-home-stop-operator_stopped"],
         )
+        self.assertEqual(
+            [event["event"] for event in events],
+            ["state_started", "action_started", "action_completed"],
+        )
+        self.assertEqual(events[1]["action_type"], "stop")
+        self.assertEqual(events[1]["action_summary"], "stop operator_stopped")
+        self.assertEqual(events[2]["result"], "operator_stopped")
 
 
 if __name__ == "__main__":

@@ -25,9 +25,12 @@ MOUSEEVENTF_LEFTUP = 0x0004
 MK_LBUTTON = 0x0001
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
+WM_CHAR = 0x0102
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
+FOREGROUND_CONFIRM_TIMEOUT_SECONDS = 1.0
+FOREGROUND_CONFIRM_POLL_SECONDS = 0.05
 
 KEY_CODES: dict[str, int] = {
     **{chr(code).lower(): code for code in range(ord("A"), ord("Z") + 1)},
@@ -147,10 +150,7 @@ class WindowsWindowAdapter:
             return
 
         controller = self._controller()
-        if not controller.is_foreground(refreshed):
-            controller.focus(refreshed)
-
-        if not controller.is_foreground(refreshed):
+        if not self._confirm_foreground(controller, refreshed):
             raise TargetWindowNotReady(
                 "target window could not be confirmed as foreground after focusing"
             )
@@ -218,6 +218,23 @@ class WindowsWindowAdapter:
             return self.window_controller
         self.window_controller = Win32WindowController.create()
         return self.window_controller
+
+    def _confirm_foreground(
+        self,
+        controller: WindowController,
+        window: TargetWindow,
+    ) -> bool:
+        if controller.is_foreground(window):
+            return True
+
+        deadline = time.monotonic() + FOREGROUND_CONFIRM_TIMEOUT_SECONDS
+        while True:
+            controller.focus(window)
+            if controller.is_foreground(window):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(FOREGROUND_CONFIRM_POLL_SECONDS)
 
 
 class ImageGrabber(Protocol):
@@ -491,16 +508,31 @@ class LiveInputAdapter:
         window = self.target_window
         if self.window_adapter is not None and self.profile is not None:
             window = self.window_adapter.verify_window(window, self.profile)
+            self.target_window = window
 
         if self.input_mode == "background_window_messages":
             return window
 
         verifier = self._focus_verifier()
-        if not verifier.is_foreground(window):
-            raise LiveAdaptersUnavailable(
-                "target window is not foreground; refusing live input"
-            )
-        return window
+        if verifier.is_foreground(window):
+            return window
+        if self._restore_foreground(window):
+            return window
+        raise LiveAdaptersUnavailable(
+            "target window is not foreground; refusing live input"
+        )
+
+    def _restore_foreground(self, window: TargetWindow) -> bool:
+        if self.window_adapter is None:
+            return False
+
+        controller_factory = getattr(self.window_adapter, "_controller", None)
+        confirm_foreground = getattr(self.window_adapter, "_confirm_foreground", None)
+        if controller_factory is None or confirm_foreground is None:
+            return False
+
+        controller = controller_factory()
+        return bool(confirm_foreground(controller, window))
 
     def _focus_verifier(self) -> FocusVerifier:
         if self.focus_verifier is not None:
@@ -773,10 +805,15 @@ class Win32BackgroundKeyboardSender:
         return cls(user32)
 
     def key_down(self, window: TargetWindow, virtual_key: int) -> None:
-        self._post(window, WM_KEYDOWN, virtual_key, 1)
+        for handle in _window_message_handles(self.user32, window):
+            self._post_handle(handle, WM_KEYDOWN, virtual_key, 1)
+            character = _virtual_key_to_char(virtual_key)
+            if character is not None:
+                self._post_handle(handle, WM_CHAR, ord(character), 1)
 
     def key_up(self, window: TargetWindow, virtual_key: int) -> None:
-        self._post(window, WM_KEYUP, virtual_key, 0xC0000001)
+        for handle in _window_message_handles(self.user32, window):
+            self._post_handle(handle, WM_KEYUP, virtual_key, 0xC0000001)
 
     def _post(
         self,
@@ -785,13 +822,19 @@ class Win32BackgroundKeyboardSender:
         w_param: int,
         l_param: int,
     ) -> None:
-        if window.handle is None:
-            raise LiveAdaptersUnavailable(
-                "background keyboard input requires a target window handle"
-            )
+        for handle in _window_message_handles(self.user32, window):
+            self._post_handle(handle, message, w_param, l_param)
+
+    def _post_handle(
+        self,
+        handle: int,
+        message: int,
+        w_param: int,
+        l_param: int,
+    ) -> None:
         ctypes.set_last_error(0)
         if not self.user32.PostMessageW(
-            int(window.handle),
+            int(handle),
             int(message),
             int(w_param),
             int(l_param),
@@ -868,9 +911,8 @@ class Win32BackgroundMouseSender:
 
         root_handle = int(window.handle)
         point = wintypes.POINT(int(x), int(y))
-        child_handle = int(
-            self.user32.ChildWindowFromPointEx(root_handle, point, 0x0001)
-        )
+        child_handle = self.user32.ChildWindowFromPointEx(root_handle, point, 0x0001)
+        child_handle = int(child_handle or 0)
         if not child_handle:
             child_handle = root_handle
         if child_handle == root_handle:
@@ -919,8 +961,9 @@ class Win32BackgroundMouseSender:
 
 
 class Win32WindowController:
-    def __init__(self, user32: ctypes.WinDLL) -> None:
+    def __init__(self, user32: ctypes.WinDLL, kernel32: ctypes.WinDLL) -> None:
         self.user32 = user32
+        self.kernel32 = kernel32
 
     @classmethod
     def create(cls) -> Win32WindowController:
@@ -929,9 +972,16 @@ class Win32WindowController:
 
         try:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             get_foreground_window = user32.GetForegroundWindow
             set_foreground_window = user32.SetForegroundWindow
+            bring_window_to_top = user32.BringWindowToTop
+            set_active_window = user32.SetActiveWindow
+            set_focus = user32.SetFocus
             show_window = user32.ShowWindow
+            attach_thread_input = user32.AttachThreadInput
+            get_window_thread_process_id = user32.GetWindowThreadProcessId
+            get_current_thread_id = kernel32.GetCurrentThreadId
         except (AttributeError, OSError) as error:
             raise LiveAdaptersUnavailable(
                 "live window focusing requires Win32 foreground APIs"
@@ -941,18 +991,81 @@ class Win32WindowController:
         get_foreground_window.restype = wintypes.HWND
         set_foreground_window.argtypes = [wintypes.HWND]
         set_foreground_window.restype = wintypes.BOOL
+        bring_window_to_top.argtypes = [wintypes.HWND]
+        bring_window_to_top.restype = wintypes.BOOL
+        set_active_window.argtypes = [wintypes.HWND]
+        set_active_window.restype = wintypes.HWND
+        set_focus.argtypes = [wintypes.HWND]
+        set_focus.restype = wintypes.HWND
         show_window.argtypes = [wintypes.HWND, ctypes.c_int]
         show_window.restype = wintypes.BOOL
-        return cls(user32)
+        attach_thread_input.argtypes = [
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.BOOL,
+        ]
+        attach_thread_input.restype = wintypes.BOOL
+        get_window_thread_process_id.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        get_window_thread_process_id.restype = wintypes.DWORD
+        get_current_thread_id.argtypes = []
+        get_current_thread_id.restype = wintypes.DWORD
+        return cls(user32, kernel32)
 
     def focus(self, window: TargetWindow) -> None:
         if window.handle is None:
             raise TargetWindowNotReady("target window handle is missing")
-        ctypes.set_last_error(0)
-        if not self.user32.SetForegroundWindow(int(window.handle)):
-            error_code = ctypes.get_last_error()
-            if error_code:
-                raise ctypes.WinError(error_code)
+        hwnd = int(window.handle)
+        foreground = int(self.user32.GetForegroundWindow() or 0)
+        current_thread_id = int(self.kernel32.GetCurrentThreadId())
+        target_thread_id = int(
+            self.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wintypes.DWORD()))
+        )
+        foreground_thread_id = (
+            int(
+                self.user32.GetWindowThreadProcessId(
+                    foreground,
+                    ctypes.byref(wintypes.DWORD()),
+                )
+            )
+            if foreground
+            else 0
+        )
+
+        attached_thread_ids: list[int] = []
+        try:
+            for thread_id in (target_thread_id, foreground_thread_id):
+                if thread_id and thread_id != current_thread_id:
+                    ctypes.set_last_error(0)
+                    if self.user32.AttachThreadInput(
+                        current_thread_id,
+                        thread_id,
+                        True,
+                    ):
+                        attached_thread_ids.append(thread_id)
+                    else:
+                        error_code = ctypes.get_last_error()
+                        if error_code:
+                            raise ctypes.WinError(error_code)
+
+            self.user32.ShowWindow(hwnd, 9)
+            ctypes.set_last_error(0)
+            if not self.user32.BringWindowToTop(hwnd):
+                error_code = ctypes.get_last_error()
+                if error_code:
+                    raise ctypes.WinError(error_code)
+            self.user32.SetActiveWindow(hwnd)
+            self.user32.SetFocus(hwnd)
+            ctypes.set_last_error(0)
+            if not self.user32.SetForegroundWindow(hwnd):
+                error_code = ctypes.get_last_error()
+                if error_code:
+                    raise ctypes.WinError(error_code)
+        finally:
+            for thread_id in reversed(attached_thread_ids):
+                self.user32.AttachThreadInput(current_thread_id, thread_id, False)
 
     def restore(self, window: TargetWindow) -> None:
         if window.handle is None:
@@ -1024,6 +1137,42 @@ def _safe_name(value: str | None) -> str:
 
 def _client_coordinates_lparam(x: int, y: int) -> int:
     return ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF)
+
+
+def _virtual_key_to_char(virtual_key: int) -> str | None:
+    if ord("A") <= virtual_key <= ord("Z"):
+        return chr(virtual_key)
+    if ord("0") <= virtual_key <= ord("9"):
+        return chr(virtual_key)
+    if virtual_key == KEY_CODES["space"]:
+        return " "
+    return None
+
+
+def _window_message_handles(
+    user32: ctypes.WinDLL,
+    window: TargetWindow,
+) -> list[int]:
+    if window.handle is None:
+        raise LiveAdaptersUnavailable(
+            "background input requires a target window handle"
+        )
+
+    root_handle = int(window.handle)
+    handles = [root_handle]
+    child_handles: list[int] = []
+
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def callback(hwnd: int, lparam: int) -> bool:
+        child_handles.append(int(hwnd))
+        return True
+
+    user32.EnumChildWindows.argtypes = [wintypes.HWND, enum_proc, wintypes.LPARAM]
+    user32.EnumChildWindows.restype = wintypes.BOOL
+    user32.EnumChildWindows(root_handle, enum_proc(callback), 0)
+    handles.extend(child_handles)
+    return list(dict.fromkeys(handles))
 
 
 class _BitmapInfoHeader(ctypes.Structure):

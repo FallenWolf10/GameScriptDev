@@ -10,6 +10,22 @@ A user-operated tool that automates repetitive UI actions on the user's local ma
 
 A browser-based control surface hosted on the user's local machine for managing profiles, validation, dry runs, live-run confirmation, run logs, and artifacts without turning the runner into a cloud service.
 
+### Dashboard-Managed Run
+
+A run launched from the Local Web Dashboard and executed as a background job owned by the dashboard process. It remains observable through dashboard status, timeline, logs, and artifacts while avoiding any requirement that the operator keep a foreground terminal session attached.
+
+### Dashboard Ownership
+
+The rule that a Dashboard-Managed Run remains valid only while the dashboard process that launched it is still running. If that process stops unexpectedly during a live run, the runner fails closed, records the interruption in logs and artifacts when possible, and sends no further input.
+
+### Background Window Message Input
+
+Live input delivered directly to a specific target window handle by posting keyboard or mouse messages to that window instead of injecting global desktop input into the current foreground application.
+
+### Foreground Input Fallback
+
+A compatibility path used only when a target cannot reliably accept Background Window Message Input. In this mode the runner requires the target window to become foreground before sending live desktop input.
+
 ### Robust Input Variation
 
 Small coordinate and timing variation used to reduce brittle exact-pixel assumptions in UI automation. It is not anti-detection or evasion behavior.
@@ -149,6 +165,10 @@ The runtime adapter responsible for finding, focusing, and preparing the target 
 ### Target Window Detection
 
 The process of finding the target application's visible window by comparing the profile's target identity against live operating-system windows.
+
+### Window Handle
+
+A live operating-system identifier for a specific target window. Background Window Message Input is addressed to this handle rather than to whichever application currently owns foreground focus.
 
 ### Screen Adapter
 

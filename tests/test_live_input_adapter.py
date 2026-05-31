@@ -66,6 +66,29 @@ class FakeBackgroundMouseSender:
         self.events.append((window.handle, x, y))
 
 
+class FakeMouseSender:
+    def __init__(self) -> None:
+        self.events: list[tuple[int, int]] = []
+
+    def click(self, x: int, y: int) -> None:
+        self.events.append((x, y))
+
+
+class FakeWindowAdapter:
+    def __init__(self, can_focus: bool = True) -> None:
+        self.can_focus = can_focus
+        self.controllers_requested = 0
+        self.confirm_calls: list[TargetWindow] = []
+
+    def _controller(self) -> object:
+        self.controllers_requested += 1
+        return object()
+
+    def _confirm_foreground(self, controller: object, window: TargetWindow) -> bool:
+        self.confirm_calls.append(window)
+        return self.can_focus
+
+
 class LiveInputAdapterTests(unittest.TestCase):
     def test_press_key_sends_down_then_up_for_allowed_key(self) -> None:
         sender = FakeKeyboardSender()
@@ -126,6 +149,22 @@ class LiveInputAdapterTests(unittest.TestCase):
             adapter.press_key("enter")
 
         self.assertEqual(sender.events, [])
+
+    def test_press_key_refocuses_target_window_before_sending(self) -> None:
+        sender = FakeKeyboardSender()
+        window_adapter = FakeWindowAdapter(can_focus=True)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+            window_adapter=window_adapter,  # type: ignore[arg-type]
+        )
+
+        adapter.press_key("enter")
+
+        self.assertEqual(sender.events, [("down", 0x0D), ("up", 0x0D)])
+        self.assertEqual(window_adapter.controllers_requested, 1)
+        self.assertEqual(window_adapter.confirm_calls, [TARGET_WINDOW])
 
     def test_press_key_without_sender_fails_closed_when_win32_unavailable(self) -> None:
         adapter = LiveInputAdapter(
@@ -238,6 +277,23 @@ class LiveInputAdapterTests(unittest.TestCase):
 
         self.assertEqual(sender.events, [(100, 25, 40)])
         self.assertEqual(focus.checked_windows, [])
+
+    def test_click_region_refocuses_target_window_before_foreground_click(self) -> None:
+        sender = FakeMouseSender()
+        window_adapter = FakeWindowAdapter(can_focus=True)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+            window_adapter=window_adapter,  # type: ignore[arg-type]
+            regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
+        )
+
+        adapter.click_region("start")
+
+        self.assertEqual(sender.events, [(25, 40)])
+        self.assertEqual(window_adapter.controllers_requested, 1)
+        self.assertEqual(window_adapter.confirm_calls, [TARGET_WINDOW])
 
     def test_wait_sleeps_for_requested_duration(self) -> None:
         slept: list[float] = []

@@ -22,11 +22,12 @@ This repository currently contains the v1 skeleton:
 - bounded live waits for expected states
 - bounded live wait actions
 - limited live keyboard press and hold actions
-- target-window focusing and foreground verification before live input
+- background window-message live input for compatible targets
+- foreground verification only when a profile requires the foreground fallback
 - liveness and identity checks before live screenshots and input
 - contextual live screenshot artifact names
 - optional OCR adapter support behind the vision adapter boundary
-- named-region pointer clicks after live focus and liveness verification
+- named-region pointer clicks through window-relative background messages or foreground desktop input, depending on profile compatibility
 - local web dashboard for profile discovery, validation, dry runs, readiness, logs, and artifacts
 - profile-pack metadata and live-mode compatibility checklist gating
 - profile-pack scaffold/check authoring commands
@@ -54,7 +55,7 @@ Global interruptions run their configured recovery actions only up to the interr
 
 Profiles define click coordinates as named regions, then actions reference those names. This keeps coordinate data centralized and lets validation catch missing or misspelled regions before a run starts.
 
-Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, focuses the matched window, confirms the foreground handle, checks liveness before live screenshots and input, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Live `wait` actions, a limited allowlist of keyboard press/hold actions, and named-region pointer clicks are available with bounded duration guards. OCR is optional and can be injected behind the vision adapter boundary.
+Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, checks liveness before live screenshots and input, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Profiles that use `target.input_mode: background_window_messages` send keyboard and mouse messages directly to the matched window handle without requiring foreground ownership. Profiles that use `target.input_mode: foreground` take the compatibility fallback and must focus and confirm the foreground handle before live desktop input is sent. Live `wait` actions, a limited allowlist of keyboard press/hold actions, and named-region pointer clicks are available with bounded duration guards. OCR is optional and can be injected behind the vision adapter boundary.
 
 In live mode, `wait_for_state` is a bounded polling loop over screen capture and anchor detection. It uses the profile default timeout unless the action supplies `timeout_seconds`, and supports `poll_interval_seconds` for tuning. Live polling uses a small positive minimum interval to avoid tight screenshot loops.
 
@@ -113,10 +114,9 @@ http://127.0.0.1:8765
 
 The dashboard discovers profiles, validates them, launches dry runs, shows readiness blockers before live mode, requires `RUN` confirmation for live runs, and surfaces run history, logs, artifacts, current state, final result, and failure reason. New contributors should use the `Local Demo Target` profile pack before any real game profile work.
 
-The Local Demo Target pack uses `target.input_mode: background_window_messages`
-so live input can be posted to the demo window without requiring foreground
-ownership. The target still needs to remain visible for screenshot-based state
-detection.
+The Local Demo Target pack uses `target.input_mode: foreground` because Tk
+windows do not reliably accept direct background mouse messages. Live input is
+sent only after the runner refocuses and verifies the matched demo window.
 
 Run the operator startup checks from source:
 
@@ -157,7 +157,7 @@ Safe fixture rules live in
 
 ## Live Mode
 
-Live mode is explicit and requires confirmation before it can control the desktop. The runner focuses and verifies the target window before live input, checks that the original target is still alive before live screenshots and input, and fails closed when the window cannot be confirmed.
+Live mode is explicit and requires confirmation before it can control the desktop. The canonical input path posts keyboard and mouse messages directly to the target window handle when the profile supports `background_window_messages`. The foreground path is a compatibility fallback for targets that require global desktop input. In both cases, the runner checks that the original target is still alive before live screenshots and input, and fails closed when the window cannot be confirmed.
 
 ## Roadmap
 

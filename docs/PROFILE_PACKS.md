@@ -66,15 +66,18 @@ Targets may also declare:
 ```yaml
 target:
   window_title_contains: Example Window
-  input_mode: foreground
+  input_mode: background_window_messages
 ```
 
 Supported input modes are:
 
-- `foreground`: use OS foreground focus plus global input injection.
-- `background_window_messages`: post keyboard and mouse messages directly to the
-  target window handle. This avoids foreground ownership but still requires the
+- `background_window_messages`: the canonical live-input mode. Post keyboard and
+  mouse messages directly to the target window handle instead of injecting
+  global desktop input. This avoids foreground ownership but still requires the
   window to remain visible for screenshot-based state detection.
+- `foreground`: a compatibility fallback for targets that cannot reliably accept
+  direct window messages. This mode uses OS foreground focus plus global input
+  injection and refuses live input when the target is not foreground.
 
 ## Compatibility Checklist
 

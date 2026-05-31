@@ -9,7 +9,7 @@ from game_script_dev.actions import ActionRunner
 from game_script_dev.adapters.base import Screenshot
 from game_script_dev.adapters.live import LiveAdaptersUnavailable, TargetWindowNotReady
 from game_script_dev.runtime import RuntimeContext, create_runtime
-from game_script_dev.schema import Anchor, Interruption, Profile, State
+from game_script_dev.schema import Action, Anchor, Interruption, Profile, State
 
 
 MIN_LIVE_POLL_INTERVAL_SECONDS = 0.05
@@ -305,14 +305,66 @@ class Engine:
         runtime: RuntimeContext,
         screenshot: Screenshot,
     ) -> str | None:
-        for action in state.actions:
-            if action.type == "wait_for_state" and runtime.mode != "dry-run":
-                self._wait_for_state(action.data, runtime)
-                continue
-            result = actions.execute(action, screenshot)
+        for index, action in enumerate(state.actions, start=1):
+            summary = self._action_summary(action)
+            self._emit(
+                "action_started",
+                state=state.name,
+                action_index=index,
+                action_type=action.type,
+                action_summary=summary,
+            )
+            try:
+                if action.type == "wait_for_state" and runtime.mode != "dry-run":
+                    self._wait_for_state(action.data, runtime)
+                    result = None
+                else:
+                    result = actions.execute(action, screenshot)
+            except Exception as error:
+                self._emit(
+                    "action_failed",
+                    state=state.name,
+                    action_index=index,
+                    action_type=action.type,
+                    action_summary=summary,
+                    failure_reason=str(error),
+                )
+                raise
+
+            event: dict[str, object] = {
+                "state": state.name,
+                "action_index": index,
+                "action_type": action.type,
+                "action_summary": summary,
+            }
+            if result is not None:
+                event["result"] = result
+            self._emit("action_completed", **event)
             if action.type == "stop":
                 return result or "stopped"
         return None
+
+    def _action_summary(self, action: Action) -> str:
+        action_type = action.type
+        action_data = action.data
+        if action_type == "wait_for_state":
+            return f"wait_for_state {action_data['state']}"
+        if action_type == "click_point":
+            return f"click_point {action_data['region']}"
+        if action_type == "click_template":
+            return f"click_template {action_data['target']}"
+        if action_type == "press_key":
+            return f"press_key {action_data['key']}"
+        if action_type == "hold_key":
+            seconds = action_data.get("seconds", 1)
+            return f"hold_key {action_data['key']} {seconds}s"
+        if action_type == "wait":
+            return f"wait {action_data['seconds']}s"
+        if action_type == "log":
+            return str(action_data.get("message", "checkpoint"))
+        if action_type == "stop":
+            return f"stop {action_data.get('result', 'stopped')}"
+        return action_type
 
     def _wait_for_state(
         self,
