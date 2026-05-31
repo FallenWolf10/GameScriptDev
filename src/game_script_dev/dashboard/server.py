@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
 from game_script_dev.dashboard.run_registry import RunRegistry
+from game_script_dev.operator_package import run_startup_checks
 
 
 class DashboardState:
@@ -44,6 +45,16 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/runs":
             self._send_json(
                 {"runs": [run.to_dict() for run in self.state.runs.list_runs()]}
+            )
+            return
+        if path == "/api/startup-checks":
+            report = run_startup_checks(self.state.workspace_root, self.state.runs.log_root)
+            self._send_json(
+                {
+                    "ok": report.ok,
+                    "checks": report.checks,
+                    "messages": report.messages,
+                }
             )
             return
         if path.startswith("/api/runs/"):
@@ -83,6 +94,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         try:
             if len(parts) == 3:
                 self._send_json(self.state.runs.get_run(run_id).to_dict())
+                return
+            if parts[3] == "readiness" and len(parts) == 4:
+                run = self.state.runs.get_run(run_id)
+                report = self._readiness(run.profile_id).to_dict()
+                report["run_id"] = run.id
+                self._send_json(report)
+                return
+            if parts[3] == "review" and len(parts) == 4:
+                self._send_json(self.state.runs.review(run_id))
                 return
             if parts[3] == "log":
                 self._send_text(self.state.runs.read_log(run_id), "text/plain")

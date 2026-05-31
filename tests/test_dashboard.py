@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
@@ -116,6 +117,18 @@ class DashboardTests(unittest.TestCase):
             self.assertIn("compatibility checklist", " ".join(report.blockers))
             self.assertIn("successful_validation_or_dry_run", " ".join(report.blockers))
 
+    def test_profile_catalog_exposes_pack_metadata_and_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _write_profile(Path(temp_dir), PROFILE_PACK_YAML)
+
+            entry = ProfileCatalog(Path(temp_dir) / "profiles").list_profiles()[0]
+            payload = entry.to_dict()
+
+            self.assertEqual(payload["pack_status"], "incomplete")
+            self.assertEqual(payload["profile_pack"]["game"], "Demo Game")
+            self.assertIn("successful_validation_or_dry_run", payload["profile_pack"]["missing_compatibility_checks"])
+            self.assertIn("Dashboard notes", payload["notes"])
+
     def test_run_registry_records_dry_run_result_and_log(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -130,6 +143,12 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(record.final_result, "success")
             self.assertTrue(registry.last_dry_run_success("demo"))
             self.assertIn("Profile finished", registry.read_log(record.id))
+
+            review = registry.review(record.id)
+            self.assertEqual(review["run"]["id"], record.id)
+            self.assertTrue(review["timeline"])
+            self.assertEqual(review["timeline"][0]["event"], "run_started")
+            self.assertEqual(review["timeline"][-1]["event"], "run_completed")
 
     def test_server_exposes_profiles_and_starts_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -157,12 +176,131 @@ class DashboardTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_server_exposes_run_specific_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                response = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
 
-def _write_profile(root: Path, contents: str = PROFILE_YAML) -> Path:
-    profile_dir = root / "profiles" / "demo"
+                readiness = _get_json(
+                    f"{base_url}/api/runs/{response['id']}/readiness"
+                )
+
+                self.assertEqual(readiness["run_id"], response["id"])
+                self.assertEqual(readiness["profile_id"], "demo")
+                self.assertIn("blockers", readiness)
+                self.assertIn("live_available", readiness)
+                self.assertIn("target_status", readiness)
+                self.assertIn("resolution_status", readiness)
+                self.assertIn("compatibility_status", readiness)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_exposes_startup_checks_and_run_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                startup = _get_json(f"{base_url}/api/startup-checks")
+                self.assertIn("runtime_dependencies", startup["checks"])
+                self.assertIn("writable_logs", startup["checks"])
+
+                response = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                _wait_for_server_run(base_url, response["id"])
+
+                review = _get_json(f"{base_url}/api/runs/{response['id']}/review")
+
+                self.assertEqual(review["run"]["id"], response["id"])
+                self.assertTrue(review["timeline"])
+                self.assertIn("artifacts", review)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_run_specific_readiness_uses_run_profile_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            _write_profile(root, profile_id="other", name="Other Demo")
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                response = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "other", "mode": "dry-run"},
+                )
+
+                readiness = _get_json(
+                    f"{base_url}/api/runs/{response['id']}/readiness"
+                )
+
+                self.assertEqual(readiness["profile_id"], "other")
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_run_specific_readiness_returns_404_for_missing_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with self.assertRaises(HTTPError) as captured:
+                    urlopen(f"{base_url}/api/runs/missing/readiness", timeout=5)
+
+                self.assertEqual(captured.exception.code, 404)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_dashboard_static_ui_contains_live_verification_containers(self) -> None:
+        html = Path("src/game_script_dev/dashboard/static/index.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('id="live-verification-checklist"', html)
+        self.assertIn('id="selected-run-readiness"', html)
+        self.assertIn('id="latest-screenshot-link"', html)
+        self.assertIn('id="profile-pack-detail"', html)
+        self.assertIn('id="run-review-timeline"', html)
+
+
+def _write_profile(
+    root: Path,
+    contents: str = PROFILE_YAML,
+    *,
+    profile_id: str = "demo",
+    name: str | None = None,
+) -> Path:
+    if name is not None:
+        contents = contents.replace("name: Dashboard Demo", f"name: {name}", 1)
+    profile_dir = root / "profiles" / profile_id
     profile_dir.mkdir(parents=True)
     profile_path = profile_dir / "profile.yaml"
     profile_path.write_text(contents, encoding="utf-8")
+    (profile_dir / "notes.md").write_text("Dashboard notes", encoding="utf-8")
     return profile_path
 
 
@@ -178,6 +316,26 @@ def _wait_for_run(registry: RunRegistry, run_id: str) -> None:
 
 def _get_json(url: str) -> dict[str, object]:
     return json.loads(urlopen(url, timeout=5).read())
+
+
+def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    return json.loads(urlopen(request, timeout=5).read())
+
+
+def _wait_for_server_run(base_url: str, run_id: str) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        run = _get_json(f"{base_url}/api/runs/{run_id}")
+        if run["status"] in {"completed", "failed"}:
+            return
+        time.sleep(0.01)
+    raise AssertionError("server run did not finish")
 
 
 if __name__ == "__main__":

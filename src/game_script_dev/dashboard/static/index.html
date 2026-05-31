@@ -60,6 +60,16 @@
         <ul id="blockers" class="message-list"></ul>
         <h3>Warnings</h3>
         <ul id="warnings" class="message-list"></ul>
+        <h3>Profile Pack</h3>
+        <div id="profile-pack-detail" class="pack-detail"></div>
+        <h3>Live Verification</h3>
+        <ol id="live-verification-checklist" class="checklist">
+          <li>Start the selected target window.</li>
+          <li>Run and confirm a successful dashboard dry run.</li>
+          <li>Refresh readiness and resolve every blocker.</li>
+          <li>Type RUN only when ready for live desktop input.</li>
+          <li>Review the final result, log, and screenshot artifacts.</li>
+        </ol>
       </section>
 
       <section class="panel runs-panel">
@@ -79,7 +89,19 @@
         <div class="panel-heading artifact-heading">
           <h2>Artifacts</h2>
         </div>
+        <div id="primary-artifact" class="primary-artifact">
+          <span id="latest-screenshot-link" class="muted">Latest screenshot: none</span>
+        </div>
         <div id="artifacts" class="artifacts"></div>
+        <div class="panel-heading artifact-heading">
+          <h2>Run Review</h2>
+        </div>
+        <ol id="run-review-timeline" class="timeline"></ol>
+        <div id="selected-run-readiness" class="panel-heading artifact-heading">
+          <h2>Selected Run Readiness</h2>
+          <span id="run-readiness-badge" class="badge">Unknown</span>
+        </div>
+        <ul id="run-readiness-blockers" class="message-list"></ul>
       </section>
     </main>
 

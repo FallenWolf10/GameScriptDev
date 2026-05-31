@@ -76,8 +76,41 @@ async function refreshReadiness() {
   $("target-status").textContent = report.target_status;
   $("resolution-status").textContent = report.resolution_status;
   $("compatibility-status").textContent = report.compatibility_status;
+  renderProfilePackDetail();
   renderMessages("blockers", report.blockers);
   renderMessages("warnings", report.warnings);
+}
+
+function renderProfilePackDetail() {
+  const target = $("profile-pack-detail");
+  const profile = state.profiles.find((item) => item.id === state.selectedProfileId);
+  target.innerHTML = "";
+  if (!profile || !profile.profile_pack) {
+    target.textContent = "Not a profile pack";
+    target.className = "pack-detail muted";
+    return;
+  }
+  const pack = profile.profile_pack;
+  const missing = pack.missing_compatibility_checks || [];
+  target.className = "pack-detail";
+  target.innerHTML = `
+    <dl class="compact-list">
+      <div><dt>Game</dt><dd>${escapeHtml(pack.game)}</dd></div>
+      <div><dt>Mode</dt><dd>${escapeHtml(pack.game_mode)}</dd></div>
+      <div><dt>Detection</dt><dd>${escapeHtml(pack.detection_strategy)}</dd></div>
+      <div><dt>Pack Status</dt><dd>${escapeHtml(profile.pack_status)}</dd></div>
+    </dl>
+    <strong>Missing Evidence</strong>
+    <ul class="message-list">
+      ${missing.length ? missing.map((item) => `<li>${escapeHtml(item)}</li>`).join("") : "<li>None</li>"}
+    </ul>
+    <strong>Known Limitations</strong>
+    <ul class="message-list">
+      ${(pack.known_limitations || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
+    <strong>Notes</strong>
+    <pre class="notes-preview">${escapeHtml(profile.notes || "No notes.md")}</pre>
+  `;
 }
 
 function renderMessages(id, messages) {
@@ -150,11 +183,32 @@ async function refreshRunDetail() {
   $("log-output").textContent = logText;
   const artifacts = await api(`/api/runs/${encodeURIComponent(run.id)}/artifacts`);
   renderArtifacts(run.id, artifacts.artifacts || []);
+  const readiness = await api(`/api/runs/${encodeURIComponent(run.id)}/readiness`);
+  renderRunReadiness(readiness);
+  const review = await api(`/api/runs/${encodeURIComponent(run.id)}/review`);
+  renderRunReview(review.timeline || []);
 }
 
 function renderArtifacts(runId, artifacts) {
   const target = $("artifacts");
+  const primary = $("primary-artifact");
   target.innerHTML = "";
+  primary.innerHTML = "";
+  const screenshot = preferredScreenshot(artifacts);
+  if (screenshot) {
+    const link = document.createElement("a");
+    link.id = "latest-screenshot-link";
+    link.href = `/api/runs/${encodeURIComponent(runId)}/artifacts/${screenshot.relative_path}`;
+    link.textContent = `Latest screenshot: ${screenshot.name}`;
+    link.target = "_blank";
+    primary.appendChild(link);
+  } else {
+    const empty = document.createElement("span");
+    empty.id = "latest-screenshot-link";
+    empty.className = "muted";
+    empty.textContent = "Latest screenshot: none";
+    primary.appendChild(empty);
+  }
   for (const artifact of artifacts) {
     const link = document.createElement("a");
     link.href = `/api/runs/${encodeURIComponent(runId)}/artifacts/${artifact.relative_path}`;
@@ -166,6 +220,43 @@ function renderArtifacts(runId, artifacts) {
     const empty = document.createElement("span");
     empty.className = "muted";
     empty.textContent = "No artifacts";
+    target.appendChild(empty);
+  }
+}
+
+function preferredScreenshot(artifacts) {
+  const screenshots = (artifacts || []).filter((artifact) => (
+    String(artifact.name || "").toLowerCase().endsWith(".png")
+  ));
+  if (!screenshots.length) return null;
+  const finalScreenshot = [...screenshots].reverse().find((artifact) => (
+    String(artifact.name || "").includes("_final-state-")
+      || String(artifact.name || "").startsWith("final-state-")
+  ));
+  return finalScreenshot || screenshots[screenshots.length - 1];
+}
+
+function renderRunReadiness(report) {
+  $("run-readiness-badge").textContent = report.live_available ? "Live Ready" : "Blocked";
+  $("run-readiness-badge").className = `badge ${report.live_available ? "good" : "bad"}`;
+  renderMessages("run-readiness-blockers", report.blockers);
+}
+
+function renderRunReview(timeline) {
+  const target = $("run-review-timeline");
+  target.innerHTML = "";
+  for (const event of timeline) {
+    const item = document.createElement("li");
+    const state = event.state ? ` state=${event.state}` : "";
+    const result = event.result ? ` result=${event.result}` : "";
+    const reason = event.failure_reason ? ` reason=${event.failure_reason}` : "";
+    item.textContent = `${event.at || ""} ${event.event || "event"}${state}${result}${reason}`.trim();
+    target.appendChild(item);
+  }
+  if (!timeline.length) {
+    const empty = document.createElement("li");
+    empty.className = "muted";
+    empty.textContent = "No review events";
     target.appendChild(empty);
   }
 }

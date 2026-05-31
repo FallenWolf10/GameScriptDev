@@ -82,6 +82,7 @@ class Engine:
                         state.name,
                         result,
                     )
+                    self._capture_final(runtime, state.name, result)
                     self._emit("finished", state=state.name, result=result)
                     return result
 
@@ -92,6 +93,7 @@ class Engine:
                     screenshot,
                 )
                 if stop_result is not None:
+                    self._capture_final(runtime, state.name, f"stop-{stop_result}")
                     return stop_result
 
                 if state.on_success is None:

@@ -29,6 +29,10 @@ This repository currently contains the v1 skeleton:
 - named-region pointer clicks after live focus and liveness verification
 - local web dashboard for profile discovery, validation, dry runs, readiness, logs, and artifacts
 - profile-pack metadata and live-mode compatibility checklist gating
+- profile-pack scaffold/check authoring commands
+- run review timeline and startup checks in the dashboard
+- repo-owned Local Demo Target for safe live verification
+- safe Local Demo regression fixtures
 - capped global interruption recovery attempts
 - terminal states
 - daily log folders
@@ -56,9 +60,25 @@ In live mode, `wait_for_state` is a bounded polling loop over screen capture and
 
 ## Run The Demo
 
+Start the local demo target in one terminal:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_script_dev.demo_target
+```
+
+Then run the demo profile in another terminal:
+
 ```powershell
 $env:PYTHONPATH = "src"
 python -m game_script_dev --profile profiles/demo/profile.yaml
+```
+
+The canonical profile-pack version lives at:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_script_dev --profile profiles/demo/local_target/profile.yaml
 ```
 
 Validate a profile without running it:
@@ -91,7 +111,17 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The dashboard discovers profiles, validates them, launches dry runs, shows readiness blockers before live mode, requires `RUN` confirmation for live runs, and surfaces run history, logs, artifacts, current state, final result, and failure reason.
+The dashboard discovers profiles, validates them, launches dry runs, shows readiness blockers before live mode, requires `RUN` confirmation for live runs, and surfaces run history, logs, artifacts, current state, final result, and failure reason. New contributors should use the `Local Demo Target` profile pack before any real game profile work.
+
+Run the operator startup checks from source:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_script_dev doctor --workspace . --logs logs
+```
+
+For manual live verification against the repo-owned target, see
+[docs/LOCAL_DEMO_TARGET.md](docs/LOCAL_DEMO_TARGET.md).
 
 ## Profile Packs
 
@@ -105,6 +135,20 @@ See [docs/PROFILE_PACKS.md](docs/PROFILE_PACKS.md) for the folder structure and
 checklist contract. The dashboard blocks live mode for profile packs until their
 compatibility checklist is complete and a successful dashboard dry run has been
 recorded.
+
+Create and check a new pack shape:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_script_dev scaffold-pack --output profiles/example/daily --game "Example" --mode "Daily"
+python -m game_script_dev check-pack --profile profiles/example/daily/profile.yaml
+```
+
+Real target packs require an Expansion Review before they are considered ready.
+See [docs/EXPANSION_REVIEW.md](docs/EXPANSION_REVIEW.md).
+
+Safe fixture rules live in
+[docs/REGRESSION_FIXTURES.md](docs/REGRESSION_FIXTURES.md).
 
 ## Live Mode
 

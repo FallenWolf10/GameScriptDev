@@ -1,5 +1,23 @@
 version: 1
-name: Demo Profile
+name: Local Demo Target
+
+profile_pack:
+  game: GameScriptDev Demo
+  game_mode: Local Target
+  detection_strategy: template_matching
+  known_limitations:
+    - Local demo target only; not a real game or external service.
+    - Tk window decoration size may vary, so the demo profile ignores outer-window resolution while using a fixed 1280x720 client area.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
 
 target:
   window_title_contains: Demo Automation Window

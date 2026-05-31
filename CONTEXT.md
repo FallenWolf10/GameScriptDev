@@ -26,6 +26,26 @@ A folder for one game or game-mode workflow that groups the YAML profile, assets
 
 A profile-pack review record that must confirm target identity, supported resolution, required assets, complete state graph coverage, terminal states, failure transitions, interruption recovery, known limitations, and successful validation or dry-run evidence before live mode is available.
 
+### Profile-Pack Authoring Support
+
+Tools or guidance that help a profile author create, validate, review, and maintain profile packs without adding game-specific behavior to the runner.
+
+### Live Run Review
+
+A post-run inspection of the states, actions, anchor detections, screenshots, retries, failures, logs, and artifacts from a live-mode execution.
+
+### Expansion Review
+
+A safety and compatibility review performed before adding or updating a real target profile pack, confirming that the target permits the intended local automation and stays inside the project boundary.
+
+### Operator Package
+
+A local installable or runnable form of the tool intended for an operator who wants to use the runner, dashboard, and demo workflows without working directly from source.
+
+### Regression Fixture
+
+A saved, non-sensitive artifact from a known run that can be reused to test profile validation, vision matching, state detection, or run review behavior without repeating a live run.
+
 ### Declarative Profile
 
 A game profile expressed as data rather than custom game-specific code. It describes states, anchors, actions, retries, timeouts, and recovery behavior using a fixed vocabulary that the automation runner understands.
@@ -97,6 +117,14 @@ A controlled stop that records the failure point, writes a log entry, captures a
 ### Demo Profile
 
 A non-game profile used to validate the runner, profile schema, state machine, logging, retry behavior, and failure handling before real game assets and actions are available.
+
+### Local Demo Target
+
+A repo-owned desktop window used to exercise live-mode safety checks, screenshots, input, state recognition, logs, and artifacts without depending on a real game or external service.
+
+### Live Verification Scenario
+
+A controlled run that pairs a profile with a known local target so live mode can be verified end-to-end while preserving explicit confirmation, target-window checks, and graceful termination.
 
 ### Dry Run Mode
 

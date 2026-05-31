@@ -38,6 +38,30 @@ class LiveScreenAdapterTests(unittest.TestCase):
             assert screenshot.path is not None
             self.assertTrue(screenshot.path.exists())
 
+    def test_repeated_context_captures_include_sequence_numbers(self) -> None:
+        def fake_grabber(bbox: tuple[int, int, int, int]) -> Image.Image:
+            return Image.new("RGB", (20, 10), "blue")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = LiveScreenAdapter(Path(temp_dir), grabber=fake_grabber)
+            window = TargetWindow(
+                title="Demo",
+                process_name="demo.exe",
+                left=100,
+                top=200,
+                width=20,
+                height=10,
+                handle=123,
+            )
+
+            first = adapter.capture(window, context="wait-for-done")
+            second = adapter.capture(window, context="wait-for-done")
+
+            assert first.path is not None
+            assert second.path is not None
+            self.assertTrue(first.path.name.endswith("_wait-for-done_01.png"))
+            self.assertTrue(second.path.name.endswith("_wait-for-done_02.png"))
+
     def test_capture_requires_window_handle(self) -> None:
         adapter = LiveScreenAdapter(Path("unused"))
 

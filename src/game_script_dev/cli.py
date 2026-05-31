@@ -4,8 +4,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from game_script_dev.authoring import check_profile_pack, scaffold_profile_pack
 from game_script_dev.engine import Engine, LiveModeUnavailable
 from game_script_dev.logging_setup import create_run_logger
+from game_script_dev.operator_package import run_startup_checks
 from game_script_dev.profile_loader import ProfileLoadError, load_profile
 from game_script_dev.schema import ProfileValidationError, validate_profile
 
@@ -15,9 +17,22 @@ def build_parser() -> argparse.ArgumentParser:
         prog="game-script-dev",
         description="Run a declarative game automation profile.",
     )
+    subparsers = parser.add_subparsers(dest="command")
+
+    scaffold = subparsers.add_parser("scaffold-pack")
+    scaffold.add_argument("--output", required=True, type=Path)
+    scaffold.add_argument("--game", required=True)
+    scaffold.add_argument("--mode", required=True)
+
+    check = subparsers.add_parser("check-pack")
+    check.add_argument("--profile", required=True, type=Path)
+
+    doctor = subparsers.add_parser("doctor")
+    doctor.add_argument("--workspace", type=Path, default=Path.cwd())
+    doctor.add_argument("--logs", type=Path, default=Path("logs"))
+
     parser.add_argument(
         "--profile",
-        required=True,
         type=Path,
         help="Path to a YAML profile file.",
     )
@@ -43,6 +58,32 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "scaffold-pack":
+        created = scaffold_profile_pack(args.output, game=args.game, mode=args.mode)
+        for path in created:
+            print(path)
+        return 0
+
+    if args.command == "check-pack":
+        result = check_profile_pack(args.profile.parent)
+        for message in result.errors:
+            print(f"ERROR: {message}")
+        for message in result.warnings:
+            print(f"WARNING: {message}")
+        return 0 if result.ok else 1
+
+    if args.command == "doctor":
+        report = run_startup_checks(args.workspace, args.logs)
+        for name, passed in report.checks.items():
+            status = "ok" if passed else "failed"
+            print(f"{name}: {status}")
+        for message in report.messages:
+            print(message)
+        return 0 if report.ok else 1
+
+    if args.profile is None:
+        parser.error("--profile is required unless a subcommand is used")
 
     try:
         profile = load_profile(args.profile)

@@ -29,6 +29,7 @@ class RunRecord:
     started_at: str = field(default_factory=_now_iso)
     finished_at: str | None = None
     run_paths: RunPaths | None = None
+    timeline: list[dict[str, object]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -46,6 +47,7 @@ class RunRecord:
             "artifact_dir": str(self.run_paths.artifact_dir)
             if self.run_paths
             else None,
+            "timeline": self.timeline,
         }
 
 
@@ -126,6 +128,14 @@ class RunRegistry:
                 )
         return artifacts
 
+    def review(self, run_id: str) -> dict[str, object]:
+        record = self.get_run(run_id)
+        return {
+            "run": record.to_dict(),
+            "timeline": record.timeline,
+            "artifacts": self.list_artifacts(run_id),
+        }
+
     def artifact_path(self, run_id: str, relative_path: str) -> Path:
         record = self.get_run(run_id)
         if record.run_paths is None:
@@ -147,6 +157,10 @@ class RunRegistry:
                 self.log_root, profile.name, record.mode
             )
             self._update(record.id, status="running", run_paths=run_paths)
+            self._append_timeline(
+                record.id,
+                {"event": "run_started", "mode": record.mode, "at": _now_iso()},
+            )
 
             result = Engine(
                 profile=profile,
@@ -163,6 +177,10 @@ class RunRegistry:
                 final_result=result,
                 finished_at=_now_iso(),
             )
+            self._append_timeline(
+                record.id,
+                {"event": "run_completed", "result": result, "at": _now_iso()},
+            )
             if record.mode == "dry-run" and result == "success":
                 with self._lock:
                     self._last_dry_run_success[record.profile_id] = True
@@ -173,6 +191,10 @@ class RunRegistry:
                 failure_reason=str(error),
                 finished_at=_now_iso(),
             )
+            self._append_timeline(
+                record.id,
+                {"event": "run_failed", "failure_reason": str(error), "at": _now_iso()},
+            )
         finally:
             if logger is not None:
                 for handler in list(logger.handlers):
@@ -180,6 +202,7 @@ class RunRegistry:
                     handler.close()
 
     def _handle_event(self, run_id: str, event: dict[str, object]) -> None:
+        self._append_timeline(run_id, {"at": _now_iso(), **event})
         updates: dict[str, object] = {}
         if event.get("event") == "state_started":
             updates["current_state"] = event.get("state")
@@ -188,6 +211,10 @@ class RunRegistry:
             updates["failure_reason"] = event.get("failure_reason")
         if updates:
             self._update(run_id, **updates)
+
+    def _append_timeline(self, run_id: str, event: dict[str, object]) -> None:
+        with self._lock:
+            self._records[run_id].timeline.append(event)
 
     def _update(self, run_id: str, **updates: object) -> None:
         with self._lock:

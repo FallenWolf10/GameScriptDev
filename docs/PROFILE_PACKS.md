@@ -11,6 +11,7 @@ profiles/
   example_game/
     daily_task/
       profile.yaml
+      expansion_review.md
       assets/
         home_title.png
       notes.md
@@ -22,6 +23,10 @@ profiles/
 The dashboard derives the profile id from the folder path. For example,
 `profiles/example_game/daily_task/profile.yaml` becomes
 `example_game__daily_task`.
+
+The repo-owned Local Demo Target pack is exempt from `expansion_review.md`.
+Every real target pack must include it and must pass `game-script-dev
+check-pack`.
 
 ## Required Metadata
 
@@ -81,3 +86,20 @@ Profile packs must stay within the project boundary in `CONTEXT.md`: local,
 user-approved, ToS-compliant UI automation only. Do not add anti-cheat bypass,
 stealth behavior, account farming, monetized grinding, or evasion logic to a
 profile pack.
+
+## Authoring Commands
+
+Create a pack scaffold:
+
+```powershell
+game-script-dev scaffold-pack --output profiles/example_game/daily_task --game "Example Game" --mode "Daily Task"
+```
+
+Check a pack:
+
+```powershell
+game-script-dev check-pack --profile profiles/example_game/daily_task/profile.yaml
+```
+
+The check validates folder shape, profile schema, notes, compatibility evidence,
+known limitations, and real-target Expansion Review status.

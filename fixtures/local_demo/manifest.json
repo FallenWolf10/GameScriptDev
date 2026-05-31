@@ -1,0 +1,28 @@
+{
+  "name": "Local Demo Synthetic Fixtures",
+  "safe_to_commit": true,
+  "contains_third_party_content": false,
+  "provenance": "Repo-owned synthetic images generated from Local Demo Target marker colors.",
+  "states": [
+    "home_screen",
+    "daily_menu",
+    "completion_popup"
+  ],
+  "expected_anchors": [
+    "home_title",
+    "daily_menu_title",
+    "completion_title"
+  ],
+  "files": [
+    "screens/home_screen.png",
+    "screens/daily_menu.png",
+    "screens/completion_popup.png",
+    "anchors/home_marker.png",
+    "anchors/daily_menu_marker.png",
+    "anchors/completion_marker.png"
+  ],
+  "limitations": [
+    "Synthetic local demo content only.",
+    "Does not represent any real target UI or account state."
+  ]
+}

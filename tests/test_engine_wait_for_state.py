@@ -33,6 +33,19 @@ class SequencedScreenAdapter:
         return Screenshot(source=f"capture-{self.capture_count}")
 
 
+class RecordingScreenAdapter:
+    def __init__(self) -> None:
+        self.contexts: list[str | None] = []
+
+    def capture(
+        self,
+        window: TargetWindow,
+        context: str | None = None,
+    ) -> Screenshot:
+        self.contexts.append(context)
+        return Screenshot(source=f"capture-{len(self.contexts)}")
+
+
 class SequencedVisionAdapter:
     def __init__(self, ready_after_capture: int | None) -> None:
         self.ready_after_capture = ready_after_capture
@@ -91,6 +104,27 @@ def runtime_factory(ready_after_capture: int | None):
     return factory
 
 
+def runtime_factory_with_screen(screen_adapter: RecordingScreenAdapter):
+    def factory(
+        _profile: Profile,
+        _mode: str,
+        _logger: logging.Logger,
+        _artifact_dir: object,
+        _profile_dir: object,
+    ) -> RuntimeContext:
+        window = TargetWindow("test", "test.exe", 0, 0, 1280, 720)
+        return RuntimeContext(
+            mode="live",
+            window=window,
+            window_adapter=StaticWindowAdapter(),
+            screen_adapter=screen_adapter,
+            vision_adapter=SequencedVisionAdapter(ready_after_capture=1),
+            input_adapter=NoInputAdapter(),
+        )
+
+    return factory
+
+
 def profile_for_wait(timeout_seconds: float) -> Profile:
     return Profile(
         version=1,
@@ -120,6 +154,43 @@ def profile_for_wait(timeout_seconds: float) -> Profile:
                 required_anchors=[Anchor(name="done_title", type="text", text="Done")],
                 terminal=True,
                 result="success",
+            ),
+        },
+    )
+
+
+def terminal_profile() -> Profile:
+    return Profile(
+        version=1,
+        name="Terminal Profile",
+        target=Target(process_name="test.exe"),
+        resolution=Resolution(width=1280, height=720),
+        initial_state="done",
+        max_retries=1,
+        states={
+            "done": State(
+                name="done",
+                required_anchors=[Anchor(name="done_title", type="text", text="Done")],
+                terminal=True,
+                result="success",
+            ),
+        },
+    )
+
+
+def stop_profile() -> Profile:
+    return Profile(
+        version=1,
+        name="Stop Profile",
+        target=Target(process_name="test.exe"),
+        resolution=Resolution(width=1280, height=720),
+        initial_state="home",
+        max_retries=1,
+        states={
+            "home": State(
+                name="home",
+                required_anchors=[Anchor(name="home_title", type="text", text="Home")],
+                actions=[Action(type="stop", data={"result": "operator_stopped"})],
             ),
         },
     )
@@ -157,6 +228,38 @@ class EngineWaitForStateTests(unittest.TestCase):
         ).run()
 
         self.assertEqual(result, "failed_home")
+
+    def test_live_terminal_success_captures_final_screenshot(self) -> None:
+        screen_adapter = RecordingScreenAdapter()
+
+        result = Engine(
+            profile=terminal_profile(),
+            mode="live",
+            logger=quiet_logger("tests.terminal_success"),
+            runtime_factory=runtime_factory_with_screen(screen_adapter),
+        ).run()
+
+        self.assertEqual(result, "success")
+        self.assertEqual(
+            screen_adapter.contexts,
+            ["state-done-confirm", "final-state-done-success"],
+        )
+
+    def test_live_stop_action_captures_final_screenshot(self) -> None:
+        screen_adapter = RecordingScreenAdapter()
+
+        result = Engine(
+            profile=stop_profile(),
+            mode="live",
+            logger=quiet_logger("tests.stop_success"),
+            runtime_factory=runtime_factory_with_screen(screen_adapter),
+        ).run()
+
+        self.assertEqual(result, "operator_stopped")
+        self.assertEqual(
+            screen_adapter.contexts,
+            ["state-home-confirm", "final-state-home-stop-operator_stopped"],
+        )
 
 
 if __name__ == "__main__":

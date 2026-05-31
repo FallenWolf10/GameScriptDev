@@ -234,6 +234,7 @@ class LiveScreenAdapter:
         self.grabber = grabber
         self.window_adapter = window_adapter
         self.profile = profile
+        self._capture_counts: dict[str, int] = {}
 
     def capture(
         self,
@@ -249,8 +250,12 @@ class LiveScreenAdapter:
 
         self.capture_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%H%M%S_%f")
-        context_part = f"_{_safe_name(context)}" if context else ""
-        path = self.capture_dir / f"capture_{timestamp}{context_part}.png"
+        context_name = _safe_name(context)
+        self._capture_counts[context_name] = self._capture_counts.get(context_name, 0) + 1
+        sequence = self._capture_counts[context_name]
+        path = self.capture_dir / (
+            f"capture_{timestamp}_{context_name}_{sequence:02d}.png"
+        )
         bbox = (
             window.left,
             window.top,

@@ -1,0 +1,42 @@
+version: 1
+name: Local Demo Target Incomplete But Valid Checklist Example
+
+profile_pack:
+  game: GameScriptDev Demo
+  game_mode: Local Target
+  detection_strategy: template_matching
+  known_limitations:
+    - Example checklist that is schema-valid but not live-ready.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: false
+
+target:
+  window_title_contains: Demo Automation Window
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  max_retries: 1
+
+initial_state: done
+
+states:
+  done:
+    required_anchors:
+      - name: done_title
+        type: text
+        text: Done
+    terminal: true
+    result: success
