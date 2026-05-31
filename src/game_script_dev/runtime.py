@@ -43,7 +43,11 @@ def create_runtime(
 ) -> RuntimeContext:
     if mode == "live":
         window_adapter = WindowsWindowAdapter(logger)
-        screen_adapter = LiveScreenAdapter(artifact_dir or Path("logs/live_captures"))
+        screen_adapter = LiveScreenAdapter(
+            artifact_dir or Path("logs/live_captures"),
+            window_adapter=window_adapter,
+            profile=profile,
+        )
         vision_adapter = LiveVisionAdapter(profile_dir or Path("."), logger)
     else:
         window_adapter = DryRunWindowAdapter(logger)
@@ -58,7 +62,12 @@ def create_runtime(
     window_adapter.prepare_window(window, profile.resolution)
 
     if mode == "live":
-        input_adapter = LiveInputAdapter(target_window=window)
+        input_adapter = LiveInputAdapter(
+            target_window=window,
+            profile=profile,
+            regions=profile.regions,
+            window_adapter=window_adapter,
+        )
 
     return RuntimeContext(
         mode=mode,

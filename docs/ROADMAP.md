@@ -2,7 +2,9 @@
 
 This roadmap captures the required next work before GameScriptDev moves from the current script-runner skeleton into a safer UI-supported automation tool and then into reusable game-specific profile packs.
 
-## Required Next Work
+## Completed Through Section 9
+
+Sections 1 through 9 are now implemented in the local runner and dashboard MVP. The remaining roadmap focus should move to the next implementation plan after the profile-pack contract is exercised against real ToS-compliant game examples.
 
 1. Implement target-window focusing in live mode.
    - Bring the matched target window to foreground before live input.
@@ -55,15 +57,23 @@ This roadmap captures the required next work before GameScriptDev moves from the
    - Keep expansion ToS-compliant and inside the project safety boundary: no anti-cheat bypass, stealth behavior, account farming, monetized grinding, or evasion logic.
    - Prefer reusable runner capabilities over game-specific Python code.
 
+## Required Next Work
+
+Define the next roadmap section after profile packs are exercised against at least one real ToS-compliant game or game mode. Likely candidates are richer authoring diagnostics, dashboard profile-pack status views, or deeper live verification tooling.
+
 ## Current Checkpoint
 
-The project currently has the base runner structure, validation, dry-run execution, live adapter boundaries, Windows target detection, screenshots, template matching, bounded waits, limited keyboard input, logs, tests, and demo profile in place. The UI and expansion work should proceed after the live-runtime safety foundation is stronger.
+The project currently has the base runner structure, validation, dry-run execution, live adapter boundaries, Windows target detection, target-window focusing, liveness checks before live screenshots and input, contextual screenshot artifacts, optional OCR adapter injection, bounded waits, keyboard input, named-region pointer input, logs, tests, validation examples, expanded demo coverage, profile-pack metadata and compatibility checklist validation, and a local-only dashboard MVP.
+
+The local web dashboard is served from the Python project. It provides profile discovery, validation, dry-run launch, run history, logs, artifact viewing, readiness blockers, compatibility status, explicit live confirmation, current state, final result, and failure reason. Live mode remains confirmation-gated and readiness-gated.
+
+Next work should use the reusable profile-pack requirements for game and game-mode expansion while preserving the documented safety boundary.
 
 ## Source Coverage
 
 This roadmap includes the actionable requirements from the current markdown documentation:
 
-- `README.md`: current runner status, dry-run usage, live-mode limitations, logs, demo profile, OCR gap, pointer-input gap, and target-window-control gap.
+- `README.md`: current runner status, dry-run usage, live-mode safety checks, logs, demo profile, OCR adapter boundary, pointer input, target-window control, and dashboard command.
 - `CONTEXT.md`: safety boundary, local automation vocabulary, local web dashboard term, profile vocabulary, live confirmation, runtime adapters, detection strategies, named regions, and graceful termination.
 - `docs/adr/0001-yaml-profiles-with-explicit-state-graphs.md`: game behavior stays in strict declarative YAML profiles with explicit state graphs.
 - `docs/adr/0002-python-runner-with-dry-run-first.md`: Python remains the runner platform and dry-run remains the default before live input is allowed.

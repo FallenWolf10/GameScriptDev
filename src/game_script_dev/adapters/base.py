@@ -16,6 +16,7 @@ class TargetWindow:
     width: int
     height: int
     handle: int | None = None
+    process_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -31,9 +32,16 @@ class WindowAdapter(Protocol):
     def prepare_window(self, window: TargetWindow, resolution: Resolution) -> None:
         """Focus and verify or resize the target window."""
 
+    def verify_window(self, window: TargetWindow, profile: Profile) -> TargetWindow:
+        """Return a refreshed target window after confirming it is still valid."""
+
 
 class ScreenAdapter(Protocol):
-    def capture(self, window: TargetWindow) -> Screenshot:
+    def capture(
+        self,
+        window: TargetWindow,
+        context: str | None = None,
+    ) -> Screenshot:
         """Capture the target window or screen."""
 
 
@@ -49,12 +57,20 @@ class VisionAdapter(Protocol):
         """Return the center of a matched template."""
 
 
+class OCRAdapter(Protocol):
+    def contains_text(self, text: str, screenshot: Screenshot) -> bool:
+        """Return whether the screenshot contains the requested text."""
+
+
 class InputAdapter(Protocol):
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         """Click a detected template target."""
 
     def click_region(self, region_name: str) -> None:
         """Click a named profile region."""
+
+    def click_coordinates(self, x: int, y: int, label: str) -> None:
+        """Click a target-window-relative point."""
 
     def press_key(self, key: str) -> None:
         """Press a key."""

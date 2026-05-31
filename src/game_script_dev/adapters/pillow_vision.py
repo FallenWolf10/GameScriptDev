@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from game_script_dev.adapters.base import Screenshot
+from game_script_dev.adapters.base import OCRAdapter, Screenshot
 from game_script_dev.schema import Anchor
 
 
@@ -16,10 +16,12 @@ class PillowVisionAdapter:
         profile_dir: Path,
         logger: logging.Logger,
         default_threshold: float = 0.98,
+        ocr_adapter: OCRAdapter | None = None,
     ) -> None:
         self.profile_dir = profile_dir
         self.logger = logger
         self.default_threshold = default_threshold
+        self.ocr_adapter = ocr_adapter
 
     def anchor_present(self, anchor: Anchor, screenshot: Screenshot) -> bool:
         if anchor.type == "template":
@@ -27,7 +29,22 @@ class PillowVisionAdapter:
                 return False
             return self.find_template_center(anchor.asset, screenshot) is not None
 
-        self.logger.info("OCR anchor is not implemented yet: %s", anchor.name)
+        if anchor.type == "text":
+            if anchor.text is None:
+                return False
+            if self.ocr_adapter is None:
+                self.logger.info("OCR anchor unavailable: %s", anchor.name)
+                return False
+            present = self.ocr_adapter.contains_text(anchor.text, screenshot)
+            self.logger.info(
+                "OCR anchor match: anchor=%s screenshot=%s result=%s",
+                anchor.name,
+                screenshot.path or screenshot.source,
+                present,
+            )
+            return present
+
+        self.logger.info("Unsupported anchor type '%s': %s", anchor.type, anchor.name)
         return False
 
     def find_template_center(

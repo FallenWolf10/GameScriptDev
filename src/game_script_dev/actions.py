@@ -32,10 +32,12 @@ class ActionRunner:
         action: Action,
         screenshot: Screenshot,
     ) -> None:
-        self.runtime.input_adapter.click_template(
-            str(action.data["target"]),
-            screenshot,
-        )
+        asset = str(action.data["target"])
+        center = self.runtime.vision_adapter.find_template_center(asset, screenshot)
+        if center is None:
+            raise ValueError(f"template target was not found: {asset}")
+        x, y = center
+        self.runtime.input_adapter.click_coordinates(x, y, f"template:{asset}")
         return None
 
     def _execute_click_point(self, action: Action, screenshot: Screenshot) -> None:

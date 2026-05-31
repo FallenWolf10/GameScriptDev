@@ -18,6 +18,14 @@ Small coordinate and timing variation used to reduce brittle exact-pixel assumpt
 
 A game-specific description of window identity, standard resolution, screen anchors, state transitions, actions, visual assets, timeout settings, retry limits, and recovery rules. The automation runner executes game profiles without hardcoding game-specific behavior into the runner itself.
 
+### Profile Pack
+
+A folder for one game or game-mode workflow that groups the YAML profile, assets, notes, validation examples, known limitations, and compatibility checklist together.
+
+### Compatibility Checklist
+
+A profile-pack review record that must confirm target identity, supported resolution, required assets, complete state graph coverage, terminal states, failure transitions, interruption recovery, known limitations, and successful validation or dry-run evidence before live mode is available.
+
 ### Declarative Profile
 
 A game profile expressed as data rather than custom game-specific code. It describes states, anchors, actions, retries, timeouts, and recovery behavior using a fixed vocabulary that the automation runner understands.

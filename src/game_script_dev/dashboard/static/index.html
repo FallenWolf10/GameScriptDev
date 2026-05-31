@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GameScriptDev Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>GameScriptDev</h1>
+        <p id="workspace-status">Local operator dashboard</p>
+      </div>
+      <div class="run-controls">
+        <select id="profile-select" aria-label="Profile"></select>
+        <button id="validate-button" type="button">Validate</button>
+        <button id="dry-run-button" type="button">Dry Run</button>
+        <button id="live-run-button" type="button">Live Run</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel profile-panel">
+        <div class="panel-heading">
+          <h2>Profiles</h2>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
+        <div id="profiles" class="profile-list"></div>
+      </section>
+
+      <section class="panel readiness-panel">
+        <div class="panel-heading">
+          <h2>Readiness</h2>
+          <span id="readiness-badge" class="badge">Unknown</span>
+        </div>
+        <dl class="status-grid">
+          <div>
+            <dt>Target</dt>
+            <dd id="target-status">not_checked</dd>
+          </div>
+          <div>
+            <dt>Resolution</dt>
+            <dd id="resolution-status">not_checked</dd>
+          </div>
+          <div>
+            <dt>Compatibility</dt>
+            <dd id="compatibility-status">not_applicable</dd>
+          </div>
+          <div>
+            <dt>Current State</dt>
+            <dd id="current-state">idle</dd>
+          </div>
+          <div>
+            <dt>Final Result</dt>
+            <dd id="final-result">none</dd>
+          </div>
+        </dl>
+        <h3>Blockers</h3>
+        <ul id="blockers" class="message-list"></ul>
+        <h3>Warnings</h3>
+        <ul id="warnings" class="message-list"></ul>
+      </section>
+
+      <section class="panel runs-panel">
+        <div class="panel-heading">
+          <h2>Run History</h2>
+          <span id="run-count" class="muted">0 runs</span>
+        </div>
+        <div id="runs" class="runs"></div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-heading">
+          <h2>Log</h2>
+          <span id="selected-run" class="muted">No run selected</span>
+        </div>
+        <pre id="log-output"></pre>
+        <div class="panel-heading artifact-heading">
+          <h2>Artifacts</h2>
+        </div>
+        <div id="artifacts" class="artifacts"></div>
+      </section>
+    </main>
+
+    <dialog id="live-dialog">
+      <form method="dialog" class="dialog-body">
+        <h2>Live Confirmation</h2>
+        <p>Type RUN to allow live input for the selected profile.</p>
+        <input id="live-confirmation" autocomplete="off" />
+        <div class="dialog-actions">
+          <button value="cancel">Cancel</button>
+          <button id="confirm-live-button" value="confirm">Start Live Run</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

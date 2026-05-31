@@ -102,9 +102,7 @@ def profile_for_wait(timeout_seconds: float) -> Profile:
         states={
             "home": State(
                 name="home",
-                required_anchors=[
-                    Anchor(name="home_title", type="text", text="Home")
-                ],
+                required_anchors=[Anchor(name="home_title", type="text", text="Home")],
                 actions=[
                     Action(
                         type="wait_for_state",
@@ -119,9 +117,7 @@ def profile_for_wait(timeout_seconds: float) -> Profile:
             ),
             "done": State(
                 name="done",
-                required_anchors=[
-                    Anchor(name="done_title", type="text", text="Done")
-                ],
+                required_anchors=[Anchor(name="done_title", type="text", text="Done")],
                 terminal=True,
                 result="success",
             ),

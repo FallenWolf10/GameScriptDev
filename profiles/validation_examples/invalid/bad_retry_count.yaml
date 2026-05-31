@@ -1,0 +1,24 @@
+version: 1
+name: Invalid Retry Count Example
+
+target:
+  process_name: demo.exe
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+
+execution:
+  max_retries: 0
+
+initial_state: done
+
+states:
+  done:
+    required_anchors:
+      - name: done_title
+        type: text
+        text: Done
+    terminal: true
+    result: success

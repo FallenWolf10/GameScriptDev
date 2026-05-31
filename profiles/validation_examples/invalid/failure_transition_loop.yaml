@@ -1,0 +1,40 @@
+version: 1
+name: Invalid Failure Transition Loop Example
+
+target:
+  process_name: demo.exe
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+
+execution:
+  max_retries: 1
+
+initial_state: home
+
+states:
+  home:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    on_success: done
+    on_failure: recover
+
+  recover:
+    required_anchors:
+      - name: recover_title
+        type: text
+        text: Recover
+    on_success: done
+    on_failure: home
+
+  done:
+    required_anchors:
+      - name: done_title
+        type: text
+        text: Done
+    terminal: true
+    result: success

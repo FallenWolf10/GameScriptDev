@@ -1,0 +1,41 @@
+version: 1
+name: Missing Profile Pack Checklist Item
+
+profile_pack:
+  game: Example Game
+  game_mode: Daily Task
+  detection_strategy: template_matching
+  known_limitations:
+    - Example profile for validation only.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+
+target:
+  process_name: example.exe
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: verify_only
+
+execution:
+  max_retries: 1
+
+initial_state: done
+
+states:
+  done:
+    required_anchors:
+      - name: done_title
+        type: text
+        text: Done
+    terminal: true
+    result: success

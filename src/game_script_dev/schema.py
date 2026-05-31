@@ -35,6 +35,18 @@ SUPPORTED_KEY_NAMES = {
     "tab",
     "up",
 }
+SUPPORTED_DETECTION_STRATEGIES = {"template_matching", "ocr_matching", "template_and_ocr"}
+REQUIRED_COMPATIBILITY_CHECKS = {
+    "target_identity",
+    "supported_resolution",
+    "required_assets",
+    "full_state_graph",
+    "terminal_states",
+    "failure_transitions",
+    "interruption_recovery",
+    "known_limitations",
+    "successful_validation_or_dry_run",
+}
 
 
 class ProfileValidationError(Exception):
@@ -99,6 +111,30 @@ class Interruption:
 
 
 @dataclass(frozen=True)
+class ProfilePack:
+    game: str
+    game_mode: str
+    detection_strategy: str
+    known_limitations: list[str]
+    compatibility: dict[str, bool]
+
+    @property
+    def compatibility_complete(self) -> bool:
+        return all(
+            self.compatibility.get(check) is True
+            for check in REQUIRED_COMPATIBILITY_CHECKS
+        )
+
+    @property
+    def missing_compatibility_checks(self) -> list[str]:
+        return sorted(
+            check
+            for check in REQUIRED_COMPATIBILITY_CHECKS
+            if self.compatibility.get(check) is not True
+        )
+
+
+@dataclass(frozen=True)
 class Profile:
     version: int
     name: str
@@ -110,6 +146,7 @@ class Profile:
     interruptions: list[Interruption] = field(default_factory=list)
     default_timeout_seconds: float = 30.0
     max_retries: int = 3
+    profile_pack: ProfilePack | None = None
 
 
 def profile_from_mapping(raw: dict[str, Any]) -> Profile:
@@ -138,15 +175,15 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
         raise ValueError("interruptions must be a list")
 
     return Profile(
-        version=int(raw.get("version", 1)),
+        version=_integer(raw, "version", "version", default=1),
         name=_string(raw, "name"),
         target=Target(
             process_name=target_raw.get("process_name"),
             window_title_contains=target_raw.get("window_title_contains"),
         ),
         resolution=Resolution(
-            width=int(resolution_raw["width"]),
-            height=int(resolution_raw["height"]),
+            width=_integer(resolution_raw, "width", "window.resolution.width"),
+            height=_integer(resolution_raw, "height", "window.resolution.height"),
             policy=str(resolution_raw.get("policy", "verify_only")),
         ),
         initial_state=_string(raw, "initial_state"),
@@ -157,7 +194,13 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
             for interruption_raw in interruptions_raw
         ],
         default_timeout_seconds=float(execution_raw.get("default_timeout_seconds", 30)),
-        max_retries=int(execution_raw.get("max_retries", 3)),
+        max_retries=_integer(
+            execution_raw,
+            "max_retries",
+            "execution.max_retries",
+            default=3,
+        ),
+        profile_pack=_profile_pack_from_mapping(raw.get("profile_pack")),
     )
 
 
@@ -170,14 +213,40 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
     if profile.resolution.policy not in {"verify_only", "attempt_resize", "ignore"}:
         errors.append(f"unknown resolution policy: {profile.resolution.policy}")
 
+    if profile.profile_pack is not None:
+        _validate_profile_pack(profile.profile_pack, errors)
+
+    _validate_integer(
+        profile.resolution.width,
+        "window.resolution.width",
+        errors,
+        minimum=1,
+    )
+    _validate_integer(
+        profile.resolution.height,
+        "window.resolution.height",
+        errors,
+        minimum=1,
+    )
     _validate_duration(
         profile.default_timeout_seconds,
-        "execution default_timeout_seconds",
+        "execution.default_timeout_seconds",
         errors,
     )
+    _validate_integer(profile.max_retries, "execution.max_retries", errors, minimum=1)
 
     if profile.initial_state not in profile.states:
         errors.append(f"initial_state is missing from states: {profile.initial_state}")
+
+    for region in profile.regions.values():
+        _validate_integer(region.x, f"region '{region.name}'.x", errors, minimum=0)
+        _validate_integer(region.y, f"region '{region.name}'.y", errors, minimum=0)
+        _validate_integer(
+            region.width, f"region '{region.name}'.width", errors, minimum=1
+        )
+        _validate_integer(
+            region.height, f"region '{region.name}'.height", errors, minimum=1
+        )
 
     for state in profile.states.values():
         _validate_anchors(state.required_anchors, profile_dir, errors)
@@ -189,6 +258,7 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
             profile.regions,
             profile_dir,
             errors,
+            f"state '{state.name}' actions",
         )
 
         if state.terminal:
@@ -211,6 +281,12 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
             )
 
     for interruption in profile.interruptions:
+        _validate_integer(
+            interruption.max_retries,
+            f"interruption '{interruption.name}'.max_retries",
+            errors,
+            minimum=1,
+        )
         _validate_anchors(interruption.required_anchors, profile_dir, errors)
         _validate_actions(
             interruption.recovery_actions,
@@ -218,6 +294,7 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
             profile.regions,
             profile_dir,
             errors,
+            f"interruption '{interruption.name}' recovery_actions",
         )
 
     _validate_state_graph(profile, errors)
@@ -245,6 +322,8 @@ def _validate_state_graph(profile: Profile, errors: list[str]) -> None:
     if not any(profile.states[state_name].terminal for state_name in reachable):
         errors.append("state graph must include a reachable terminal state")
 
+    _validate_failure_transition_loops(profile, errors)
+
 
 def _state_successors(state: State) -> list[str]:
     successors: list[str] = []
@@ -253,6 +332,31 @@ def _state_successors(state: State) -> list[str]:
     if state.on_failure != "graceful_termination":
         successors.append(state.on_failure)
     return successors
+
+
+def _validate_failure_transition_loops(
+    profile: Profile,
+    errors: list[str],
+) -> None:
+    reported: set[tuple[str, ...]] = set()
+    for state_name in profile.states:
+        path: list[str] = []
+        current = state_name
+        while current in profile.states:
+            state = profile.states[current]
+            if state.terminal or state.on_failure == "graceful_termination":
+                break
+            if current in path:
+                cycle = path[path.index(current) :] + [current]
+                key = tuple(cycle)
+                if key not in reported:
+                    reported.add(key)
+                    errors.append(
+                        "failure transition loop detected: " + " -> ".join(cycle)
+                    )
+                break
+            path.append(current)
+            current = state.on_failure
 
 
 def _state_from_mapping(name: str, raw: Any) -> State:
@@ -280,8 +384,66 @@ def _interruption_from_mapping(raw: Any) -> Interruption:
         name=_string(raw, "name"),
         required_anchors=_anchors_from_list(raw.get("required_anchors", [])),
         recovery_actions=_actions_from_list(raw.get("recovery_actions", [])),
-        max_retries=int(raw.get("max_retries", 1)),
+        max_retries=_integer(
+            raw,
+            "max_retries",
+            f"interruption '{_string(raw, 'name')}'.max_retries",
+            default=1,
+        ),
     )
+
+
+def _profile_pack_from_mapping(raw: Any) -> ProfilePack | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("profile_pack must be a mapping")
+
+    compatibility = raw.get("compatibility")
+    if not isinstance(compatibility, dict):
+        raise ValueError("profile_pack.compatibility must be a mapping")
+
+    known_limitations = raw.get("known_limitations")
+    if not isinstance(known_limitations, list):
+        raise ValueError("profile_pack.known_limitations must be a list")
+
+    return ProfilePack(
+        game=_string(raw, "game"),
+        game_mode=_string(raw, "game_mode"),
+        detection_strategy=_string(raw, "detection_strategy"),
+        known_limitations=known_limitations,
+        compatibility={
+            str(check): value for check, value in compatibility.items()
+        },
+    )
+
+
+def _validate_profile_pack(profile_pack: ProfilePack, errors: list[str]) -> None:
+    if profile_pack.detection_strategy not in SUPPORTED_DETECTION_STRATEGIES:
+        errors.append(
+            "profile_pack.detection_strategy uses unknown strategy "
+            f"'{profile_pack.detection_strategy}'"
+        )
+
+    if not profile_pack.known_limitations:
+        errors.append("profile_pack.known_limitations must include at least one item")
+    for index, limitation in enumerate(profile_pack.known_limitations):
+        if not isinstance(limitation, str) or not limitation.strip():
+            errors.append(
+                f"profile_pack.known_limitations[{index}] must be a non-empty string"
+            )
+
+    missing_checks = REQUIRED_COMPATIBILITY_CHECKS - profile_pack.compatibility.keys()
+    for check in sorted(missing_checks):
+        errors.append(f"profile_pack.compatibility.{check} is required")
+
+    unknown_checks = profile_pack.compatibility.keys() - REQUIRED_COMPATIBILITY_CHECKS
+    for check in sorted(unknown_checks):
+        errors.append(f"profile_pack.compatibility.{check} is not supported")
+
+    for check, value in profile_pack.compatibility.items():
+        if not isinstance(value, bool):
+            errors.append(f"profile_pack.compatibility.{check} must be a boolean")
 
 
 def _region_from_mapping(name: str, raw: Any) -> ClickRegion:
@@ -290,10 +452,10 @@ def _region_from_mapping(name: str, raw: Any) -> ClickRegion:
 
     return ClickRegion(
         name=name,
-        x=int(raw["x"]),
-        y=int(raw["y"]),
-        width=int(raw["width"]),
-        height=int(raw["height"]),
+        x=_integer(raw, "x", f"region '{name}'.x"),
+        y=_integer(raw, "y", f"region '{name}'.y"),
+        width=_integer(raw, "width", f"region '{name}'.width"),
+        height=_integer(raw, "height", f"region '{name}'.height"),
     )
 
 
@@ -357,50 +519,60 @@ def _validate_actions(
     regions: dict[str, ClickRegion],
     profile_dir: Path,
     errors: list[str],
+    context: str,
 ) -> None:
-    for action in actions:
+    for index, action in enumerate(actions):
+        action_context = f"{context}[{index}].{action.type}"
         if action.type not in SUPPORTED_ACTION_TYPES:
-            errors.append(f"unknown action type: {action.type}")
+            errors.append(f"{action_context} uses unknown action type")
         if action.type == "wait_for_state":
             state_name = action.data.get("state")
             if state_name not in states:
-                errors.append(f"wait_for_state references unknown state '{state_name}'")
+                errors.append(
+                    f"{action_context}.state references unknown state '{state_name}'"
+                )
             if "timeout_seconds" in action.data:
                 _validate_duration(
                     action.data["timeout_seconds"],
-                    "wait_for_state timeout_seconds",
+                    f"{action_context}.timeout_seconds",
                     errors,
                 )
             if "poll_interval_seconds" in action.data:
                 _validate_duration(
                     action.data["poll_interval_seconds"],
-                    "wait_for_state poll_interval_seconds",
+                    f"{action_context}.poll_interval_seconds",
                     errors,
                 )
         if action.type in {"click_template"}:
             target = action.data.get("target")
             if not target:
-                errors.append(f"{action.type} must define target")
+                errors.append(f"{action_context}.target is required")
             elif not (profile_dir / str(target)).exists():
-                errors.append(f"{action.type} target asset missing: {target}")
+                errors.append(f"{action_context}.target asset missing: {target}")
         if action.type == "click_point":
             region = action.data.get("region")
             if not region:
-                errors.append("click_point must define region")
+                errors.append(f"{action_context}.region is required")
             elif region not in regions:
-                errors.append(f"click_point references unknown region '{region}'")
+                errors.append(
+                    f"{action_context}.region references unknown region '{region}'"
+                )
         if action.type in {"press_key", "hold_key"}:
             if "key" not in action.data:
-                errors.append(f"{action.type} must define key")
+                errors.append(f"{action_context}.key is required")
             else:
-                _validate_key(action.data["key"], action.type, errors)
+                _validate_key(action.data["key"], f"{action_context}.key", errors)
         if action.type == "hold_key" and "seconds" in action.data:
-            _validate_duration(action.data["seconds"], "hold_key seconds", errors)
+            _validate_duration(
+                action.data["seconds"], f"{action_context}.seconds", errors
+            )
         if action.type == "wait":
             if "seconds" not in action.data:
-                errors.append("wait must define seconds")
+                errors.append(f"{action_context}.seconds is required")
             else:
-                _validate_duration(action.data["seconds"], "wait seconds", errors)
+                _validate_duration(
+                    action.data["seconds"], f"{action_context}.seconds", errors
+                )
 
 
 def _validate_duration(value: object, label: str, errors: list[str]) -> None:
@@ -414,14 +586,27 @@ def _validate_duration(value: object, label: str, errors: list[str]) -> None:
         errors.append(f"{label} must be a finite non-negative number")
 
 
-def _validate_key(value: object, action_type: str, errors: list[str]) -> None:
+def _validate_integer(
+    value: object,
+    label: str,
+    errors: list[str],
+    minimum: int,
+) -> None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        errors.append(f"{label} must be an integer")
+        return
+    if value < minimum:
+        errors.append(f"{label} must be at least {minimum}")
+
+
+def _validate_key(value: object, label: str, errors: list[str]) -> None:
     if not isinstance(value, str) or not value.strip():
-        errors.append(f"{action_type} key must be a non-empty string")
+        errors.append(f"{label} must be a non-empty string")
         return
 
     normalized = value.strip().lower()
     if normalized not in SUPPORTED_KEY_NAMES:
-        errors.append(f"{action_type} uses unsupported key '{value}'")
+        errors.append(f"{label} uses unsupported key '{value}'")
 
 
 def _mapping(raw: dict[str, Any], key: str) -> dict[str, Any]:
@@ -435,4 +620,21 @@ def _string(raw: dict[str, Any], key: str) -> str:
     value = raw.get(key)
     if not isinstance(value, str) or not value:
         raise ValueError(f"{key} must be a non-empty string")
+    return value
+
+
+def _integer(
+    raw: dict[str, Any],
+    key: str,
+    label: str,
+    default: int | None = None,
+) -> int:
+    if key not in raw:
+        if default is None:
+            raise ValueError(f"{label} is required")
+        return default
+
+    value = raw[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{label} must be an integer")
     return value

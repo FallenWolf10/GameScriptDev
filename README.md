@@ -22,13 +22,20 @@ This repository currently contains the v1 skeleton:
 - bounded live waits for expected states
 - bounded live wait actions
 - limited live keyboard press and hold actions
-- foreground target-window verification before live keyboard input
+- target-window focusing and foreground verification before live input
+- liveness and identity checks before live screenshots and input
+- contextual live screenshot artifact names
+- optional OCR adapter support behind the vision adapter boundary
+- named-region pointer clicks after live focus and liveness verification
+- local web dashboard for profile discovery, validation, dry runs, readiness, logs, and artifacts
+- profile-pack metadata and live-mode compatibility checklist gating
 - capped global interruption recovery attempts
 - terminal states
 - daily log folders
+- validation example profiles
 - demo profile
 
-Pointer input, OCR, and target window control are intentionally adapter-shaped but not implemented yet. The current adapter boundaries are:
+The current adapter boundaries are:
 
 - `WindowAdapter`
 - `ScreenAdapter`
@@ -43,7 +50,7 @@ Global interruptions run their configured recovery actions only up to the interr
 
 Profiles define click coordinates as named regions, then actions reference those names. This keeps coordinate data centralized and lets validation catch missing or misspelled regions before a run starts.
 
-Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Live `wait` actions and a limited allowlist of keyboard press/hold actions are available with bounded duration guards. Keyboard input is refused unless the matched target window is currently foreground; live OCR and pointer input are still intentionally unavailable.
+Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, focuses the matched window, confirms the foreground handle, checks liveness before live screenshots and input, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Live `wait` actions, a limited allowlist of keyboard press/hold actions, and named-region pointer clicks are available with bounded duration guards. OCR is optional and can be injected behind the vision adapter boundary.
 
 In live mode, `wait_for_state` is a bounded polling loop over screen capture and anchor detection. It uses the profile default timeout unless the action supplies `timeout_seconds`, and supports `poll_interval_seconds` for tuning. Live polling uses a small positive minimum interval to avoid tight screenshot loops.
 
@@ -67,10 +74,42 @@ Logs are written under:
 logs/YYYY-MM-DD/
 ```
 
+Each run gets its own folder under the daily log folder with `run.log` and an `artifacts/` directory.
+
+## Local Dashboard
+
+Serve the local-only dashboard:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_script_dev.dashboard --host 127.0.0.1 --port 8765
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+The dashboard discovers profiles, validates them, launches dry runs, shows readiness blockers before live mode, requires `RUN` confirmation for live runs, and surfaces run history, logs, artifacts, current state, final result, and failure reason.
+
+## Profile Packs
+
+Reusable game or game-mode profiles can be grouped as profile packs under
+`profiles/<game>/<mode>/`. A pack keeps `profile.yaml`, assets, notes, and
+validation examples together. Profile packs declare target identity, resolution,
+detection strategy, states, regions, actions, interruptions, known limitations,
+and a compatibility checklist.
+
+See [docs/PROFILE_PACKS.md](docs/PROFILE_PACKS.md) for the folder structure and
+checklist contract. The dashboard blocks live mode for profile packs until their
+compatibility checklist is complete and a successful dashboard dry run has been
+recorded.
+
 ## Live Mode
 
-Live mode is explicit and requires confirmation before it can control the desktop. In this skeleton, live `wait` and limited keyboard actions are enabled, while pointer actions still stop safely before sending input.
+Live mode is explicit and requires confirmation before it can control the desktop. The runner focuses and verifies the target window before live input, checks that the original target is still alive before live screenshots and input, and fails closed when the window cannot be confirmed.
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the required next work, including the local web dashboard and game profile expansion requirements.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the implementation roadmap and current checkpoint.

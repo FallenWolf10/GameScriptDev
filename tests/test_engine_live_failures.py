@@ -88,18 +88,14 @@ def profile_with_action(action: Action) -> Profile:
         states={
             "home": State(
                 name="home",
-                required_anchors=[
-                    Anchor(name="home_title", type="text", text="Home")
-                ],
+                required_anchors=[Anchor(name="home_title", type="text", text="Home")],
                 actions=[action],
                 terminal=False,
                 on_success="done",
             ),
             "done": State(
                 name="done",
-                required_anchors=[
-                    Anchor(name="done_title", type="text", text="Done")
-                ],
+                required_anchors=[Anchor(name="done_title", type="text", text="Done")],
                 terminal=True,
                 result="success",
             ),
@@ -118,7 +114,9 @@ def quiet_logger() -> logging.Logger:
 class EngineLiveFailureTests(unittest.TestCase):
     def test_live_input_unavailable_becomes_live_mode_unavailable(self) -> None:
         engine = Engine(
-            profile=profile_with_action(Action(type="press_key", data={"key": "enter"})),
+            profile=profile_with_action(
+                Action(type="press_key", data={"key": "enter"})
+            ),
             mode="live",
             logger=quiet_logger(),
             runtime_factory=live_runtime_factory,
@@ -142,7 +140,9 @@ class EngineLiveFailureTests(unittest.TestCase):
         with self.assertRaises(LiveModeUnavailable) as captured:
             engine.run()
 
-        self.assertIn("live mouse input is not implemented yet", str(captured.exception))
+        self.assertIn(
+            "live mouse input is not implemented yet", str(captured.exception)
+        )
 
 
 if __name__ == "__main__":

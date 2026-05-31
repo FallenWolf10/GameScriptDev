@@ -7,12 +7,13 @@ from pathlib import Path
 
 from game_script_dev.actions import ActionRunner
 from game_script_dev.adapters.base import Screenshot
-from game_script_dev.adapters.live import LiveAdaptersUnavailable
+from game_script_dev.adapters.live import LiveAdaptersUnavailable, TargetWindowNotReady
 from game_script_dev.runtime import RuntimeContext, create_runtime
 from game_script_dev.schema import Anchor, Interruption, Profile, State
 
 
 MIN_LIVE_POLL_INTERVAL_SECONDS = 0.05
+RunEventHandler = Callable[[dict[str, object]], None]
 
 
 class LiveModeUnavailable(Exception):
@@ -36,6 +37,7 @@ class Engine:
         artifact_dir: Path | None = None,
         profile_dir: Path | None = None,
         sleeper: Callable[[float], None] = time.sleep,
+        event_handler: RunEventHandler | None = None,
     ) -> None:
         self.profile = profile
         self.mode = mode
@@ -44,6 +46,7 @@ class Engine:
         self.artifact_dir = artifact_dir
         self.profile_dir = profile_dir
         self.sleeper = sleeper
+        self.event_handler = event_handler
 
     def run(self) -> str:
         try:
@@ -55,9 +58,7 @@ class Engine:
                 self.profile_dir,
             )
         except Exception as error:
-            raise LiveModeUnavailable(
-                str(error)
-            ) from error
+            raise LiveModeUnavailable(str(error)) from error
 
         actions = ActionRunner(runtime=runtime, logger=self.logger)
 
@@ -68,9 +69,10 @@ class Engine:
 
         for _ in range(max_steps):
             state = self.profile.states[current_state]
+            self._emit("state_started", state=state.name)
             try:
                 self._handle_interruptions(runtime, actions, interruption_attempts)
-                screenshot = runtime.screen_adapter.capture(runtime.window)
+                screenshot = self._capture(runtime, f"state-{state.name}-confirm")
                 self._confirm_state(state, runtime, screenshot)
 
                 if state.terminal:
@@ -80,6 +82,7 @@ class Engine:
                         state.name,
                         result,
                     )
+                    self._emit("finished", state=state.name, result=result)
                     return result
 
                 stop_result = self._execute_state_actions(
@@ -92,15 +95,19 @@ class Engine:
                     return stop_result
 
                 if state.on_success is None:
+                    self._emit(
+                        "finished",
+                        state=state.name,
+                        result="failed_missing_transition",
+                        failure_reason="missing transition",
+                    )
                     return "failed_missing_transition"
 
                 failures_by_state[state.name] = 0
                 self.logger.info("Transition: %s -> %s", state.name, state.on_success)
                 current_state = state.on_success
             except StateExecutionError as error:
-                failures_by_state[state.name] = (
-                    failures_by_state.get(state.name, 0) + 1
-                )
+                failures_by_state[state.name] = failures_by_state.get(state.name, 0) + 1
                 failure_count = failures_by_state[state.name]
                 self.logger.warning(
                     "State '%s' failed attempt %s/%s: %s",
@@ -108,6 +115,12 @@ class Engine:
                     failure_count,
                     self.profile.max_retries,
                     error,
+                )
+                self._emit(
+                    "state_failed",
+                    state=state.name,
+                    failure_count=failure_count,
+                    failure_reason=str(error),
                 )
 
                 if failure_count < self.profile.max_retries:
@@ -119,6 +132,17 @@ class Engine:
                         "Graceful termination from state '%s' after %s failures",
                         state.name,
                         failure_count,
+                    )
+                    self._capture_final(
+                        runtime,
+                        state.name,
+                        f"failed-{state.name}",
+                    )
+                    self._emit(
+                        "finished",
+                        state=state.name,
+                        result=f"failed_{state.name}",
+                        failure_reason=str(error),
                     )
                     return f"failed_{state.name}"
 
@@ -134,7 +158,48 @@ class Engine:
                 raise
 
         self.logger.error("Exceeded maximum dry-run steps: %s", max_steps)
+        self._emit(
+            "finished",
+            result="failed_max_steps",
+            failure_reason="exceeded maximum workflow steps",
+        )
         return "failed_max_steps"
+
+    def _capture(self, runtime: RuntimeContext, context: str) -> Screenshot:
+        try:
+            try:
+                return runtime.screen_adapter.capture(runtime.window, context=context)
+            except TypeError:
+                return runtime.screen_adapter.capture(runtime.window)
+        except TargetWindowNotReady as error:
+            raise StateExecutionError(f"target window is not ready: {error}") from error
+        except LiveAdaptersUnavailable as error:
+            raise StateExecutionError(f"live capture unavailable: {error}") from error
+
+    def _capture_final(
+        self,
+        runtime: RuntimeContext,
+        state_name: str,
+        reason: str,
+    ) -> None:
+        if runtime.mode != "live":
+            return
+        try:
+            screenshot = self._capture(runtime, f"final-state-{state_name}-{reason}")
+        except StateExecutionError as error:
+            self.logger.warning("Final screenshot unavailable: %s", error)
+            return
+        self.logger.info(
+            "Final diagnostic screenshot for state '%s': %s",
+            state_name,
+            screenshot.path or screenshot.source,
+        )
+
+    def _emit(self, event: str, **payload: object) -> None:
+        if self.event_handler is None:
+            return
+        data = {"event": event, **payload}
+        self.event_handler(data)
 
     def _handle_interruptions(
         self,
@@ -147,7 +212,10 @@ class Engine:
             return
 
         for interruption in self.profile.interruptions:
-            screenshot = runtime.screen_adapter.capture(runtime.window)
+            screenshot = self._capture(
+                runtime,
+                f"interruption-{interruption.name}-scan",
+            )
             if self._interruption_present(interruption, runtime, screenshot):
                 attempts = attempts_by_name.get(interruption.name, 0) + 1
                 attempts_by_name[interruption.name] = attempts
@@ -226,9 +294,7 @@ class Engine:
                 self.logger.info("Dry-run forbidden anchor absent: %s", anchor.name)
                 continue
             if runtime.vision_adapter.anchor_present(anchor, screenshot):
-                raise StateExecutionError(
-                    f"forbidden anchor '{anchor.name}' was found"
-                )
+                raise StateExecutionError(f"forbidden anchor '{anchor.name}' was found")
 
     def _execute_state_actions(
         self,
@@ -273,7 +339,7 @@ class Engine:
         )
 
         while True:
-            screenshot = runtime.screen_adapter.capture(runtime.window)
+            screenshot = self._capture(runtime, f"wait-for-{state_name}")
             try:
                 self._confirm_state(expected_state, runtime, screenshot)
                 self.logger.info("Wait for state succeeded: %s", state_name)

@@ -1,0 +1,284 @@
+:root {
+  color-scheme: dark;
+  --bg: #111318;
+  --surface: #1b1f27;
+  --surface-2: #242a34;
+  --line: #343c49;
+  --text: #eef2f6;
+  --muted: #a7b0bd;
+  --good: #39b56a;
+  --bad: #e45656;
+  --accent: #4da3ff;
+  --warn: #d9a441;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+button,
+select {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+  padding: 0 12px;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+button:hover,
+button:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #151922;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 19px;
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 15px;
+}
+
+h3 {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.run-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(320px, 1fr) minmax(320px, 1fr);
+  grid-template-rows: minmax(240px, 42vh) minmax(280px, 1fr);
+  gap: 1px;
+  min-height: calc(100vh - 64px);
+  background: var(--line);
+}
+
+.panel {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.log-panel {
+  grid-column: 2 / 4;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.profile-list,
+.runs,
+.artifacts {
+  display: grid;
+  gap: 8px;
+}
+
+.row,
+.run {
+  display: flex;
+  width: 100%;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px;
+  text-align: left;
+}
+
+.row.active,
+.run.active {
+  border-color: var(--accent);
+  background: #202837;
+}
+
+strong,
+small {
+  display: block;
+}
+
+small,
+.muted {
+  color: var(--muted);
+}
+
+.badge {
+  display: inline-flex;
+  min-width: 72px;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.badge.good {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.badge.bad {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.status-grid div {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px;
+  background: #171c24;
+}
+
+dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+dd {
+  margin: 3px 0 0;
+  font-weight: 700;
+}
+
+.message-list {
+  min-height: 28px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+#log-output {
+  min-height: 210px;
+  max-height: 38vh;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  background: #0d1015;
+  color: #d7dee8;
+  white-space: pre-wrap;
+}
+
+.artifact-heading {
+  margin-top: 12px;
+}
+
+.artifacts a {
+  color: var(--accent);
+}
+
+dialog {
+  width: min(420px, calc(100vw - 24px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.dialog-body {
+  display: grid;
+  gap: 12px;
+}
+
+.dialog-body input {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0d1015;
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 920px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .run-controls {
+    justify-content: flex-start;
+  }
+
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .log-panel {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+}

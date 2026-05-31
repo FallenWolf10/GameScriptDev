@@ -11,6 +11,10 @@ dependencies = [
 
 [project.scripts]
 game-script-dev = "game_script_dev.cli:main"
+game-script-dev-dashboard = "game_script_dev.dashboard.server:main"
+
+[tool.setuptools.package-data]
+game_script_dev = ["dashboard/static/*"]
 
 [tool.ruff]
 line-length = 88

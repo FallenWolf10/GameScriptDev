@@ -1,0 +1,43 @@
+version: 1
+name: Valid Failure Transition Example
+
+target:
+  process_name: demo.exe
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+
+execution:
+  max_retries: 1
+
+initial_state: start
+
+states:
+  start:
+    required_anchors:
+      - name: start_title
+        type: text
+        text: Start
+    actions:
+      - type: wait
+        seconds: 0
+    on_success: done
+    on_failure: known_failure
+
+  known_failure:
+    required_anchors:
+      - name: failure_title
+        type: text
+        text: Known Failure
+    terminal: true
+    result: failed_known_screen
+
+  done:
+    required_anchors:
+      - name: done_title
+        type: text
+        text: Done
+    terminal: true
+    result: success

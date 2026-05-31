@@ -30,14 +30,21 @@ states:
       - name: home_title
         type: text
         text: Home
+    forbidden_anchors:
+      - name: maintenance_banner
+        type: text
+        text: Maintenance
     actions:
       - type: log
         message: Demo starts from the home screen.
+      - type: wait
+        seconds: 0
       - type: click_point
         region: daily_button
       - type: wait_for_state
         state: daily_menu
     on_success: daily_menu
+    on_failure: known_failure
 
   daily_menu:
     required_anchors:
@@ -61,6 +68,14 @@ states:
         text: All Tasks Completed
     terminal: true
     result: success
+
+  known_failure:
+    required_anchors:
+      - name: known_failure_title
+        type: text
+        text: Known Failure
+    terminal: true
+    result: failed_known_screen
 
 interruptions:
   - name: network_disconnect

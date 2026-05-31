@@ -205,9 +205,7 @@ class EngineRetryTests(unittest.TestCase):
             profile=profile,
             mode="test",
             logger=logger(),
-            runtime_factory=runtime_factory_with_anchors(
-                {"home_title", "disconnect"}
-            ),
+            runtime_factory=runtime_factory_with_anchors({"home_title", "disconnect"}),
         ).run()
 
         self.assertEqual(result, "failed_home")
@@ -241,9 +239,7 @@ class EngineRetryTests(unittest.TestCase):
             interruptions=[
                 Interruption(
                     name="popup",
-                    required_anchors=[
-                        Anchor(name="popup", type="text", text="Popup")
-                    ],
+                    required_anchors=[Anchor(name="popup", type="text", text="Popup")],
                     recovery_actions=[Action(type="wait", data={"seconds": 0})],
                     max_retries=1,
                 )

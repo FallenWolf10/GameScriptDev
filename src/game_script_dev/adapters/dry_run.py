@@ -36,13 +36,26 @@ class DryRunWindowAdapter:
             resolution.policy,
         )
 
+    def verify_window(self, window: TargetWindow, profile: Profile) -> TargetWindow:
+        self.logger.info("Dry-run verify target window: %s", window.title)
+        return window
+
 
 class DryRunScreenAdapter:
     def __init__(self, logger: logging.Logger) -> None:
         self.logger = logger
 
-    def capture(self, window: TargetWindow) -> Screenshot:
-        self.logger.info("Dry-run capture window: %s", window.title)
+    def capture(
+        self,
+        window: TargetWindow,
+        context: str | None = None,
+    ) -> Screenshot:
+        if context:
+            self.logger.info(
+                "Dry-run capture window: %s context=%s", window.title, context
+            )
+        else:
+            self.logger.info("Dry-run capture window: %s", window.title)
         return Screenshot(source=window.title)
 
 
@@ -82,6 +95,9 @@ class DryRunInputAdapter:
 
     def click_region(self, region_name: str) -> None:
         self.logger.info("Dry-run click_point region: %s", region_name)
+
+    def click_coordinates(self, x: int, y: int, label: str) -> None:
+        self.logger.info("Dry-run click coordinates: %s at %s,%s", label, x, y)
 
     def press_key(self, key: str) -> None:
         self.logger.info("Dry-run press_key: %s", key)

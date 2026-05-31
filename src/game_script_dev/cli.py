@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Profile is valid: {profile.name}")
         return 0
 
-    logger, run_paths = create_run_logger(Path("logs"), profile.name)
+    logger, run_paths = create_run_logger(Path("logs"), profile.name, args.mode)
     logger.info("Starting profile '%s' in %s mode", profile.name, args.mode)
     logger.info("Run log: %s", run_paths.run_log)
 
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
             profile=profile,
             mode=args.mode,
             logger=logger,
-            artifact_dir=run_paths.day_dir,
+            artifact_dir=run_paths.artifact_dir,
             profile_dir=args.profile.parent,
         ).run()
     except LiveModeUnavailable as error:
