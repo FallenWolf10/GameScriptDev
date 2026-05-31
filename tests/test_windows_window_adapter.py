@@ -140,6 +140,27 @@ class WindowsWindowAdapterTests(unittest.TestCase):
 
         self.assertEqual(controller.focused_handles, [])
 
+    def test_background_input_mode_restores_minimized_window(self) -> None:
+        controller = FakeWindowController(foreground_after_focus=False)
+        candidates = [
+            [candidate(width=160, height=28, minimized=True)],
+            [candidate(width=1280, height=720, minimized=False)],
+        ]
+        adapter = WindowsWindowAdapter(
+            logging.getLogger("tests.window"),
+            candidates_provider=lambda: candidates.pop(0),
+            window_controller=controller,
+            require_foreground=False,
+        )
+
+        adapter.prepare_window(
+            TargetWindow("test", "test.exe", 0, 0, 1280, 720, handle=1),
+            Resolution(width=1280, height=720, policy="ignore"),
+        )
+
+        self.assertEqual(controller.restored_handles, [1])
+        self.assertEqual(controller.focused_handles, [])
+
     def test_verify_window_rejects_identity_change(self) -> None:
         adapter = WindowsWindowAdapter(
             logging.getLogger("tests.window"),
@@ -173,10 +194,15 @@ class FakeWindowController:
     def __init__(self, foreground_after_focus: bool = True) -> None:
         self.foreground_after_focus = foreground_after_focus
         self.focused_handles: list[int] = []
+        self.restored_handles: list[int] = []
 
     def focus(self, window: TargetWindow) -> None:
         assert window.handle is not None
         self.focused_handles.append(window.handle)
+
+    def restore(self, window: TargetWindow) -> None:
+        assert window.handle is not None
+        self.restored_handles.append(window.handle)
 
     def is_foreground(self, window: TargetWindow) -> bool:
         return bool(self.focused_handles) and self.foreground_after_focus
@@ -186,6 +212,7 @@ def candidate(
     process_name: str = "test.exe",
     width: int = 1280,
     height: int = 720,
+    minimized: bool = False,
 ) -> WindowCandidate:
     return WindowCandidate(
         handle=1,
@@ -196,6 +223,7 @@ def candidate(
         top=0,
         width=width,
         height=height,
+        minimized=minimized,
     )
 
 

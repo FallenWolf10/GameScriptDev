@@ -178,6 +178,14 @@ class WindowsWindowAdapter:
         return _target_window_from_candidate(current)
 
     def _require_live_candidate(self, window: TargetWindow) -> WindowCandidate:
+        return self._require_live_candidate_after_restore(window, restore_attempted=False)
+
+    def _require_live_candidate_after_restore(
+        self,
+        window: TargetWindow,
+        *,
+        restore_attempted: bool,
+    ) -> WindowCandidate:
         if window.handle is None:
             raise TargetWindowNotReady("target window handle is missing")
 
@@ -185,6 +193,13 @@ class WindowsWindowAdapter:
             if int(candidate.handle) != int(window.handle):
                 continue
             if candidate.minimized:
+                if not self.require_foreground and not restore_attempted:
+                    self._controller().restore(_target_window_from_candidate(candidate))
+                    time.sleep(0.2)
+                    return self._require_live_candidate_after_restore(
+                        window,
+                        restore_attempted=True,
+                    )
                 raise TargetWindowNotReady("target window is minimized")
             if (
                 window.process_id is not None
@@ -236,6 +251,9 @@ class FocusVerifier(Protocol):
 class WindowController(Protocol):
     def focus(self, window: TargetWindow) -> None:
         """Ask the OS to bring the target window to foreground."""
+
+    def restore(self, window: TargetWindow) -> None:
+        """Ask the OS to restore the target window without requiring foreground."""
 
     def is_foreground(self, window: TargetWindow) -> bool:
         """Return whether the target window is currently foreground."""
@@ -798,6 +816,9 @@ class Win32BackgroundMouseSender:
         try:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
             post_message = user32.PostMessageW
+            child_window_from_point_ex = user32.ChildWindowFromPointEx
+            client_to_screen = user32.ClientToScreen
+            screen_to_client = user32.ScreenToClient
         except (AttributeError, OSError) as error:
             raise LiveAdaptersUnavailable(
                 "background mouse input requires Win32 window messaging"
@@ -810,12 +831,57 @@ class Win32BackgroundMouseSender:
             wintypes.LPARAM,
         ]
         post_message.restype = wintypes.BOOL
+        child_window_from_point_ex.argtypes = [
+            wintypes.HWND,
+            wintypes.POINT,
+            wintypes.UINT,
+        ]
+        child_window_from_point_ex.restype = wintypes.HWND
+        client_to_screen.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.POINT),
+        ]
+        client_to_screen.restype = wintypes.BOOL
+        screen_to_client.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.POINT),
+        ]
+        screen_to_client.restype = wintypes.BOOL
         return cls(user32)
 
     def click(self, window: TargetWindow, x: int, y: int) -> None:
-        l_param = _client_coordinates_lparam(x, y)
-        self._post(window, WM_LBUTTONDOWN, MK_LBUTTON, l_param)
-        self._post(window, WM_LBUTTONUP, 0, l_param)
+        target_handle, target_x, target_y = self._target_at_client_point(window, x, y)
+        l_param = _client_coordinates_lparam(target_x, target_y)
+        self._post_handle(target_handle, WM_LBUTTONDOWN, MK_LBUTTON, l_param)
+        self._post_handle(target_handle, WM_LBUTTONUP, 0, l_param)
+
+    def _target_at_client_point(
+        self,
+        window: TargetWindow,
+        x: int,
+        y: int,
+    ) -> tuple[int, int, int]:
+        if window.handle is None:
+            raise LiveAdaptersUnavailable(
+                "background mouse input requires a target window handle"
+            )
+
+        root_handle = int(window.handle)
+        point = wintypes.POINT(int(x), int(y))
+        child_handle = int(
+            self.user32.ChildWindowFromPointEx(root_handle, point, 0x0001)
+        )
+        if not child_handle:
+            child_handle = root_handle
+        if child_handle == root_handle:
+            return root_handle, int(x), int(y)
+
+        screen_point = wintypes.POINT(int(x), int(y))
+        if not self.user32.ClientToScreen(root_handle, ctypes.byref(screen_point)):
+            raise LiveAdaptersUnavailable("Win32 ClientToScreen failed")
+        if not self.user32.ScreenToClient(child_handle, ctypes.byref(screen_point)):
+            raise LiveAdaptersUnavailable("Win32 ScreenToClient failed")
+        return child_handle, int(screen_point.x), int(screen_point.y)
 
     def _post(
         self,
@@ -828,9 +894,18 @@ class Win32BackgroundMouseSender:
             raise LiveAdaptersUnavailable(
                 "background mouse input requires a target window handle"
             )
+        self._post_handle(int(window.handle), message, w_param, l_param)
+
+    def _post_handle(
+        self,
+        handle: int,
+        message: int,
+        w_param: int,
+        l_param: int,
+    ) -> None:
         ctypes.set_last_error(0)
         if not self.user32.PostMessageW(
-            int(window.handle),
+            int(handle),
             int(message),
             int(w_param),
             int(l_param),
@@ -856,6 +931,7 @@ class Win32WindowController:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
             get_foreground_window = user32.GetForegroundWindow
             set_foreground_window = user32.SetForegroundWindow
+            show_window = user32.ShowWindow
         except (AttributeError, OSError) as error:
             raise LiveAdaptersUnavailable(
                 "live window focusing requires Win32 foreground APIs"
@@ -865,6 +941,8 @@ class Win32WindowController:
         get_foreground_window.restype = wintypes.HWND
         set_foreground_window.argtypes = [wintypes.HWND]
         set_foreground_window.restype = wintypes.BOOL
+        show_window.argtypes = [wintypes.HWND, ctypes.c_int]
+        show_window.restype = wintypes.BOOL
         return cls(user32)
 
     def focus(self, window: TargetWindow) -> None:
@@ -875,6 +953,11 @@ class Win32WindowController:
             error_code = ctypes.get_last_error()
             if error_code:
                 raise ctypes.WinError(error_code)
+
+    def restore(self, window: TargetWindow) -> None:
+        if window.handle is None:
+            raise TargetWindowNotReady("target window handle is missing")
+        self.user32.ShowWindow(int(window.handle), 9)
 
     def is_foreground(self, window: TargetWindow) -> bool:
         if window.handle is None:
