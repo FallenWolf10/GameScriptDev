@@ -13,6 +13,7 @@ from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
 from game_script_dev.dashboard.run_registry import RunRegistry
 from game_script_dev.dashboard.server import create_server
+from game_script_dev.dashboard.target_preview import TargetPreview
 
 
 PROFILE_YAML = """
@@ -234,6 +235,35 @@ class DashboardTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_server_exposes_target_preview_for_selected_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server(
+                "127.0.0.1",
+                0,
+                root,
+                root / "logs",
+                target_preview=FakeTargetPreviewService(),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                preview = _get_json(f"{base_url}/api/profiles/demo/target-preview")
+
+                self.assertEqual(preview["title"], "Demo Window")
+                self.assertEqual(preview["process_name"], "python.exe")
+                self.assertEqual(preview["width"], 320)
+                self.assertEqual(preview["height"], 180)
+                self.assertTrue(
+                    str(preview["data_url"]).startswith("data:image/png;base64,")
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+
     def test_run_specific_readiness_uses_run_profile_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -285,6 +315,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('id="latest-screenshot-link"', html)
         self.assertIn('id="profile-pack-detail"', html)
         self.assertIn('id="run-review-timeline"', html)
+        self.assertIn('id="target-preview-image"', html)
+        self.assertIn('id="target-preview-meta"', html)
 
 
 def _write_profile(
@@ -326,6 +358,17 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
         method="POST",
     )
     return json.loads(urlopen(request, timeout=5).read())
+
+
+class FakeTargetPreviewService:
+    def capture(self, profile_path: Path) -> TargetPreview:
+        return TargetPreview(
+            title="Demo Window",
+            process_name="python.exe",
+            width=320,
+            height=180,
+            data_url="data:image/png;base64,ZmFrZQ==",
+        )
 
 
 def _wait_for_server_run(base_url: str, run_id: str) -> None:

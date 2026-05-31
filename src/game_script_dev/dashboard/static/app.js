@@ -79,6 +79,32 @@ async function refreshReadiness() {
   renderProfilePackDetail();
   renderMessages("blockers", report.blockers);
   renderMessages("warnings", report.warnings);
+  await refreshTargetPreview();
+}
+
+async function refreshTargetPreview() {
+  const image = $("target-preview-image");
+  const empty = $("target-preview-empty");
+  const meta = $("target-preview-meta");
+  if (!state.selectedProfileId) {
+    image.hidden = true;
+    empty.hidden = false;
+    meta.textContent = "No profile selected";
+    return;
+  }
+  try {
+    const preview = await api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/target-preview`);
+    image.src = preview.data_url;
+    image.hidden = false;
+    empty.hidden = true;
+    meta.textContent = `${preview.title} · ${preview.process_name || "unknown process"} · ${preview.width}x${preview.height}`;
+  } catch (error) {
+    image.hidden = true;
+    image.removeAttribute("src");
+    empty.hidden = false;
+    empty.textContent = "Target preview unavailable";
+    meta.textContent = error.message;
+  }
 }
 
 function renderProfilePackDetail() {

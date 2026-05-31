@@ -11,14 +11,24 @@ from urllib.parse import unquote, urlparse
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
 from game_script_dev.dashboard.run_registry import RunRegistry
+from game_script_dev.dashboard.target_preview import (
+    TargetPreviewError,
+    TargetPreviewService,
+)
 from game_script_dev.operator_package import run_startup_checks
 
 
 class DashboardState:
-    def __init__(self, workspace_root: Path, log_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        log_root: Path,
+        target_preview: TargetPreviewService | None = None,
+    ) -> None:
         self.workspace_root = workspace_root
         self.catalog = ProfileCatalog(workspace_root / "profiles")
         self.runs = RunRegistry(log_root)
+        self.target_preview = target_preview or TargetPreviewService()
 
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
@@ -41,6 +51,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(self._readiness(profile_id).to_dict())
             except KeyError as error:
                 self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/target-preview"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+                preview = self.state.target_preview.capture(profile_path)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            except TargetPreviewError as error:
+                self._send_error(HTTPStatus.CONFLICT, str(error))
+            else:
+                self._send_json(preview.to_dict())
             return
         if path == "/api/runs":
             self._send_json(
@@ -235,9 +257,10 @@ def create_server(
     port: int,
     workspace_root: Path,
     log_root: Path,
+    target_preview: TargetPreviewService | None = None,
 ) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), DashboardRequestHandler)
-    server.dashboard_state = DashboardState(workspace_root, log_root)  # type: ignore[attr-defined]
+    server.dashboard_state = DashboardState(workspace_root, log_root, target_preview)  # type: ignore[attr-defined]
     return server
 
 
