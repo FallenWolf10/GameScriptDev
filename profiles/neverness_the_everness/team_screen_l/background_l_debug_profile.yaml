@@ -1,0 +1,60 @@
+version: 1
+name: NevernessTheEverness Team Screen L Background Debug
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Team Screen L Background Debug
+  detection_strategy: template_matching
+  known_limitations:
+    - This debug pack assumes the client is already on the normal world view, then sends the `L` key once to the target window.
+    - The pack does not include a captured team-screen template, so live success means the input attempt completed, not that the team screen was visually confirmed by the profile itself.
+    - Background input requires the runner or dashboard process to run at the same Windows privilege level as the NTE client.
+    - This pack is limited to local operator-approved UI testing of one menu hotkey and does not automate gameplay, farming, account progression, or evasion behavior.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+  use_qwerty_physical_keys: true
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  default_timeout_seconds: 15
+  max_retries: 1
+
+initial_state: world_view
+
+states:
+  world_view:
+    actions:
+      - type: log
+        message: Attempting to open the team screen with the L hotkey in background mode.
+      - type: press_key
+        key: l
+      - type: wait
+        seconds: 1
+    on_success: completed_toggle
+    on_failure: failed_world_missing
+
+  completed_toggle:
+    terminal: true
+    result: success
+
+  failed_world_missing:
+    terminal: true
+    result: failed_world_missing

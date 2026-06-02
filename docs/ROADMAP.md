@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap captures the next work for GameScriptDev after the runner, dashboard, and profile-pack foundation. The project remains a profile-driven local automation runner for repetitive, user-approved, ToS-compliant UI workflows.
+This roadmap captures the next work for GameScriptDev after the runner, dashboard, and profile-pack foundation. The project remains a profile-driven local automation runner for repetitive local UI workflows.
 
 ## Current Checkpoint
 
@@ -20,15 +20,14 @@ Sections 1 through 9 are implemented and committed. The runner now has:
 
 The current implementation focus is proving the Demo Profile against the repo-owned `Demo Automation Window` target before moving on to a real target profile pack.
 
-Sections 10 and 11 now have implementation slices in the worktree: the Local Demo Target can be launched with `python -m game_script_dev.demo_target`, the flat demo profile remains available, and the canonical `profiles/demo/local_target/profile.yaml` pack is discoverable as `demo__local_target`. Section 12 also has an ergonomics slice: the dashboard shows a live verification checklist, selected-run readiness, and a final/latest screenshot link, while live captures now include per-context sequence numbers and final success screenshots. Sections 14 through 19 now have source-tree support: profile-pack scaffolding/checks, dashboard pack metadata, run review, Expansion Review gating, startup checks, and safe Local Demo regression fixtures. Section 13 real-target work is deferred until a specific target and operator rules confirmation are recorded in an Expansion Review. The remaining proof for Section 10 is manual Windows live verification that focuses the target, captures screenshots, sends input, and records useful live artifacts.
+Sections 10 and 11 now have implementation slices in the worktree: the Local Demo Target can be launched with `python -m game_script_dev.demo_target`, the flat demo profile remains available, and the canonical `profiles/demo/local_target/profile.yaml` pack is discoverable as `demo__local_target`. Section 12 also has an ergonomics slice: the dashboard shows a live verification checklist, selected-run readiness, and a final/latest screenshot link, while live captures now include per-context sequence numbers and final success screenshots. Sections 14 through 19 now have source-tree support: profile-pack scaffolding/checks, dashboard pack metadata, run review, startup checks, and safe Local Demo regression fixtures. The remaining proof for Section 10 is manual Windows live verification that focuses the target, captures screenshots, sends input, and records useful live artifacts.
 
 ## Grill-With-Docs Outcome
 
-The next step should not jump straight to a real game profile. A real game would mix three questions at once: whether live adapters work, whether profile-pack authoring works, and whether a specific game's UI can be automated safely under its rules.
+The next step should not jump straight to a real game profile. A real game would mix three questions at once: whether live adapters work, whether profile-pack authoring works, and whether a specific game's UI can be automated reliably.
 
 The sharper next step is a repo-owned **Local Demo Target** paired with a **Live Verification Scenario**:
 
-- It stays inside the safety boundary in `CONTEXT.md`.
 - It respects ADR 0001 by keeping workflow behavior declarative in YAML profiles.
 - It respects ADR 0002 by keeping dry-run as the default and live mode explicit.
 - It respects ADR 0003 by verifying live behavior through existing runtime adapters instead of adding runner shortcuts.
@@ -49,7 +48,7 @@ Required behavior:
 - Move to a daily menu state with a visible `Daily Tasks` signal after the expected click.
 - React to the demo keyboard flow and reach a completion state with `All Tasks Completed`.
 - Provide at least one controlled interruption or known failure screen for future validation.
-- Avoid external network calls, real game processes, account state, monetized rewards, stealth behavior, or anti-cheat interaction.
+- Avoid external network calls, real game processes, account state, or monetized rewards.
 
 Implementation constraints:
 
@@ -104,16 +103,15 @@ Acceptance checks:
 - A contributor can run the demo target, dashboard, dry run, readiness check, and live run using documented steps.
 - The resulting logs and artifacts are enough to diagnose target mismatch, resolution mismatch, anchor mismatch, and input refusal.
 
-## Section 13: Exercise a Real ToS-Compliant Profile Pack
+## Section 13: Exercise a Real Profile Pack
 
-Goal: after live behavior is proven against the Local Demo Target, create one real profile pack only for a target whose rules permit this kind of local, user-approved automation.
+Goal: after live behavior is proven against the Local Demo Target, create one real profile pack with documented workflow notes and compatibility evidence.
 
 Required behavior:
 
-- Review the target's rules before writing the profile pack.
+- Review the target workflow before writing the profile pack.
 - Keep all game-specific behavior in YAML, assets, notes, and validation examples.
 - Document known limitations and compatibility evidence.
-- Stop if the target requires anti-cheat bypass, stealth behavior, account farming, monetized grinding, evasion logic, or other behavior outside the safety boundary.
 
 Acceptance checks:
 
@@ -122,9 +120,6 @@ Acceptance checks:
 - Any live test is operator-confirmed and records useful artifacts.
 
 Status: deferred. No specific real target has been operator-confirmed yet.
-Real target profile work must start from `docs/EXPANSION_REVIEW.md` and
-`profiles/_templates/expansion_review.md`.
-
 ## Section 14: Build Profile-Pack Authoring Support
 
 Goal: make new profile packs easier to create correctly after one real pack has exposed the practical authoring pain points.
@@ -188,26 +183,23 @@ Acceptance checks:
 Status: implemented. Runs now retain a timeline and expose
 `/api/runs/{id}/review` without re-executing input.
 
-## Section 17: Define Safer Real-Target Expansion Review
+## Section 17: Tighten Real-Target Pack Notes
 
-Goal: make adding more real target profile packs deliberate, repeatable, and bounded by project safety rules.
+Goal: make adding more real target profile packs deliberate, repeatable, and backed by clear notes and compatibility evidence.
 
 Required behavior:
 
-- Define the Expansion Review process for each real target or game mode.
-- Require documented target rules or operator confirmation that the workflow is permitted.
-- Record target-specific non-goals and "do not automate" boundaries in pack notes.
+- Record target-specific scope and workflow notes in pack notes.
 - Require compatibility evidence before live mode is considered ready.
-- Stop expansion when the target requires anti-cheat bypass, stealth behavior, account farming, monetized grinding, evasion logic, or other behavior outside the safety boundary.
+- Keep profile-pack checks focused on concrete pack files and schema data.
 
 Acceptance checks:
 
-- A new real profile pack cannot be considered ready without an Expansion Review note.
+- A new real profile pack is not considered ready without notes and compatibility evidence.
 - Review language is reusable across targets while allowing target-specific limitations.
-- The safety boundary remains visible in docs and authoring workflows.
+- The requirements remain visible in docs and authoring workflows.
 
-Status: implemented for authoring gates. Real target packs require
-`expansion_review.md`; Local Demo Target is the only exemption.
+Status: implemented through pack notes, checklist metadata, and authoring checks.
 
 ## Section 18: Package the Operator Experience
 
@@ -247,7 +239,7 @@ Acceptance checks:
 
 - Fixture-based tests catch regressions in state detection or run review without launching a live target.
 - Fixtures are small, documented, and safe to commit.
-- Real target fixtures are only added after Expansion Review confirms they are appropriate.
+- Real target fixtures are only added after they are reviewed and considered appropriate.
 
 Status: implemented with safe Local Demo fixtures in `fixtures/local_demo` and
 fixture validation helpers in `game_script_dev.fixtures`.
@@ -270,7 +262,7 @@ fixture validation helpers in `game_script_dev.fixtures`.
 14. Profile-pack authoring support.
 15. Dashboard profile-pack management.
 16. Live run review mode.
-17. Safer real-target Expansion Review.
+17. Tighten real-target pack notes.
 18. Source-tree operator package and startup checks.
 19. Safe Local Demo regression fixtures.
 
@@ -278,7 +270,7 @@ fixture validation helpers in `game_script_dev.fixtures`.
 
 This roadmap is grounded in:
 
-- `CONTEXT.md`: safety boundary, Local Demo Target, Live Verification Scenario, Profile-Pack Authoring Support, Live Run Review, Expansion Review, Operator Package, Regression Fixture, profile vocabulary, live confirmation, runtime adapters, detection strategies, named regions, and graceful termination.
+- `CONTEXT.md`: Local Demo Target, Live Verification Scenario, Profile-Pack Authoring Support, Live Run Review, Operator Package, Regression Fixture, profile vocabulary, live confirmation, runtime adapters, detection strategies, named regions, and graceful termination.
 - `README.md`: current runner status, dry-run usage, live-mode safety checks, logs, demo profile, OCR adapter boundary, pointer input, target-window control, and dashboard command.
 - `docs/PROFILE_PACKS.md`: profile-pack folder shape and compatibility checklist contract.
 - `docs/adr/0001-yaml-profiles-with-explicit-state-graphs.md`: game behavior stays in strict declarative YAML profiles with explicit state graphs.

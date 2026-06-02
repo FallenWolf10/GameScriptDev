@@ -6,13 +6,14 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
 from game_script_dev.dashboard.run_registry import RunRegistry
-from game_script_dev.dashboard.server import create_server
+from game_script_dev.dashboard.server import create_server, main as dashboard_main
 from game_script_dev.dashboard.target_preview import TargetPreview
 
 
@@ -235,6 +236,62 @@ class DashboardTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_server_exposes_runtime_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with patch(
+                    "game_script_dev.dashboard.server.is_running_as_admin",
+                    return_value=False,
+                ):
+                    runtime = _get_json(f"{base_url}/api/runtime")
+
+                self.assertFalse(runtime["is_admin"])
+                self.assertEqual(runtime["host"], "127.0.0.1")
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_can_start_admin_relaunch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            original_shutdown = server.shutdown
+            shutdown_called = threading.Event()
+
+            def recording_shutdown() -> None:
+                shutdown_called.set()
+                original_shutdown()
+
+            server.shutdown = recording_shutdown  # type: ignore[assignment]
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with patch(
+                    "game_script_dev.dashboard.server.is_running_as_admin",
+                    return_value=False,
+                ):
+                    with patch(
+                        "game_script_dev.dashboard.server.relaunch_module_as_admin"
+                    ) as relaunch:
+                        payload = _post_json(
+                            f"{base_url}/api/runtime/relaunch-admin",
+                            {},
+                        )
+
+                self.assertEqual(payload["status"], "relaunching")
+                relaunch.assert_called_once()
+                self.assertTrue(shutdown_called.wait(2))
+            finally:
+                server.server_close()
+
     def test_server_exposes_target_preview_for_selected_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -317,6 +374,32 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('id="run-review-timeline"', html)
         self.assertIn('id="target-preview-image"', html)
         self.assertIn('id="target-preview-meta"', html)
+        self.assertIn('id="runtime-admin-button"', html)
+        self.assertIn('id="runtime-status"', html)
+
+    def test_dashboard_can_relaunch_as_admin(self) -> None:
+        with patch(
+            "game_script_dev.dashboard.server.is_running_as_admin",
+            return_value=False,
+        ):
+            with patch(
+                "game_script_dev.dashboard.server.relaunch_module_as_admin"
+            ) as relaunch:
+                result = dashboard_main(
+                    [
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "8765",
+                        "--run-as-admin",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        relaunch.assert_called_once()
+        module, args = relaunch.call_args.args[:2]
+        self.assertEqual(module, "game_script_dev.dashboard")
+        self.assertNotIn("--run-as-admin", args)
 
 
 def _write_profile(

@@ -49,7 +49,10 @@ class UnavailableInputAdapter:
     def click_region(self, region_name: str) -> None:
         raise LiveAdaptersUnavailable("live mouse input is not implemented yet")
 
-    def press_key(self, key: str) -> None:
+    def hold_click(self, region_name: str, seconds: float) -> None:
+        raise LiveAdaptersUnavailable("live mouse input is not implemented yet")
+
+    def press_key(self, key: str, seconds: float | None = None) -> None:
         raise LiveAdaptersUnavailable("target window is not foreground")
 
     def hold_key(self, key: str, seconds: float) -> None:

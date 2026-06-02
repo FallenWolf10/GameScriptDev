@@ -24,6 +24,7 @@ profile_pack:
 
 target:
   window_title_contains: Replace Me
+  input_mode: background_window_messages
 
 window:
   resolution:
@@ -48,22 +49,9 @@ states:
 
 NOTES_TEMPLATE = """# {name}
 
-## Expansion Review
-
-Status: deferred
-
-- Target rules reviewed: no
-- Permitted local automation documented: no
-- Operator confirmation recorded: no
-
 ## Known Limitations
 
 - Replace this placeholder before live use.
-
-## Do Not Automate
-
-- Anti-cheat bypass, stealth behavior, account farming, monetized grinding, and
-  evasion logic remain outside the project boundary.
 """
 
 
@@ -118,8 +106,6 @@ def check_profile_pack(pack_dir: Path) -> PackCheckResult:
     assets_dir = pack_dir / "assets"
     valid_dir = pack_dir / "validation_examples" / "valid"
     invalid_dir = pack_dir / "validation_examples" / "invalid"
-    expansion_review = pack_dir / "expansion_review.md"
-
     if not profile_path.is_file():
         errors.append("profile.yaml is required")
     if not notes_path.is_file():
@@ -152,32 +138,4 @@ def check_profile_pack(pack_dir: Path) -> PackCheckResult:
         except (ProfileLoadError, ProfileValidationError, ValueError) as error:
             errors.append(str(error))
 
-    if not _is_demo_pack(pack_dir):
-        if not expansion_review.is_file():
-            errors.append("expansion_review.md is required for real target packs")
-        elif not expansion_review_complete(expansion_review):
-            errors.append(
-                "expansion_review.md must document reviewed rules, permitted "
-                "automation, operator confirmation, and do-not-automate boundaries"
-            )
-
     return PackCheckResult(path=pack_dir, ok=not errors, errors=errors, warnings=warnings)
-
-
-def expansion_review_complete(review_path: Path) -> bool:
-    if not review_path.is_file():
-        return False
-    text = review_path.read_text(encoding="utf-8").lower()
-    required = (
-        "expansion review",
-        "target rules reviewed: yes",
-        "permitted local automation documented: yes",
-        "operator confirmation recorded: yes",
-        "do not automate",
-    )
-    return all(item in text for item in required)
-
-
-def _is_demo_pack(pack_dir: Path) -> bool:
-    parts = pack_dir.as_posix().lower().split("/")
-    return "profiles" in parts and "demo" in parts

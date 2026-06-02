@@ -185,6 +185,35 @@ small,
   margin: 0;
 }
 
+.runtime-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  background: #171c24;
+}
+
+.runtime-status strong,
+.runtime-status p {
+  display: block;
+}
+
+.runtime-status p {
+  margin-top: 4px;
+}
+
+.runtime-status.warn {
+  border-color: var(--warn);
+}
+
+.runtime-status.good {
+  border-color: var(--good);
+}
+
 .status-grid div {
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -342,6 +371,11 @@ dialog {
 
   .run-controls {
     justify-content: flex-start;
+  }
+
+  .runtime-status {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .layout {

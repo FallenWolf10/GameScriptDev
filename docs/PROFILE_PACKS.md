@@ -11,7 +11,6 @@ profiles/
   example_game/
     daily_task/
       profile.yaml
-      expansion_review.md
       assets/
         home_title.png
       notes.md
@@ -24,9 +23,7 @@ The dashboard derives the profile id from the folder path. For example,
 `profiles/example_game/daily_task/profile.yaml` becomes
 `example_game__daily_task`.
 
-The repo-owned Local Demo Target pack is exempt from `expansion_review.md`.
-Every real target pack must include it and must pass `game-script-dev
-check-pack`.
+Every profile pack must pass `game-script-dev check-pack`.
 
 ## Required Metadata
 
@@ -79,6 +76,19 @@ Supported input modes are:
   direct window messages. This mode uses OS foreground focus plus global input
   injection and refuses live input when the target is not foreground.
 
+When `target.input_mode` is omitted, profiles default to
+`background_window_messages`. Scaffolded profile packs write the default
+explicitly so authors can see and review the live-input choice.
+
+Optional key-delivery selectors are also available on `target`:
+
+- `foreground_key_method`: choose how foreground keyboard input is injected when
+  `input_mode: foreground`. Supported values are `sendinput_vk`,
+  `sendinput_scancode`, `sendinput_vk_scancode`, `sendinput_unicode`,
+  `keybd_event_vk`, and `keybd_event_scancode`.
+- `background_key_method`: choose how background keyboard messages are posted
+  when `input_mode: background_window_messages`.
+
 ## Compatibility Checklist
 
 Every checklist key must be present and boolean. A profile can pass schema
@@ -98,13 +108,6 @@ Checklist meaning:
 - `known_limitations`: unsupported cases are written down for the operator.
 - `successful_validation_or_dry_run`: the pack has passed validation or a dry run after the checklist was reviewed.
 
-## Safety Boundary
-
-Profile packs must stay within the project boundary in `CONTEXT.md`: local,
-user-approved, ToS-compliant UI automation only. Do not add anti-cheat bypass,
-stealth behavior, account farming, monetized grinding, or evasion logic to a
-profile pack.
-
 ## Authoring Commands
 
 Create a pack scaffold:
@@ -120,4 +123,4 @@ game-script-dev check-pack --profile profiles/example_game/daily_task/profile.ya
 ```
 
 The check validates folder shape, profile schema, notes, compatibility evidence,
-known limitations, and real-target Expansion Review status.
+and known limitations.

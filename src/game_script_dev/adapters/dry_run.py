@@ -99,8 +99,16 @@ class DryRunInputAdapter:
     def click_coordinates(self, x: int, y: int, label: str) -> None:
         self.logger.info("Dry-run click coordinates: %s at %s,%s", label, x, y)
 
-    def press_key(self, key: str) -> None:
-        self.logger.info("Dry-run press_key: %s", key)
+    def hold_click(self, region_name: str, seconds: float) -> None:
+        self.logger.info(
+            "Dry-run hold_click region: %s for %s seconds", region_name, seconds
+        )
+
+    def press_key(self, key: str, seconds: float | None = None) -> None:
+        if seconds is None:
+            self.logger.info("Dry-run press_key: %s", key)
+            return
+        self.logger.info("Dry-run press_key: %s for %s seconds", key, seconds)
 
     def hold_key(self, key: str, seconds: float) -> None:
         self.logger.info("Dry-run hold_key: %s for %s seconds", key, seconds)

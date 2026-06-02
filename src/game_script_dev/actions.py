@@ -44,8 +44,16 @@ class ActionRunner:
         self.runtime.input_adapter.click_region(str(action.data["region"]))
         return None
 
+    def _execute_hold_click(self, action: Action, screenshot: Screenshot) -> None:
+        duration = float(action.data["seconds"])
+        self.runtime.input_adapter.hold_click(str(action.data["region"]), duration)
+        return None
+
     def _execute_press_key(self, action: Action, screenshot: Screenshot) -> None:
-        self.runtime.input_adapter.press_key(str(action.data["key"]))
+        duration = (
+            float(action.data["seconds"]) if "seconds" in action.data else None
+        )
+        self.runtime.input_adapter.press_key(str(action.data["key"]), duration)
         return None
 
     def _execute_hold_key(self, action: Action, screenshot: Screenshot) -> None:

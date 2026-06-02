@@ -10,6 +10,11 @@ from game_script_dev.logging_setup import create_run_logger
 from game_script_dev.operator_package import run_startup_checks
 from game_script_dev.profile_loader import ProfileLoadError, load_profile
 from game_script_dev.schema import ProfileValidationError, validate_profile
+from game_script_dev.windows_elevation import (
+    WindowsElevationError,
+    is_running_as_admin,
+    relaunch_module_as_admin,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes",
         action="store_true",
         help="Skip live-mode confirmation. Has no effect in dry-run mode.",
+    )
+    parser.add_argument(
+        "--run-as-admin",
+        action="store_true",
+        help="On Windows, relaunch this command as administrator before running live mode.",
     )
     parser.add_argument(
         "--validate-only",
@@ -94,6 +104,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.validate_only:
         print(f"Profile is valid: {profile.name}")
+        return 0
+
+    if args.mode == "live" and args.run_as_admin and not is_running_as_admin():
+        relaunch_args = list(argv if argv is not None else sys.argv[1:])
+        relaunch_args = [arg for arg in relaunch_args if arg != "--run-as-admin"]
+        try:
+            relaunch_module_as_admin(
+                "game_script_dev",
+                relaunch_args,
+                cwd=Path.cwd(),
+            )
+        except WindowsElevationError as error:
+            print(str(error), file=sys.stderr)
+            return 4
+        print("Started administrator live run in a new Windows process.")
         return 0
 
     logger, run_paths = create_run_logger(Path("logs"), profile.name, args.mode)

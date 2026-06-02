@@ -55,7 +55,7 @@ Global interruptions run their configured recovery actions only up to the interr
 
 Profiles define click coordinates as named regions, then actions reference those names. This keeps coordinate data centralized and lets validation catch missing or misspelled regions before a run starts.
 
-Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, checks liveness before live screenshots and input, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Profiles that use `target.input_mode: background_window_messages` send keyboard and mouse messages directly to the matched window handle without requiring foreground ownership. Profiles that use `target.input_mode: foreground` take the compatibility fallback and must focus and confirm the foreground handle before live desktop input is sent. Live `wait` actions, a limited allowlist of keyboard press/hold actions, and named-region pointer clicks are available with bounded duration guards. OCR is optional and can be injected behind the vision adapter boundary.
+Live mode can now enumerate visible Windows application windows and match the target by process name and/or window title. It verifies the configured resolution policy, checks liveness before live screenshots and input, captures the matched target window into the run artifact folder, and can evaluate template anchors against those captures. Profiles default to `target.input_mode: background_window_messages`, which sends keyboard and mouse messages directly to the matched window handle without requiring foreground ownership. Profiles that use `target.input_mode: foreground` take the compatibility fallback and must focus and confirm the foreground handle before live desktop input is sent. Live `wait` actions, a limited allowlist of keyboard press/hold actions, and named-region pointer clicks are available with bounded duration guards. Live `press_key` now uses a short default dwell instead of a zero-duration down/up burst because some game clients can miss taps that are shorter than one input-sampling window. OCR is optional and can be injected behind the vision adapter boundary.
 
 In live mode, `wait_for_state` is a bounded polling loop over screen capture and anchor detection. It uses the profile default timeout unless the action supplies `timeout_seconds`, and supports `poll_interval_seconds` for tuning. Live polling uses a small positive minimum interval to avoid tight screenshot loops.
 
@@ -148,9 +148,6 @@ $env:PYTHONPATH = "src"
 python -m game_script_dev scaffold-pack --output profiles/example/daily --game "Example" --mode "Daily"
 python -m game_script_dev check-pack --profile profiles/example/daily/profile.yaml
 ```
-
-Real target packs require an Expansion Review before they are considered ready.
-See [docs/EXPANSION_REVIEW.md](docs/EXPANSION_REVIEW.md).
 
 Safe fixture rules live in
 [docs/REGRESSION_FIXTURES.md](docs/REGRESSION_FIXTURES.md).

@@ -11,6 +11,7 @@ SUPPORTED_ACTION_TYPES = {
     "wait_for_state",
     "click_template",
     "click_point",
+    "hold_click",
     "press_key",
     "hold_key",
     "wait",
@@ -28,6 +29,7 @@ SUPPORTED_KEY_NAMES = {
     "enter",
     "esc",
     "escape",
+    "f1",
     "left",
     "right",
     "shift",
@@ -36,6 +38,24 @@ SUPPORTED_KEY_NAMES = {
     "up",
 }
 SUPPORTED_INPUT_MODES = {"foreground", "background_window_messages"}
+DEFAULT_INPUT_MODE = "background_window_messages"
+SUPPORTED_FOREGROUND_KEY_METHODS = {
+    "sendinput_vk",
+    "sendinput_scancode",
+    "sendinput_vk_scancode",
+    "sendinput_unicode",
+    "keybd_event_vk",
+    "keybd_event_scancode",
+}
+DEFAULT_FOREGROUND_KEY_METHOD = "sendinput_vk"
+SUPPORTED_BACKGROUND_KEY_METHODS = {
+    "post_message_simple",
+    "post_message_scancode_all",
+    "post_message_scancode_root",
+    "send_message_timeout_scancode_all",
+    "send_message_timeout_scancode_root",
+}
+DEFAULT_BACKGROUND_KEY_METHOD = "post_message_simple"
 SUPPORTED_DETECTION_STRATEGIES = {"template_matching", "ocr_matching", "template_and_ocr"}
 REQUIRED_COMPATIBILITY_CHECKS = {
     "target_identity",
@@ -58,7 +78,10 @@ class ProfileValidationError(Exception):
 class Target:
     process_name: str | None = None
     window_title_contains: str | None = None
-    input_mode: str = "foreground"
+    input_mode: str = DEFAULT_INPUT_MODE
+    foreground_key_method: str = DEFAULT_FOREGROUND_KEY_METHOD
+    background_key_method: str = DEFAULT_BACKGROUND_KEY_METHOD
+    use_qwerty_physical_keys: bool = False
 
 
 @dataclass(frozen=True)
@@ -182,7 +205,24 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
         target=Target(
             process_name=target_raw.get("process_name"),
             window_title_contains=target_raw.get("window_title_contains"),
-            input_mode=str(target_raw.get("input_mode", "foreground")),
+            input_mode=str(target_raw.get("input_mode", DEFAULT_INPUT_MODE)),
+            foreground_key_method=str(
+                target_raw.get(
+                    "foreground_key_method",
+                    DEFAULT_FOREGROUND_KEY_METHOD,
+                )
+            ),
+            background_key_method=str(
+                target_raw.get(
+                    "background_key_method",
+                    DEFAULT_BACKGROUND_KEY_METHOD,
+                )
+            ),
+            use_qwerty_physical_keys=_boolean(
+                target_raw,
+                "use_qwerty_physical_keys",
+                default=False,
+            ),
         ),
         resolution=Resolution(
             width=_integer(resolution_raw, "width", "window.resolution.width"),
@@ -214,6 +254,22 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
         errors.append("target must define process_name or window_title_contains")
     if profile.target.input_mode not in SUPPORTED_INPUT_MODES:
         errors.append(f"unknown target input_mode: {profile.target.input_mode}")
+    if (
+        profile.target.foreground_key_method
+        not in SUPPORTED_FOREGROUND_KEY_METHODS
+    ):
+        errors.append(
+            "unknown target foreground_key_method: "
+            f"{profile.target.foreground_key_method}"
+        )
+    if (
+        profile.target.background_key_method
+        not in SUPPORTED_BACKGROUND_KEY_METHODS
+    ):
+        errors.append(
+            "unknown target background_key_method: "
+            f"{profile.target.background_key_method}"
+        )
 
     if profile.resolution.policy not in {"verify_only", "attempt_resize", "ignore"}:
         errors.append(f"unknown resolution policy: {profile.resolution.policy}")
@@ -554,7 +610,7 @@ def _validate_actions(
                 errors.append(f"{action_context}.target is required")
             elif not (profile_dir / str(target)).exists():
                 errors.append(f"{action_context}.target asset missing: {target}")
-        if action.type == "click_point":
+        if action.type in {"click_point", "hold_click"}:
             region = action.data.get("region")
             if not region:
                 errors.append(f"{action_context}.region is required")
@@ -562,11 +618,22 @@ def _validate_actions(
                 errors.append(
                     f"{action_context}.region references unknown region '{region}'"
                 )
+        if action.type == "hold_click":
+            if "seconds" not in action.data:
+                errors.append(f"{action_context}.seconds is required")
+            else:
+                _validate_duration(
+                    action.data["seconds"], f"{action_context}.seconds", errors
+                )
         if action.type in {"press_key", "hold_key"}:
             if "key" not in action.data:
                 errors.append(f"{action_context}.key is required")
             else:
                 _validate_key(action.data["key"], f"{action_context}.key", errors)
+        if action.type == "press_key" and "seconds" in action.data:
+            _validate_duration(
+                action.data["seconds"], f"{action_context}.seconds", errors
+            )
         if action.type == "hold_key" and "seconds" in action.data:
             _validate_duration(
                 action.data["seconds"], f"{action_context}.seconds", errors
@@ -642,4 +709,19 @@ def _integer(
     value = raw[key]
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _boolean(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    default: bool,
+) -> bool:
+    if key not in raw:
+        return default
+
+    value = raw[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a boolean")
     return value

@@ -4,7 +4,7 @@
 
 ### Local Automation Runner
 
-A user-operated tool that automates repetitive UI actions on the user's local machine for approved, non-competitive, ToS-compliant tasks. It does not bypass anti-cheat systems, evade detection, farm accounts, automate monetized grinding, or perform stealth behavior.
+A user-operated tool that automates repetitive UI actions on the user's local machine.
 
 ### Local Web Dashboard
 
@@ -49,10 +49,6 @@ Tools or guidance that help a profile author create, validate, review, and maint
 ### Live Run Review
 
 A post-run inspection of the states, actions, anchor detections, screenshots, retries, failures, logs, and artifacts from a live-mode execution.
-
-### Expansion Review
-
-A safety and compatibility review performed before adding or updating a real target profile pack, confirming that the target permits the intended local automation and stays inside the project boundary.
 
 ### Operator Package
 

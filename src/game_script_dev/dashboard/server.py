@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,16 +18,26 @@ from game_script_dev.dashboard.target_preview import (
     TargetPreviewService,
 )
 from game_script_dev.operator_package import run_startup_checks
+from game_script_dev.windows_elevation import (
+    WindowsElevationError,
+    is_running_as_admin,
+    relaunch_module_as_admin,
+)
 
 
 class DashboardState:
     def __init__(
         self,
+        host: str,
+        port: int,
         workspace_root: Path,
         log_root: Path,
         target_preview: TargetPreviewService | None = None,
     ) -> None:
+        self.host = host
+        self.port = port
         self.workspace_root = workspace_root
+        self.log_root = log_root
         self.catalog = ProfileCatalog(workspace_root / "profiles")
         self.runs = RunRegistry(log_root)
         self.target_preview = target_preview or TargetPreviewService()
@@ -79,6 +91,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 }
             )
             return
+        if path == "/api/runtime":
+            self._send_json(self._runtime_status())
+            return
         if path.startswith("/api/runs/"):
             self._handle_run_get(path)
             return
@@ -97,6 +112,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/runs":
             self._start_run()
+            return
+        if path == "/api/runtime/relaunch-admin":
+            self._relaunch_admin()
             return
         self._send_error(HTTPStatus.NOT_FOUND, "not found")
 
@@ -186,6 +204,58 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             check_target=True,
         )
 
+    def _runtime_status(self) -> dict[str, object]:
+        return {
+            "is_admin": is_running_as_admin(),
+            "host": self.state.host,
+            "port": self.state.port,
+            "workspace": str(self.state.workspace_root),
+            "logs": str(self.state.log_root),
+        }
+
+    def _relaunch_admin(self) -> None:
+        if is_running_as_admin():
+            self._send_json(
+                {"status": "already_admin", **self._runtime_status()},
+                status=HTTPStatus.OK,
+            )
+            return
+
+        args = _dashboard_launch_args(
+            host=self.state.host,
+            port=self.state.port,
+            workspace_root=self.state.workspace_root,
+            log_root=self.state.log_root,
+            include_run_as_admin=True,
+        )
+        try:
+            relaunch_module_as_admin(
+                "game_script_dev.dashboard",
+                args,
+                cwd=self.state.workspace_root,
+            )
+        except WindowsElevationError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+
+        self._send_json(
+            {
+                "status": "relaunching",
+                "message": "Approve the Windows prompt, then refresh this page in a moment.",
+                **self._runtime_status(),
+            },
+            status=HTTPStatus.ACCEPTED,
+        )
+        threading.Thread(
+            target=self._shutdown_server_after_delay,
+            name="game-script-dev-dashboard-relaunch",
+            daemon=True,
+        ).start()
+
+    def _shutdown_server_after_delay(self) -> None:
+        time.sleep(0.5)
+        self.server.shutdown()
+
     def _serve_static(self, path: str) -> None:
         static_root = Path(__file__).parent / "static"
         if path == "/":
@@ -260,8 +330,62 @@ def create_server(
     target_preview: TargetPreviewService | None = None,
 ) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), DashboardRequestHandler)
-    server.dashboard_state = DashboardState(workspace_root, log_root, target_preview)  # type: ignore[attr-defined]
+    server.dashboard_state = DashboardState(  # type: ignore[attr-defined]
+        host,
+        port,
+        workspace_root,
+        log_root,
+        target_preview,
+    )
     return server
+
+
+def _dashboard_launch_args(
+    *,
+    host: str,
+    port: int,
+    workspace_root: Path,
+    log_root: Path,
+    include_run_as_admin: bool,
+) -> list[str]:
+    args = [
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--workspace",
+        str(workspace_root),
+        "--logs",
+        str(log_root),
+    ]
+    if include_run_as_admin:
+        args.append("--run-as-admin")
+    return args
+
+
+def _serve_dashboard_with_retry(
+    host: str,
+    port: int,
+    workspace_root: Path,
+    log_root: Path,
+) -> int:
+    deadline = time.monotonic() + 8.0
+    while True:
+        try:
+            server = create_server(host, port, workspace_root, log_root)
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
+    print(f"Dashboard listening on http://{host}:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.server_close()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -273,17 +397,39 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--logs", type=Path, default=Path("logs"))
+    parser.add_argument(
+        "--run-as-admin",
+        action="store_true",
+        help="On Windows, relaunch the dashboard as administrator.",
+    )
     args = parser.parse_args(argv)
 
-    server = create_server(args.host, args.port, args.workspace, args.logs)
-    print(f"Dashboard listening on http://{args.host}:{args.port}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
+    if args.run_as_admin and not is_running_as_admin():
+        relaunch_args = _dashboard_launch_args(
+            host=args.host,
+            port=args.port,
+            workspace_root=args.workspace,
+            log_root=args.logs,
+            include_run_as_admin=False,
+        )
+        try:
+            relaunch_module_as_admin(
+                "game_script_dev.dashboard",
+                relaunch_args,
+                cwd=args.workspace,
+            )
+        except WindowsElevationError as error:
+            print(str(error))
+            return 4
+        print("Started administrator dashboard in a new Windows process.")
         return 0
-    finally:
-        server.server_close()
-    return 0
+
+    return _serve_dashboard_with_retry(
+        args.host,
+        args.port,
+        args.workspace,
+        args.logs,
+    )
 
 
 if __name__ == "__main__":

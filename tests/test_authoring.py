@@ -6,7 +6,6 @@ from pathlib import Path
 
 from game_script_dev.authoring import (
     check_profile_pack,
-    expansion_review_complete,
     scaffold_profile_pack,
 )
 
@@ -55,20 +54,6 @@ states:
 """
 
 
-COMPLETE_REVIEW = """
-# Expansion Review
-
-Target rules reviewed: yes
-Permitted local automation documented: yes
-Operator confirmation recorded: yes
-
-## Do Not Automate
-
-- Anti-cheat bypass
-- Stealth behavior
-"""
-
-
 class AuthoringTests(unittest.TestCase):
     def test_scaffold_profile_pack_creates_expected_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -85,37 +70,18 @@ class AuthoringTests(unittest.TestCase):
             self.assertTrue(
                 (pack_dir / "validation_examples" / "invalid" / ".gitkeep").is_file()
             )
+            profile_text = (pack_dir / "profile.yaml").read_text(encoding="utf-8")
+            self.assertIn("input_mode: background_window_messages", profile_text)
 
-    def test_real_pack_requires_expansion_review(self) -> None:
+    def test_real_pack_passes_without_extra_review_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             pack_dir = Path(temp_dir) / "profiles" / "example" / "daily"
             _write_real_pack(pack_dir)
-
-            result = check_profile_pack(pack_dir)
-
-            self.assertFalse(result.ok)
-            self.assertIn("expansion_review.md", " ".join(result.errors))
-
-    def test_real_pack_passes_with_complete_expansion_review(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            pack_dir = Path(temp_dir) / "profiles" / "example" / "daily"
-            _write_real_pack(pack_dir)
-            (pack_dir / "expansion_review.md").write_text(
-                COMPLETE_REVIEW,
-                encoding="utf-8",
-            )
 
             result = check_profile_pack(pack_dir)
 
             self.assertTrue(result.ok, result.errors)
             self.assertEqual(result.warnings, [])
-
-    def test_incomplete_expansion_review_is_detected(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            review = Path(temp_dir) / "expansion_review.md"
-            review.write_text("# Expansion Review\nTarget rules reviewed: no\n")
-
-            self.assertFalse(expansion_review_complete(review))
 
 
 def _write_real_pack(pack_dir: Path) -> None:

@@ -2,7 +2,7 @@
 
 The Local Demo Target is a repo-owned desktop window for safe live-mode
 verification. It is not a game, does not call the network, and does not touch
-account state, rewards, anti-cheat systems, or third-party services.
+account state, rewards, or third-party services.
 
 ## Start The Window
 

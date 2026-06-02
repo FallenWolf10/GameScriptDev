@@ -72,8 +72,11 @@ class InputAdapter(Protocol):
     def click_coordinates(self, x: int, y: int, label: str) -> None:
         """Click a target-window-relative point."""
 
-    def press_key(self, key: str) -> None:
-        """Press a key."""
+    def hold_click(self, region_name: str, seconds: float) -> None:
+        """Hold the left mouse button on a named profile region."""
+
+    def press_key(self, key: str, seconds: float | None = None) -> None:
+        """Press a key, optionally overriding the tap duration."""
 
     def hold_key(self, key: str, seconds: float) -> None:
         """Hold a key for a duration."""

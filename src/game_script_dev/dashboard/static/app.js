@@ -3,6 +3,7 @@ const state = {
   selectedProfileId: null,
   selectedRunId: null,
   pollTimer: null,
+  runtime: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +22,7 @@ async function api(path, options = {}) {
 }
 
 async function refreshProfiles() {
+  await refreshRuntimeStatus();
   const payload = await api("/api/profiles");
   state.profiles = payload.profiles || [];
   if (!state.selectedProfileId && state.profiles.length) {
@@ -29,6 +31,27 @@ async function refreshProfiles() {
   renderProfiles();
   renderProfileSelect();
   await refreshReadiness();
+}
+
+async function refreshRuntimeStatus() {
+  const runtime = await api("/api/runtime");
+  state.runtime = runtime;
+  const container = $("runtime-status");
+  const title = $("runtime-status-title");
+  const message = $("runtime-status-message");
+  const button = $("runtime-admin-button");
+  container.className = "runtime-status";
+  if (runtime.is_admin) {
+    container.classList.add("good");
+    title.textContent = "Dashboard running as administrator";
+    message.textContent = "Live runs can use background input against elevated targets.";
+    button.hidden = true;
+    return;
+  }
+  container.classList.add("warn");
+  title.textContent = "Dashboard not running as administrator";
+  message.textContent = "Website does not add permission. Live runs still use server process privilege.";
+  button.hidden = false;
 }
 
 function renderProfiles() {
@@ -167,6 +190,14 @@ async function startRun(mode, confirmation = null) {
   });
   state.selectedRunId = payload.id;
   await refreshRuns();
+}
+
+async function relaunchDashboardAsAdmin() {
+  const payload = await api("/api/runtime/relaunch-admin", { method: "POST" });
+  $("runtime-status-title").textContent = "Administrator relaunch started";
+  $("runtime-status-message").textContent = payload.message || "Approve the Windows prompt, then refresh this page.";
+  $("runtime-admin-button").hidden = true;
+  window.setTimeout(() => window.location.reload(), 2500);
 }
 
 async function refreshRuns() {
@@ -308,6 +339,14 @@ $("validate-button").addEventListener("click", async () => {
 });
 $("dry-run-button").addEventListener("click", () => startRun("dry-run"));
 $("live-run-button").addEventListener("click", () => $("live-dialog").showModal());
+$("runtime-admin-button").addEventListener("click", async () => {
+  try {
+    await relaunchDashboardAsAdmin();
+  } catch (error) {
+    $("runtime-status-title").textContent = "Administrator relaunch failed";
+    $("runtime-status-message").textContent = error.message;
+  }
+});
 $("confirm-live-button").addEventListener("click", async (event) => {
   event.preventDefault();
   const confirmation = $("live-confirmation").value;
@@ -324,4 +363,5 @@ refreshProfiles().then(refreshRuns);
 state.pollTimer = setInterval(() => {
   refreshRuns().catch(() => {});
   refreshReadiness().catch(() => {});
+  refreshRuntimeStatus().catch(() => {});
 }, 1500);

@@ -1,0 +1,84 @@
+version: 1
+name: NevernessTheEverness Startup Clicks
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Startup Clicks
+  detection_strategy: template_matching
+  known_limitations:
+    - Uses background window-message input by default; switch to foreground only if the live client rejects direct window messages during operator testing.
+    - Background input requires the runner or dashboard process to run at the same Windows privilege level as the NTE client.
+    - The four startup clicks target the center of a 1280x720 game window; adjust the startup_click region if the desired click point differs.
+    - This profile only performs the requested local startup inputs and does not automate gameplay, farming, account progression, or evasion behavior.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  default_timeout_seconds: 30
+  max_retries: 1
+
+regions:
+  startup_click:
+    x: 620
+    y: 340
+    width: 40
+    height: 40
+
+initial_state: startup_sequence
+
+states:
+  startup_sequence:
+    actions:
+      - type: log
+        message: Starting NevernessTheEverness startup input sequence.
+      - type: click_point
+        region: startup_click
+      - type: wait
+        seconds: 1
+      - type: click_point
+        region: startup_click
+      - type: wait
+        seconds: 1
+      - type: click_point
+        region: startup_click
+      - type: wait
+        seconds: 1
+      - type: click_point
+        region: startup_click
+      - type: wait
+        seconds: 1
+      - type: press_key
+        key: "2"
+      - type: wait
+        seconds: 1
+      - type: press_key
+        key: b
+    on_success: complete
+    on_failure: failed
+
+  complete:
+    terminal: true
+    result: success
+
+  failed:
+    terminal: true
+    result: failed_known_screen

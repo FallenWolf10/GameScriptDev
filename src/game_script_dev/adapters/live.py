@@ -20,17 +20,40 @@ from game_script_dev.schema import Anchor, ClickRegion, Profile, Resolution
 
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_SCANCODE = 0x0008
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_EXTENDEDKEY = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 MK_LBUTTON = 0x0001
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_CHAR = 0x0102
+WM_ACTIVATE = 0x0006
+WM_SETFOCUS = 0x0007
+WA_ACTIVE = 0x0001
+SMTO_ABORTIFHUNG = 0x0002
+SMTO_NORMAL = 0x0000
+WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
 FOREGROUND_CONFIRM_TIMEOUT_SECONDS = 1.0
 FOREGROUND_CONFIRM_POLL_SECONDS = 0.05
+PRINT_WINDOW_RENDER_FULL_CONTENT = 0x00000002
+PRINT_WINDOW_CLIENT_ONLY = 0x00000001
+PRINT_WINDOW_CAPTURE_FLAGS = (
+    PRINT_WINDOW_RENDER_FULL_CONTENT | PRINT_WINDOW_CLIENT_ONLY,
+    PRINT_WINDOW_CLIENT_ONLY,
+)
+KLF_NOTELLSHELL = 0x00000080
+MAPVK_VK_TO_VSC = 0
+MAPVK_VSC_TO_VK_EX = 3
+US_QWERTY_LAYOUT_ID = "00000409"
+TOKEN_QUERY = 0x0008
+TOKEN_INTEGRITY_LEVEL = 25
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+DEFAULT_PRESS_KEY_SECONDS = 0.1
 
 KEY_CODES: dict[str, int] = {
     **{chr(code).lower(): code for code in range(ord("A"), ord("Z") + 1)},
@@ -38,6 +61,7 @@ KEY_CODES: dict[str, int] = {
     "backspace": 0x08,
     "tab": 0x09,
     "enter": 0x0D,
+    "f1": 0x70,
     "shift": 0x10,
     "ctrl": 0x11,
     "control": 0x11,
@@ -71,6 +95,75 @@ class WindowCandidate:
     width: int
     height: int
     minimized: bool = False
+
+
+def current_process_integrity_rid() -> int:
+    if not hasattr(ctypes, "WinDLL"):
+        raise LiveAdaptersUnavailable("process integrity checks require Windows")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    return process_integrity_rid(int(kernel32.GetCurrentProcessId()))
+
+
+def process_integrity_rid(process_id: int) -> int:
+    if not hasattr(ctypes, "WinDLL"):
+        raise LiveAdaptersUnavailable("process integrity checks require Windows")
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    process = kernel32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION,
+        False,
+        int(process_id),
+    )
+    if not process:
+        error_code = ctypes.get_last_error()
+        if error_code:
+            raise ctypes.WinError(error_code)
+        raise LiveAdaptersUnavailable("Win32 OpenProcess failed")
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(process, TOKEN_QUERY, ctypes.byref(token)):
+        error_code = ctypes.get_last_error()
+        close_handle(process)
+        if error_code:
+            raise ctypes.WinError(error_code)
+        raise LiveAdaptersUnavailable("Win32 OpenProcessToken failed")
+
+    try:
+        needed = wintypes.DWORD()
+        advapi32.GetTokenInformation(
+            token,
+            TOKEN_INTEGRITY_LEVEL,
+            None,
+            0,
+            ctypes.byref(needed),
+        )
+        buffer = ctypes.create_string_buffer(needed.value)
+        if not advapi32.GetTokenInformation(
+            token,
+            TOKEN_INTEGRITY_LEVEL,
+            buffer,
+            needed,
+            ctypes.byref(needed),
+        ):
+            error_code = ctypes.get_last_error()
+            if error_code:
+                raise ctypes.WinError(error_code)
+            raise LiveAdaptersUnavailable("Win32 GetTokenInformation failed")
+
+        sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
+        advapi32.GetSidSubAuthorityCount.argtypes = [ctypes.c_void_p]
+        advapi32.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
+        advapi32.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        advapi32.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+        count = advapi32.GetSidSubAuthorityCount(sid).contents.value
+        return advapi32.GetSidSubAuthority(sid, count - 1).contents.value
+    finally:
+        close_handle(token)
+        close_handle(process)
 
 
 class WindowsWindowAdapter:
@@ -259,6 +352,12 @@ class MouseSender(Protocol):
     def click(self, x: int, y: int) -> None:
         """Send one left-click at an absolute screen coordinate."""
 
+    def button_down(self, x: int, y: int) -> None:
+        """Press the left mouse button at an absolute screen coordinate."""
+
+    def button_up(self, x: int, y: int) -> None:
+        """Release the left mouse button at an absolute screen coordinate."""
+
 
 class FocusVerifier(Protocol):
     def is_foreground(self, window: TargetWindow) -> bool:
@@ -288,6 +387,12 @@ class BackgroundMouseSender(Protocol):
     def click(self, window: TargetWindow, x: int, y: int) -> None:
         """Send one left-click at target-window client coordinates."""
 
+    def button_down(self, window: TargetWindow, x: int, y: int) -> None:
+        """Press the left mouse button at target-window client coordinates."""
+
+    def button_up(self, window: TargetWindow, x: int, y: int) -> None:
+        """Release the left mouse button at target-window client coordinates."""
+
 
 class LiveScreenAdapter:
     def __init__(
@@ -297,12 +402,14 @@ class LiveScreenAdapter:
         window_adapter: WindowsWindowAdapter | None = None,
         profile: Profile | None = None,
         window_capture: WindowCapture | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         self.capture_dir = capture_dir
         self.grabber = grabber
         self.window_adapter = window_adapter
         self.profile = profile
         self.window_capture = window_capture
+        self.logger = logger
         self._capture_counts: dict[str, int] = {}
 
     def capture(
@@ -335,7 +442,20 @@ class LiveScreenAdapter:
             and self.profile.target.input_mode == "background_window_messages"
         ):
             capture = self._window_capture()
-            return capture.capture_client(window)
+            try:
+                return capture.capture_client(window)
+            except LiveAdaptersUnavailable as error:
+                if self.logger is not None:
+                    self.logger.warning(
+                        "Background window capture failed (%s); "
+                        "falling back to foreground window-bounds capture",
+                        error,
+                    )
+                window = self._prepare_window_for_bounds_capture(window)
+                return self._capture_window_bounds(window)
+        return self._capture_window_bounds(window)
+
+    def _capture_window_bounds(self, window: TargetWindow) -> Image.Image:
         bbox = (
             window.left,
             window.top,
@@ -343,6 +463,27 @@ class LiveScreenAdapter:
             window.top + window.height,
         )
         return self.grabber(bbox)
+
+    def _prepare_window_for_bounds_capture(self, window: TargetWindow) -> TargetWindow:
+        if self.window_adapter is None:
+            return window
+
+        if self.profile is not None:
+            try:
+                window = self.window_adapter.verify_window(window, self.profile)
+            except TargetWindowNotReady:
+                return window
+
+        controller_factory = getattr(self.window_adapter, "_controller", None)
+        confirm_foreground = getattr(self.window_adapter, "_confirm_foreground", None)
+        if controller_factory is None or confirm_foreground is None:
+            return window
+
+        try:
+            confirm_foreground(controller_factory(), window)
+        except (LiveAdaptersUnavailable, TargetWindowNotReady):
+            return window
+        return window
 
     def _window_capture(self) -> WindowCapture:
         if self.window_capture is not None:
@@ -392,6 +533,10 @@ class LiveInputAdapter:
         sleeper: Callable[[float], None] = time.sleep,
         max_wait_seconds: float = 60.0,
         input_mode: str = "foreground",
+        foreground_key_method: str = "sendinput_vk",
+        background_key_method: str = "post_message_simple",
+        use_qwerty_physical_keys: bool = False,
+        press_key_duration: float = DEFAULT_PRESS_KEY_SECONDS,
     ) -> None:
         self.target_window = target_window
         self.profile = profile
@@ -405,6 +550,11 @@ class LiveInputAdapter:
         self.sleeper = sleeper
         self.max_wait_seconds = max_wait_seconds
         self.input_mode = input_mode
+        self.foreground_key_method = foreground_key_method
+        self.background_key_method = background_key_method
+        self.use_qwerty_physical_keys = use_qwerty_physical_keys
+        self.press_key_duration = press_key_duration
+        self.key_mapper: QwertyPhysicalKeyMapper | None = None
 
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         raise LiveAdaptersUnavailable(
@@ -432,19 +582,56 @@ class LiveInputAdapter:
         sender = self._mouse_sender()
         sender.click(absolute_x, absolute_y)
 
-    def press_key(self, key: str) -> None:
+    def hold_click(self, region_name: str, seconds: float) -> None:
+        region = self.regions.get(region_name)
+        if region is None:
+            raise LiveAdaptersUnavailable(
+                f"live click requires a known profile region: {region_name}"
+            )
+        x = region.x + region.width // 2
+        y = region.y + region.height // 2
+        self._validate_duration(seconds, "live mouse hold")
+        window = self._verify_live_target()
+        if self.input_mode == "background_window_messages":
+            sender = self._background_mouse_sender()
+            sender.button_down(window, int(x), int(y))
+            try:
+                self.sleeper(seconds)
+            finally:
+                sender.button_up(window, int(x), int(y))
+            return
+        absolute_x = window.left + int(x)
+        absolute_y = window.top + int(y)
+        sender = self._mouse_sender()
+        sender.button_down(absolute_x, absolute_y)
+        try:
+            self.sleeper(seconds)
+        finally:
+            sender.button_up(absolute_x, absolute_y)
+
+    def press_key(self, key: str, seconds: float | None = None) -> None:
+        key = self._map_key_name(key)
         virtual_key = _normalize_key(key)
+        duration = self.press_key_duration if seconds is None else float(seconds)
+        self._validate_duration(duration, "live key press")
         window = self._verify_live_target()
         if self.input_mode == "background_window_messages":
             sender = self._background_keyboard_sender()
             sender.key_down(window, virtual_key)
-            sender.key_up(window, virtual_key)
+            try:
+                self.sleeper(duration)
+            finally:
+                sender.key_up(window, virtual_key)
             return
         sender = self._keyboard_sender()
         sender.key_down(virtual_key)
-        sender.key_up(virtual_key)
+        try:
+            self.sleeper(duration)
+        finally:
+            sender.key_up(virtual_key)
 
     def hold_key(self, key: str, seconds: float) -> None:
+        key = self._map_key_name(key)
         virtual_key = _normalize_key(key)
         self._validate_duration(seconds, "live key hold")
         window = self._verify_live_target()
@@ -478,7 +665,7 @@ class LiveInputAdapter:
     def _keyboard_sender(self) -> KeyboardSender:
         if self.sender is not None:
             return self.sender
-        self.sender = Win32KeyboardSender.create()
+        self.sender = Win32KeyboardSender.create(self.foreground_key_method)
         return self.sender
 
     def _mouse_sender(self) -> MouseSender:
@@ -490,7 +677,9 @@ class LiveInputAdapter:
     def _background_keyboard_sender(self) -> BackgroundKeyboardSender:
         if self.background_sender is not None:
             return self.background_sender
-        self.background_sender = Win32BackgroundKeyboardSender.create()
+        self.background_sender = Win32BackgroundKeyboardSender.create(
+            self.background_key_method
+        )
         return self.background_sender
 
     def _background_mouse_sender(self) -> BackgroundMouseSender:
@@ -540,6 +729,19 @@ class LiveInputAdapter:
         self.focus_verifier = Win32FocusVerifier.create()
         return self.focus_verifier
 
+    def _map_key_name(self, key: str) -> str:
+        if not self.use_qwerty_physical_keys:
+            return key
+        mapper = self._key_mapper()
+        mapped = mapper.map_key_name(key)
+        return mapped if mapped is not None else key
+
+    def _key_mapper(self) -> QwertyPhysicalKeyMapper:
+        if self.key_mapper is not None:
+            return self.key_mapper
+        self.key_mapper = QwertyPhysicalKeyMapper.create()
+        return self.key_mapper
+
 
 class _KeyboardInput(ctypes.Structure):
     _fields_ = [
@@ -586,17 +788,23 @@ class _Input(ctypes.Structure):
 
 
 class Win32KeyboardSender:
-    def __init__(self, user32: ctypes.WinDLL) -> None:
+    def __init__(self, user32: ctypes.WinDLL, mode: str) -> None:
         self.user32 = user32
+        self.mode = mode
 
     @classmethod
-    def create(cls) -> Win32KeyboardSender:
+    def create(cls, mode: str = "sendinput_vk") -> Win32KeyboardSender:
         if not hasattr(ctypes, "WinDLL"):
             raise LiveAdaptersUnavailable("live keyboard input requires Windows")
 
         try:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
             send_input = user32.SendInput
+            if mode.startswith("sendinput_") and mode != "sendinput_vk":
+                user32.MapVirtualKeyW
+            if mode.startswith("keybd_event_"):
+                user32.keybd_event
+                user32.MapVirtualKeyW
         except (AttributeError, OSError) as error:
             raise LiveAdaptersUnavailable(
                 "live keyboard input requires Win32 SendInput"
@@ -608,7 +816,20 @@ class Win32KeyboardSender:
             ctypes.c_int,
         ]
         send_input.restype = wintypes.UINT
-        return cls(user32)
+        if mode.startswith("sendinput_") and mode != "sendinput_vk":
+            user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+            user32.MapVirtualKeyW.restype = wintypes.UINT
+        if mode.startswith("keybd_event_"):
+            user32.keybd_event.argtypes = [
+                wintypes.BYTE,
+                wintypes.BYTE,
+                wintypes.DWORD,
+                ULONG_PTR,
+            ]
+            user32.keybd_event.restype = None
+            user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+            user32.MapVirtualKeyW.restype = wintypes.UINT
+        return cls(user32, mode)
 
     def key_down(self, virtual_key: int) -> None:
         self._send_key(virtual_key, flags=0)
@@ -617,18 +838,11 @@ class Win32KeyboardSender:
         self._send_key(virtual_key, flags=KEYEVENTF_KEYUP)
 
     def _send_key(self, virtual_key: int, flags: int) -> None:
-        event = _Input(
-            type=INPUT_KEYBOARD,
-            union=_InputUnion(
-                ki=_KeyboardInput(
-                    wVk=virtual_key,
-                    wScan=0,
-                    dwFlags=flags,
-                    time=0,
-                    dwExtraInfo=0,
-                )
-            ),
-        )
+        if self.mode.startswith("keybd_event_"):
+            self._send_keybd_event(virtual_key, flags)
+            return
+
+        event = self._sendinput_event(virtual_key, flags)
         ctypes.set_last_error(0)
         sent = self.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event))
         if sent != 1:
@@ -636,6 +850,162 @@ class Win32KeyboardSender:
             if error_code:
                 raise ctypes.WinError(error_code)
             raise LiveAdaptersUnavailable("Win32 SendInput did not send keyboard input")
+
+    def _sendinput_event(self, virtual_key: int, flags: int) -> _Input:
+        if self.mode == "sendinput_unicode":
+            unicode_value = _unicode_key_value(virtual_key)
+            input_flags = KEYEVENTF_UNICODE | (
+                KEYEVENTF_KEYUP if flags & KEYEVENTF_KEYUP else 0
+            )
+            return _Input(
+                type=INPUT_KEYBOARD,
+                union=_InputUnion(
+                    ki=_KeyboardInput(
+                        wVk=0,
+                        wScan=unicode_value,
+                        dwFlags=input_flags,
+                        time=0,
+                        dwExtraInfo=0,
+                    )
+                ),
+            )
+
+        scan_code = self._scan_code(virtual_key)
+        input_flags = flags
+        w_vk = virtual_key
+        w_scan = 0
+        if self.mode == "sendinput_scancode":
+            w_vk = 0
+            w_scan = scan_code
+            input_flags |= KEYEVENTF_SCANCODE
+        elif self.mode == "sendinput_vk_scancode":
+            w_scan = scan_code
+        if _is_extended_key(virtual_key):
+            input_flags |= KEYEVENTF_EXTENDEDKEY
+        event = _Input(
+            type=INPUT_KEYBOARD,
+            union=_InputUnion(
+                ki=_KeyboardInput(
+                    wVk=w_vk,
+                    wScan=w_scan,
+                    dwFlags=input_flags,
+                    time=0,
+                    dwExtraInfo=0,
+                )
+            ),
+        )
+        return event
+
+    def _send_keybd_event(self, virtual_key: int, flags: int) -> None:
+        scan_code = self._scan_code(virtual_key)
+        key_flags = KEYEVENTF_KEYUP if flags & KEYEVENTF_KEYUP else 0
+        byte_scan_code = scan_code & 0xFF
+        if self.mode == "keybd_event_scancode":
+            key_flags |= KEYEVENTF_SCANCODE
+            if _is_extended_key(virtual_key):
+                key_flags |= KEYEVENTF_EXTENDEDKEY
+        ctypes.set_last_error(0)
+        self.user32.keybd_event(
+            virtual_key & 0xFF,
+            byte_scan_code,
+            key_flags,
+            0,
+        )
+
+    def _scan_code(self, virtual_key: int) -> int:
+        return int(self.user32.MapVirtualKeyW(int(virtual_key), 0)) & 0xFF
+
+
+class QwertyPhysicalKeyMapper:
+    def __init__(self, user32: ctypes.WinDLL) -> None:
+        self.user32 = user32
+        self.qwerty_layout = self.user32.LoadKeyboardLayoutW(
+            US_QWERTY_LAYOUT_ID,
+            KLF_NOTELLSHELL,
+        )
+
+    @classmethod
+    def create(cls) -> QwertyPhysicalKeyMapper:
+        if not hasattr(ctypes, "WinDLL"):
+            raise LiveAdaptersUnavailable(
+                "physical key mapping requires Windows keyboard layout APIs"
+            )
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.GetKeyboardLayout
+            user32.MapVirtualKeyExW
+            user32.LoadKeyboardLayoutW
+            user32.VkKeyScanExW
+            user32.ToUnicodeEx
+        except (AttributeError, OSError) as error:
+            raise LiveAdaptersUnavailable(
+                "physical key mapping requires Win32 keyboard layout APIs"
+            ) from error
+
+        user32.GetKeyboardLayout.argtypes = [ctypes.c_uint]
+        user32.GetKeyboardLayout.restype = ctypes.c_void_p
+        user32.MapVirtualKeyExW.argtypes = [
+            ctypes.c_uint,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+        ]
+        user32.MapVirtualKeyExW.restype = ctypes.c_uint
+        user32.LoadKeyboardLayoutW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint]
+        user32.LoadKeyboardLayoutW.restype = ctypes.c_void_p
+        user32.VkKeyScanExW.argtypes = [ctypes.c_wchar, ctypes.c_void_p]
+        user32.VkKeyScanExW.restype = ctypes.c_short
+        user32.ToUnicodeEx.argtypes = [
+            ctypes.c_uint,
+            ctypes.c_uint,
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+        ]
+        user32.ToUnicodeEx.restype = ctypes.c_int
+        return cls(user32)
+
+    def map_key_name(self, key: str) -> str | None:
+        normalized = key.strip().lower()
+        if len(normalized) != 1 or not normalized.isascii() or not normalized.isalnum():
+            return None
+
+        qwerty_vk = self.user32.VkKeyScanExW(normalized, self.qwerty_layout) & 0xFF
+        if qwerty_vk == 0xFF:
+            return None
+
+        qwerty_scan_code = self.user32.MapVirtualKeyExW(
+            qwerty_vk,
+            MAPVK_VK_TO_VSC,
+            self.qwerty_layout,
+        )
+        if qwerty_scan_code == 0:
+            return None
+
+        current_layout = self.user32.GetKeyboardLayout(0)
+        current_vk = self.user32.MapVirtualKeyExW(
+            qwerty_scan_code,
+            MAPVK_VSC_TO_VK_EX,
+            current_layout,
+        )
+        if current_vk == 0:
+            return None
+
+        keyboard_state = (ctypes.c_ubyte * 256)()
+        buffer = ctypes.create_unicode_buffer(8)
+        char_count = self.user32.ToUnicodeEx(
+            current_vk,
+            qwerty_scan_code,
+            keyboard_state,
+            buffer,
+            len(buffer),
+            0,
+            current_layout,
+        )
+        if char_count <= 0 or not buffer.value:
+            return None
+        return buffer.value[0].lower()
 
 
 class Win32MouseSender:
@@ -669,14 +1039,24 @@ class Win32MouseSender:
         return cls(user32)
 
     def click(self, x: int, y: int) -> None:
+        self.button_down(x, y)
+        self.button_up(x, y)
+
+    def button_down(self, x: int, y: int) -> None:
+        self._set_cursor(x, y)
+        self.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+
+    def button_up(self, x: int, y: int) -> None:
+        self._set_cursor(x, y)
+        self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+    def _set_cursor(self, x: int, y: int) -> None:
         ctypes.set_last_error(0)
         if not self.user32.SetCursorPos(int(x), int(y)):
             error_code = ctypes.get_last_error()
             if error_code:
                 raise ctypes.WinError(error_code)
             raise LiveAdaptersUnavailable("Win32 SetCursorPos failed")
-        self.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-        self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
 
 class Win32WindowCapture:
@@ -766,9 +1146,17 @@ class Win32WindowCapture:
 
         old_bitmap = select_object(mem_dc, bitmap)
         try:
-            if not print_window(hwnd, mem_dc, 0x00000001):
-                raise LiveAdaptersUnavailable("Win32 PrintWindow failed")
-            return _bitmap_to_image(gdi32, mem_dc, bitmap, width, height, get_dibits)
+            for flag in PRINT_WINDOW_CAPTURE_FLAGS:
+                if print_window(hwnd, mem_dc, flag):
+                    return _bitmap_to_image(
+                        gdi32,
+                        mem_dc,
+                        bitmap,
+                        width,
+                        height,
+                        get_dibits,
+                    )
+            raise LiveAdaptersUnavailable("Win32 PrintWindow failed")
         finally:
             select_object(mem_dc, old_bitmap)
             delete_object(bitmap)
@@ -777,11 +1165,12 @@ class Win32WindowCapture:
 
 
 class Win32BackgroundKeyboardSender:
-    def __init__(self, user32: ctypes.WinDLL) -> None:
+    def __init__(self, user32: ctypes.WinDLL, mode: str) -> None:
         self.user32 = user32
+        self.mode = mode
 
     @classmethod
-    def create(cls) -> Win32BackgroundKeyboardSender:
+    def create(cls, mode: str = "post_message_simple") -> Win32BackgroundKeyboardSender:
         if not hasattr(ctypes, "WinDLL"):
             raise LiveAdaptersUnavailable(
                 "background keyboard input requires Windows"
@@ -789,31 +1178,54 @@ class Win32BackgroundKeyboardSender:
 
         try:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
-            post_message = user32.PostMessageW
+            user32.PostMessageW
+            if mode != "post_message_simple":
+                user32.MapVirtualKeyW
+            if mode.startswith("send_message_timeout"):
+                user32.SendMessageTimeoutW
         except (AttributeError, OSError) as error:
             raise LiveAdaptersUnavailable(
                 "background keyboard input requires Win32 window messaging"
             ) from error
 
-        post_message.argtypes = [
+        user32.PostMessageW.argtypes = [
             wintypes.HWND,
             wintypes.UINT,
             wintypes.WPARAM,
             wintypes.LPARAM,
         ]
-        post_message.restype = wintypes.BOOL
-        return cls(user32)
+        user32.PostMessageW.restype = wintypes.BOOL
+        if mode != "post_message_simple":
+            user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+            user32.MapVirtualKeyW.restype = wintypes.UINT
+        if mode.startswith("send_message_timeout"):
+            user32.SendMessageTimeoutW.argtypes = [
+                wintypes.HWND,
+                wintypes.UINT,
+                wintypes.WPARAM,
+                wintypes.LPARAM,
+                wintypes.UINT,
+                wintypes.UINT,
+                ctypes.POINTER(ULONG_PTR),
+            ]
+            user32.SendMessageTimeoutW.restype = wintypes.LPARAM
+        return cls(user32, mode)
 
     def key_down(self, window: TargetWindow, virtual_key: int) -> None:
-        for handle in _window_message_handles(self.user32, window):
-            self._post_handle(handle, WM_KEYDOWN, virtual_key, 1)
+        handles = self._handles(window)
+        self._activate_handles(handles)
+        l_param = self._key_lparam(virtual_key, key_up=False)
+        char_l_param = self._char_lparam(virtual_key)
+        for handle in handles:
+            self._dispatch(handle, WM_KEYDOWN, virtual_key, l_param)
             character = _virtual_key_to_char(virtual_key)
             if character is not None:
-                self._post_handle(handle, WM_CHAR, ord(character), 1)
+                self._dispatch(handle, WM_CHAR, ord(character), char_l_param)
 
     def key_up(self, window: TargetWindow, virtual_key: int) -> None:
-        for handle in _window_message_handles(self.user32, window):
-            self._post_handle(handle, WM_KEYUP, virtual_key, 0xC0000001)
+        l_param = self._key_lparam(virtual_key, key_up=True)
+        for handle in self._handles(window):
+            self._dispatch(handle, WM_KEYUP, virtual_key, l_param)
 
     def _post(
         self,
@@ -822,8 +1234,80 @@ class Win32BackgroundKeyboardSender:
         w_param: int,
         l_param: int,
     ) -> None:
-        for handle in _window_message_handles(self.user32, window):
-            self._post_handle(handle, message, w_param, l_param)
+        for handle in self._handles(window):
+            self._dispatch(handle, message, w_param, l_param)
+
+    def _handles(self, window: TargetWindow) -> list[int]:
+        handles = _window_message_handles(self.user32, window)
+        if self.mode.endswith("_root"):
+            return handles[:1]
+        return handles
+
+    def _dispatch(
+        self,
+        handle: int,
+        message: int,
+        w_param: int,
+        l_param: int,
+    ) -> None:
+        if self.mode.startswith("send_message_timeout"):
+            self._send_handle(handle, message, w_param, l_param)
+            return
+        self._post_handle(handle, message, w_param, l_param)
+
+    def _activate_handles(self, handles: list[int]) -> None:
+        for handle in handles:
+            self._post_handle(handle, WM_ACTIVATE, WA_ACTIVE, 0)
+            self._post_handle(handle, WM_SETFOCUS, 0, 0)
+
+    def _send_handle(
+        self,
+        handle: int,
+        message: int,
+        w_param: int,
+        l_param: int,
+    ) -> None:
+        result_value = ULONG_PTR()
+        ctypes.set_last_error(0)
+        result = self.user32.SendMessageTimeoutW(
+            int(handle),
+            int(message),
+            int(w_param),
+            int(l_param),
+            SMTO_NORMAL | SMTO_ABORTIFHUNG,
+            200,
+            ctypes.byref(result_value),
+        )
+        if result:
+            return
+        error_code = ctypes.get_last_error()
+        if error_code == 5:
+            raise LiveAdaptersUnavailable(
+                "Win32 SendMessageTimeoutW access denied for background keyboard input; "
+                "run the runner at the same privilege level as the target window"
+            )
+        if error_code:
+            raise ctypes.WinError(error_code)
+        raise LiveAdaptersUnavailable(
+            "Win32 SendMessageTimeoutW did not deliver keyboard input"
+        )
+
+    def _key_lparam(self, virtual_key: int, *, key_up: bool) -> int:
+        if self.mode == "post_message_simple":
+            return 0xC0000001 if key_up else 1
+        scan_code = int(self.user32.MapVirtualKeyW(int(virtual_key), 0)) & 0xFF
+        l_param = 1 | (scan_code << 16)
+        if _is_extended_key(virtual_key):
+            l_param |= 1 << 24
+        if key_up:
+            l_param |= 1 << 30
+            l_param |= 1 << 31
+        return l_param
+
+    def _char_lparam(self, virtual_key: int) -> int:
+        if self.mode == "post_message_simple":
+            return 1
+        return self._key_lparam(virtual_key, key_up=False)
 
     def _post_handle(
         self,
@@ -840,6 +1324,11 @@ class Win32BackgroundKeyboardSender:
             int(l_param),
         ):
             error_code = ctypes.get_last_error()
+            if error_code == 5:
+                raise LiveAdaptersUnavailable(
+                    "Win32 PostMessageW access denied for background keyboard input; "
+                    "run the runner at the same privilege level as the target window"
+                )
             if error_code:
                 raise ctypes.WinError(error_code)
             raise LiveAdaptersUnavailable(
@@ -893,10 +1382,34 @@ class Win32BackgroundMouseSender:
         return cls(user32)
 
     def click(self, window: TargetWindow, x: int, y: int) -> None:
+        self.button_down(window, x, y)
+        self.button_up(window, x, y)
+
+    def button_down(self, window: TargetWindow, x: int, y: int) -> None:
         target_handle, target_x, target_y = self._target_at_client_point(window, x, y)
         l_param = _client_coordinates_lparam(target_x, target_y)
+        self._activate_click_target(window, target_handle)
+        self._post_handle(target_handle, WM_MOUSEMOVE, 0, l_param)
         self._post_handle(target_handle, WM_LBUTTONDOWN, MK_LBUTTON, l_param)
+
+    def button_up(self, window: TargetWindow, x: int, y: int) -> None:
+        target_handle, target_x, target_y = self._target_at_client_point(window, x, y)
+        l_param = _client_coordinates_lparam(target_x, target_y)
+        self._activate_click_target(window, target_handle)
+        self._post_handle(target_handle, WM_MOUSEMOVE, 0, l_param)
         self._post_handle(target_handle, WM_LBUTTONUP, 0, l_param)
+
+    def _activate_click_target(self, window: TargetWindow, target_handle: int) -> None:
+        if window.handle is None:
+            raise LiveAdaptersUnavailable(
+                "background mouse input requires a target window handle"
+            )
+        handles = [int(window.handle)]
+        if target_handle != int(window.handle):
+            handles.append(int(target_handle))
+        for handle in handles:
+            self._post_handle(handle, WM_ACTIVATE, WA_ACTIVE, 0)
+            self._post_handle(handle, WM_SETFOCUS, 0, 0)
 
     def _target_at_client_point(
         self,
@@ -953,6 +1466,11 @@ class Win32BackgroundMouseSender:
             int(l_param),
         ):
             error_code = ctypes.get_last_error()
+            if error_code == 5:
+                raise LiveAdaptersUnavailable(
+                    "Win32 PostMessageW access denied for background mouse input; "
+                    "run the runner at the same privilege level as the target window"
+                )
             if error_code:
                 raise ctypes.WinError(error_code)
             raise LiveAdaptersUnavailable(
@@ -1113,6 +1631,22 @@ def _normalize_key(key: str) -> int:
     return KEY_CODES[normalized]
 
 
+def _unicode_key_value(virtual_key: int) -> int:
+    if ord("A") <= virtual_key <= ord("Z"):
+        return ord(chr(virtual_key).lower())
+    if ord("0") <= virtual_key <= ord("9"):
+        return virtual_key
+    if virtual_key == KEY_CODES["space"]:
+        return ord(" ")
+    if virtual_key == KEY_CODES["tab"]:
+        return ord("\t")
+    if virtual_key == KEY_CODES["enter"]:
+        return ord("\r")
+    raise LiveAdaptersUnavailable(
+        "unicode foreground key method only supports printable alphanumeric keys, space, tab, and enter"
+    )
+
+
 def _target_window_from_candidate(candidate: WindowCandidate) -> TargetWindow:
     return TargetWindow(
         title=candidate.title,
@@ -1147,6 +1681,15 @@ def _virtual_key_to_char(virtual_key: int) -> str | None:
     if virtual_key == KEY_CODES["space"]:
         return " "
     return None
+
+
+def _is_extended_key(virtual_key: int) -> bool:
+    return virtual_key in {
+        KEY_CODES["left"],
+        KEY_CODES["up"],
+        KEY_CODES["right"],
+        KEY_CODES["down"],
+    }
 
 
 def _window_message_handles(

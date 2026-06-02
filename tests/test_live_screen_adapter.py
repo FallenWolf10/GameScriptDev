@@ -119,6 +119,52 @@ class LiveScreenAdapterTests(unittest.TestCase):
             assert screenshot.path is not None
             self.assertTrue(screenshot.path.exists())
 
+    def test_background_capture_failure_falls_back_to_window_bounds(self) -> None:
+        class FailingWindowCapture:
+            def capture_client(self, window: TargetWindow) -> Image.Image:
+                raise LiveAdaptersUnavailable("Win32 PrintWindow failed")
+
+        captured_bboxes: list[tuple[int, int, int, int]] = []
+
+        def fake_grabber(bbox: tuple[int, int, int, int]) -> Image.Image:
+            captured_bboxes.append(bbox)
+            return Image.new("RGB", (20, 10), "green")
+
+        profile = Profile(
+            version=1,
+            name="Demo",
+            target=Target(
+                window_title_contains="Demo",
+                input_mode="background_window_messages",
+            ),
+            resolution=Resolution(width=1280, height=720, policy="ignore"),
+            initial_state="done",
+            states={},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = LiveScreenAdapter(
+                Path(temp_dir),
+                grabber=fake_grabber,
+                profile=profile,
+                window_capture=FailingWindowCapture(),
+            )
+
+            screenshot = adapter.capture(
+                TargetWindow(
+                    title="Demo",
+                    process_name="demo.exe",
+                    left=100,
+                    top=200,
+                    width=20,
+                    height=10,
+                    handle=123,
+                )
+            )
+
+            self.assertEqual(captured_bboxes, [(100, 200, 120, 210)])
+            assert screenshot.path is not None
+            self.assertTrue(screenshot.path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,6 +46,15 @@ class RecordingScreenAdapter:
         return Screenshot(source=f"capture-{len(self.contexts)}")
 
 
+class ExplodingScreenAdapter:
+    def capture(
+        self,
+        window: TargetWindow,
+        context: str | None = None,
+    ) -> Screenshot:
+        raise AssertionError(f"unexpected capture: {context}")
+
+
 class SequencedVisionAdapter:
     def __init__(self, ready_after_capture: int | None) -> None:
         self.ready_after_capture = ready_after_capture
@@ -73,7 +82,10 @@ class NoInputAdapter:
     def click_region(self, region_name: str) -> None:
         return None
 
-    def press_key(self, key: str) -> None:
+    def hold_click(self, region_name: str, seconds: float) -> None:
+        return None
+
+    def press_key(self, key: str, seconds: float | None = None) -> None:
         return None
 
     def hold_key(self, key: str, seconds: float) -> None:
@@ -81,6 +93,23 @@ class NoInputAdapter:
 
     def wait(self, seconds: float) -> None:
         return None
+
+
+class RecordingInputAdapter(NoInputAdapter):
+    def __init__(self) -> None:
+        self.actions: list[tuple[str, str] | tuple[str, str, float] | tuple[str, str, float | None]] = []
+
+    def click_region(self, region_name: str) -> None:
+        self.actions.append(("click_region", region_name))
+
+    def hold_click(self, region_name: str, seconds: float) -> None:
+        self.actions.append(("hold_click", region_name, seconds))
+
+    def press_key(self, key: str, seconds: float | None = None) -> None:
+        if seconds is None:
+            self.actions.append(("press_key", key))
+            return
+        self.actions.append(("press_key", key, seconds))
 
 
 def runtime_factory(ready_after_capture: int | None):
@@ -99,6 +128,27 @@ def runtime_factory(ready_after_capture: int | None):
             screen_adapter=SequencedScreenAdapter(),
             vision_adapter=SequencedVisionAdapter(ready_after_capture),
             input_adapter=NoInputAdapter(),
+        )
+
+    return factory
+
+
+def runtime_factory_for_action_only(input_adapter: RecordingInputAdapter):
+    def factory(
+        _profile: Profile,
+        _mode: str,
+        _logger: logging.Logger,
+        _artifact_dir: object,
+        _profile_dir: object,
+    ) -> RuntimeContext:
+        window = TargetWindow("test", "test.exe", 0, 0, 1280, 720, handle=100)
+        return RuntimeContext(
+            mode="live",
+            window=window,
+            window_adapter=StaticWindowAdapter(),
+            screen_adapter=ExplodingScreenAdapter(),
+            vision_adapter=SequencedVisionAdapter(ready_after_capture=None),
+            input_adapter=input_adapter,
         )
 
     return factory
@@ -196,6 +246,42 @@ def stop_profile() -> Profile:
     )
 
 
+def action_only_profile() -> Profile:
+    return Profile(
+        version=1,
+        name="Action Only Profile",
+        target=Target(process_name="test.exe", input_mode="background_window_messages"),
+        resolution=Resolution(width=1280, height=720),
+        initial_state="startup_sequence",
+        max_retries=1,
+        regions={},
+        states={
+            "startup_sequence": State(
+                name="startup_sequence",
+                actions=[
+                    Action(type="click_point", data={"region": "startup_click"}),
+                    Action(type="hold_click", data={"region": "startup_click", "seconds": 1.25}),
+                    Action(type="click_point", data={"region": "startup_click"}),
+                    Action(type="press_key", data={"key": "2", "seconds": 0.2}),
+                    Action(type="press_key", data={"key": "e"}),
+                ],
+                on_success="complete",
+                on_failure="failed",
+            ),
+            "complete": State(
+                name="complete",
+                terminal=True,
+                result="success",
+            ),
+            "failed": State(
+                name="failed",
+                terminal=True,
+                result="failed_known_screen",
+            ),
+        },
+    )
+
+
 def quiet_logger(name: str) -> logging.Logger:
     test_logger = logging.getLogger(name)
     test_logger.handlers.clear()
@@ -269,6 +355,28 @@ class EngineWaitForStateTests(unittest.TestCase):
         self.assertEqual(events[1]["action_type"], "stop")
         self.assertEqual(events[1]["action_summary"], "stop operator_stopped")
         self.assertEqual(events[2]["result"], "operator_stopped")
+
+    def test_action_only_live_profile_runs_without_screenshots(self) -> None:
+        input_adapter = RecordingInputAdapter()
+
+        result = Engine(
+            profile=action_only_profile(),
+            mode="live",
+            logger=quiet_logger("tests.action_only_no_capture"),
+            runtime_factory=runtime_factory_for_action_only(input_adapter),
+        ).run()
+
+        self.assertEqual(result, "success")
+        self.assertEqual(
+            input_adapter.actions,
+            [
+                ("click_region", "startup_click"),
+                ("hold_click", "startup_click", 1.25),
+                ("click_region", "startup_click"),
+                ("press_key", "2", 0.2),
+                ("press_key", "e"),
+            ],
+        )
 
 
 if __name__ == "__main__":

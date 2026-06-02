@@ -50,6 +50,7 @@ def create_runtime(
             artifact_dir or Path("logs/live_captures"),
             window_adapter=window_adapter,
             profile=profile,
+            logger=logger,
         )
         vision_adapter = LiveVisionAdapter(profile_dir or Path("."), logger)
     else:
@@ -71,6 +72,9 @@ def create_runtime(
             regions=profile.regions,
             window_adapter=window_adapter,
             input_mode=profile.target.input_mode,
+            foreground_key_method=profile.target.foreground_key_method,
+            background_key_method=profile.target.background_key_method,
+            use_qwerty_physical_keys=profile.target.use_qwerty_physical_keys,
         )
 
     return RuntimeContext(

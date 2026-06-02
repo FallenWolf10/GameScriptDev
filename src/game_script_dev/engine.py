@@ -72,8 +72,7 @@ class Engine:
             self._emit("state_started", state=state.name)
             try:
                 self._handle_interruptions(runtime, actions, interruption_attempts)
-                screenshot = self._capture(runtime, f"state-{state.name}-confirm")
-                self._confirm_state(state, runtime, screenshot)
+                screenshot = self._capture_for_state_if_needed(runtime, state)
 
                 if state.terminal:
                     result = state.result or "success"
@@ -82,7 +81,7 @@ class Engine:
                         state.name,
                         result,
                     )
-                    self._capture_final(runtime, state.name, result)
+                    self._capture_final(runtime, state, result)
                     self._emit("finished", state=state.name, result=result)
                     return result
 
@@ -93,7 +92,7 @@ class Engine:
                     screenshot,
                 )
                 if stop_result is not None:
-                    self._capture_final(runtime, state.name, f"stop-{stop_result}")
+                    self._capture_final(runtime, state, f"stop-{stop_result}")
                     return stop_result
 
                 if state.on_success is None:
@@ -137,7 +136,7 @@ class Engine:
                     )
                     self._capture_final(
                         runtime,
-                        state.name,
+                        state,
                         f"failed-{state.name}",
                     )
                     self._emit(
@@ -178,22 +177,52 @@ class Engine:
         except LiveAdaptersUnavailable as error:
             raise StateExecutionError(f"live capture unavailable: {error}") from error
 
+    def _capture_for_state_if_needed(
+        self,
+        runtime: RuntimeContext,
+        state: State,
+    ) -> Screenshot:
+        if not self._state_needs_screenshot(state):
+            self.logger.info(
+                "Skipping screenshot for non-visual state '%s'",
+                state.name,
+            )
+            return Screenshot(source=f"state-{state.name}-not-captured")
+
+        screenshot = self._capture(runtime, f"state-{state.name}-confirm")
+        self._confirm_state(state, runtime, screenshot)
+        return screenshot
+
+    def _state_needs_screenshot(self, state: State) -> bool:
+        return bool(
+            state.required_anchors
+            or state.optional_anchors
+            or state.forbidden_anchors
+            or any(action.type == "click_template" for action in state.actions)
+        )
+
     def _capture_final(
         self,
         runtime: RuntimeContext,
-        state_name: str,
+        state: State,
         reason: str,
     ) -> None:
         if runtime.mode != "live":
             return
+        if not self._state_needs_screenshot(state):
+            self.logger.info(
+                "Skipping final screenshot for non-visual state '%s'",
+                state.name,
+            )
+            return
         try:
-            screenshot = self._capture(runtime, f"final-state-{state_name}-{reason}")
+            screenshot = self._capture(runtime, f"final-state-{state.name}-{reason}")
         except StateExecutionError as error:
             self.logger.warning("Final screenshot unavailable: %s", error)
             return
         self.logger.info(
             "Final diagnostic screenshot for state '%s': %s",
-            state_name,
+            state.name,
             screenshot.path or screenshot.source,
         )
 
@@ -320,7 +349,7 @@ class Engine:
                     result = None
                 else:
                     result = actions.execute(action, screenshot)
-            except Exception as error:
+            except LiveAdaptersUnavailable as error:
                 self._emit(
                     "action_failed",
                     state=state.name,
@@ -330,6 +359,18 @@ class Engine:
                     failure_reason=str(error),
                 )
                 raise
+            except Exception as error:
+                self._emit(
+                    "action_failed",
+                    state=state.name,
+                    action_index=index,
+                    action_type=action.type,
+                    action_summary=summary,
+                    failure_reason=str(error),
+                )
+                raise StateExecutionError(
+                    f"action {summary} failed: {error}"
+                ) from error
 
             event: dict[str, object] = {
                 "state": state.name,
@@ -351,9 +392,13 @@ class Engine:
             return f"wait_for_state {action_data['state']}"
         if action_type == "click_point":
             return f"click_point {action_data['region']}"
+        if action_type == "hold_click":
+            return f"hold_click {action_data['region']} {action_data['seconds']}s"
         if action_type == "click_template":
             return f"click_template {action_data['target']}"
         if action_type == "press_key":
+            if "seconds" in action_data:
+                return f"press_key {action_data['key']} {action_data['seconds']}s"
             return f"press_key {action_data['key']}"
         if action_type == "hold_key":
             seconds = action_data.get("seconds", 1)
