@@ -78,8 +78,24 @@ class InputAdapter(Protocol):
     def press_key(self, key: str, seconds: float | None = None) -> None:
         """Press a key, optionally overriding the tap duration."""
 
+    def press_keys(self, keys: list[str], seconds: float | None = None) -> None:
+        """Press multiple keys together, optionally overriding the tap duration."""
+
     def hold_key(self, key: str, seconds: float) -> None:
         """Hold a key for a duration."""
+
+    def hold_keys(self, keys: list[str], seconds: float) -> None:
+        """Hold multiple keys together for a duration."""
+
+    def hold_key_while_repeating_key(
+        self,
+        hold_key: str,
+        hold_seconds: float,
+        tap_key: str,
+        tap_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        """Hold one key while tapping another key on an interval."""
 
     def wait(self, seconds: float) -> None:
         """Wait for a bounded duration."""

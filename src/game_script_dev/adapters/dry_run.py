@@ -110,8 +110,48 @@ class DryRunInputAdapter:
             return
         self.logger.info("Dry-run press_key: %s for %s seconds", key, seconds)
 
+    def press_keys(self, keys: list[str], seconds: float | None = None) -> None:
+        joined = " + ".join(keys)
+        if seconds is None:
+            self.logger.info("Dry-run press_keys: %s", joined)
+            return
+        self.logger.info("Dry-run press_keys: %s for %s seconds", joined, seconds)
+
     def hold_key(self, key: str, seconds: float) -> None:
         self.logger.info("Dry-run hold_key: %s for %s seconds", key, seconds)
+
+    def hold_keys(self, keys: list[str], seconds: float) -> None:
+        self.logger.info(
+            "Dry-run hold_keys: %s for %s seconds",
+            " + ".join(keys),
+            seconds,
+        )
+
+    def hold_key_while_repeating_key(
+        self,
+        hold_key: str,
+        hold_seconds: float,
+        tap_key: str,
+        tap_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        if tap_duration_seconds is None:
+            self.logger.info(
+                "Dry-run hold_key_while_repeating_key: hold %s for %s seconds while tapping %s every %s seconds",
+                hold_key,
+                hold_seconds,
+                tap_key,
+                tap_every_seconds,
+            )
+            return
+        self.logger.info(
+            "Dry-run hold_key_while_repeating_key: hold %s for %s seconds while tapping %s every %s seconds for %s seconds",
+            hold_key,
+            hold_seconds,
+            tap_key,
+            tap_every_seconds,
+            tap_duration_seconds,
+        )
 
     def wait(self, seconds: float) -> None:
         self.logger.info("Dry-run bounded wait: %s seconds", seconds)

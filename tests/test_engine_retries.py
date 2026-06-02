@@ -43,7 +43,23 @@ class StaticInputAdapter:
     def press_key(self, key: str) -> None:
         return None
 
+    def press_keys(self, keys: list[str], seconds: float | None = None) -> None:
+        return None
+
     def hold_key(self, key: str, seconds: float) -> None:
+        return None
+
+    def hold_keys(self, keys: list[str], seconds: float) -> None:
+        return None
+
+    def hold_key_while_repeating_key(
+        self,
+        hold_key: str,
+        hold_seconds: float,
+        tap_key: str,
+        tap_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
         return None
 
     def wait(self, seconds: float) -> None:

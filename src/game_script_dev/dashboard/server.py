@@ -113,6 +113,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/runs":
             self._start_run()
             return
+        if path.startswith("/api/runs/") and path.endswith("/stop"):
+            self._stop_run(path)
+            return
         if path == "/api/runtime/relaunch-admin":
             self._relaunch_admin()
             return
@@ -188,10 +191,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 profile_id,
                 profile_path,
                 mode,
-                live_confirmation=body.get("confirmation"),
             )
         except ValueError as error:
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        self._send_json(record.to_dict(), status=HTTPStatus.ACCEPTED)
+
+    def _stop_run(self, path: str) -> None:
+        run_id = unquote(path.split("/")[3])
+        try:
+            record = self.state.runs.stop_run(run_id)
+        except KeyError:
+            self._send_error(HTTPStatus.NOT_FOUND, "unknown run id")
             return
         self._send_json(record.to_dict(), status=HTTPStatus.ACCEPTED)
 

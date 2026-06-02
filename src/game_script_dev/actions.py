@@ -56,9 +56,42 @@ class ActionRunner:
         self.runtime.input_adapter.press_key(str(action.data["key"]), duration)
         return None
 
+    def _execute_press_keys(self, action: Action, screenshot: Screenshot) -> None:
+        duration = (
+            float(action.data["seconds"]) if "seconds" in action.data else None
+        )
+        keys = [str(key) for key in action.data["keys"]]
+        self.runtime.input_adapter.press_keys(keys, duration)
+        return None
+
     def _execute_hold_key(self, action: Action, screenshot: Screenshot) -> None:
         duration = float(action.data.get("seconds", 1))
         self.runtime.input_adapter.hold_key(str(action.data["key"]), duration)
+        return None
+
+    def _execute_hold_keys(self, action: Action, screenshot: Screenshot) -> None:
+        duration = float(action.data.get("seconds", 1))
+        keys = [str(key) for key in action.data["keys"]]
+        self.runtime.input_adapter.hold_keys(keys, duration)
+        return None
+
+    def _execute_hold_key_while_repeating_key(
+        self,
+        action: Action,
+        screenshot: Screenshot,
+    ) -> None:
+        tap_duration = (
+            float(action.data["tap_duration_seconds"])
+            if "tap_duration_seconds" in action.data
+            else None
+        )
+        self.runtime.input_adapter.hold_key_while_repeating_key(
+            hold_key=str(action.data["hold_key"]),
+            hold_seconds=float(action.data["hold_seconds"]),
+            tap_key=str(action.data["tap_key"]),
+            tap_every_seconds=float(action.data["tap_every_seconds"]),
+            tap_duration_seconds=tap_duration,
+        )
         return None
 
     def _execute_wait(self, action: Action, screenshot: Screenshot) -> None:

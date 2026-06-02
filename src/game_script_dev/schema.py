@@ -13,7 +13,10 @@ SUPPORTED_ACTION_TYPES = {
     "click_point",
     "hold_click",
     "press_key",
+    "press_keys",
     "hold_key",
+    "hold_keys",
+    "hold_key_while_repeating_key",
     "wait",
     "log",
     "stop",
@@ -630,14 +633,58 @@ def _validate_actions(
                 errors.append(f"{action_context}.key is required")
             else:
                 _validate_key(action.data["key"], f"{action_context}.key", errors)
-        if action.type == "press_key" and "seconds" in action.data:
+        if action.type in {"press_keys", "hold_keys"}:
+            if "keys" not in action.data:
+                errors.append(f"{action_context}.keys is required")
+            else:
+                _validate_keys(action.data["keys"], f"{action_context}.keys", errors)
+        if action.type in {"press_key", "press_keys"} and "seconds" in action.data:
             _validate_duration(
                 action.data["seconds"], f"{action_context}.seconds", errors
             )
-        if action.type == "hold_key" and "seconds" in action.data:
+        if action.type in {"hold_key", "hold_keys"} and "seconds" in action.data:
             _validate_duration(
                 action.data["seconds"], f"{action_context}.seconds", errors
             )
+        if action.type == "hold_key_while_repeating_key":
+            if "hold_key" not in action.data:
+                errors.append(f"{action_context}.hold_key is required")
+            else:
+                _validate_key(
+                    action.data["hold_key"],
+                    f"{action_context}.hold_key",
+                    errors,
+                )
+            if "tap_key" not in action.data:
+                errors.append(f"{action_context}.tap_key is required")
+            else:
+                _validate_key(
+                    action.data["tap_key"],
+                    f"{action_context}.tap_key",
+                    errors,
+                )
+            if "hold_seconds" not in action.data:
+                errors.append(f"{action_context}.hold_seconds is required")
+            else:
+                _validate_duration(
+                    action.data["hold_seconds"],
+                    f"{action_context}.hold_seconds",
+                    errors,
+                )
+            if "tap_every_seconds" not in action.data:
+                errors.append(f"{action_context}.tap_every_seconds is required")
+            else:
+                _validate_positive_duration(
+                    action.data["tap_every_seconds"],
+                    f"{action_context}.tap_every_seconds",
+                    errors,
+                )
+            if "tap_duration_seconds" in action.data:
+                _validate_duration(
+                    action.data["tap_duration_seconds"],
+                    f"{action_context}.tap_duration_seconds",
+                    errors,
+                )
         if action.type == "wait":
             if "seconds" not in action.data:
                 errors.append(f"{action_context}.seconds is required")
@@ -656,6 +703,17 @@ def _validate_duration(value: object, label: str, errors: list[str]) -> None:
 
     if not math.isfinite(seconds) or seconds < 0:
         errors.append(f"{label} must be a finite non-negative number")
+
+
+def _validate_positive_duration(value: object, label: str, errors: list[str]) -> None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        errors.append(f"{label} must be a number")
+        return
+
+    if not math.isfinite(seconds) or seconds <= 0:
+        errors.append(f"{label} must be a finite positive number")
 
 
 def _validate_integer(
@@ -679,6 +737,17 @@ def _validate_key(value: object, label: str, errors: list[str]) -> None:
     normalized = value.strip().lower()
     if normalized not in SUPPORTED_KEY_NAMES:
         errors.append(f"{label} uses unsupported key '{value}'")
+
+
+def _validate_keys(value: object, label: str, errors: list[str]) -> None:
+    if not isinstance(value, list):
+        errors.append(f"{label} must be a list")
+        return
+    if not value:
+        errors.append(f"{label} must not be empty")
+        return
+    for index, item in enumerate(value):
+        _validate_key(item, f"{label}[{index}]", errors)
 
 
 def _mapping(raw: dict[str, Any], key: str) -> dict[str, Any]:

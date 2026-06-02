@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,6 +31,7 @@ class RunRecord:
     finished_at: str | None = None
     run_paths: RunPaths | None = None
     timeline: list[dict[str, object]] = field(default_factory=list)
+    stop_requested: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -48,6 +50,7 @@ class RunRecord:
             if self.run_paths
             else None,
             "timeline": self.timeline,
+            "stop_requested": self.stop_requested,
         }
 
 
@@ -57,6 +60,7 @@ class RunRegistry:
         self._lock = threading.Lock()
         self._records: dict[str, RunRecord] = {}
         self._last_dry_run_success: dict[str, bool] = {}
+        self._stop_events: dict[str, threading.Event] = {}
 
     def last_dry_run_success(self, profile_id: str) -> bool:
         with self._lock:
@@ -79,12 +83,7 @@ class RunRegistry:
         profile_id: str,
         profile_path: Path,
         mode: str,
-        *,
-        live_confirmation: str | None = None,
     ) -> RunRecord:
-        if mode == "live" and live_confirmation != "RUN":
-            raise ValueError("live dashboard runs require confirmation text RUN")
-
         run_id = uuid.uuid4().hex[:12]
         record = RunRecord(
             id=run_id,
@@ -92,17 +91,26 @@ class RunRegistry:
             profile_path=profile_path,
             mode=mode,
         )
+        stop_event = threading.Event()
         with self._lock:
             self._records[run_id] = record
+            self._stop_events[run_id] = stop_event
 
         thread = threading.Thread(
             target=self._run_profile,
-            args=(record,),
+            args=(record, stop_event),
             name=f"game-script-dev-run-{run_id}",
             daemon=True,
         )
         thread.start()
         return record
+
+    def stop_run(self, run_id: str) -> RunRecord:
+        with self._lock:
+            record = self._records[run_id]
+            record.stop_requested = True
+            self._stop_events[run_id].set()
+            return record
 
     def read_log(self, run_id: str) -> str:
         record = self.get_run(run_id)
@@ -148,7 +156,7 @@ class RunRegistry:
             raise FileNotFoundError(relative_path)
         return path
 
-    def _run_profile(self, record: RunRecord) -> None:
+    def _run_profile(self, record: RunRecord, stop_event: threading.Event) -> None:
         logger = None
         try:
             profile = load_profile(record.profile_path)
@@ -168,7 +176,9 @@ class RunRegistry:
                 logger=logger,
                 artifact_dir=run_paths.artifact_dir,
                 profile_dir=record.profile_path.parent,
+                sleeper=lambda seconds: self._interruptible_sleep(stop_event, seconds),
                 event_handler=lambda event: self._handle_event(record.id, event),
+                stop_requested=stop_event.is_set,
             ).run()
             logger.info("Profile finished with result: %s", result)
             self._update(
@@ -200,6 +210,8 @@ class RunRegistry:
                 for handler in list(logger.handlers):
                     logger.removeHandler(handler)
                     handler.close()
+            with self._lock:
+                self._stop_events.pop(record.id, None)
 
     def _handle_event(self, run_id: str, event: dict[str, object]) -> None:
         self._append_timeline(run_id, {"at": _now_iso(), **event})
@@ -221,3 +233,16 @@ class RunRegistry:
             record = self._records[run_id]
             for key, value in updates.items():
                 setattr(record, key, value)
+
+    def _interruptible_sleep(
+        self,
+        stop_event: threading.Event,
+        seconds: float,
+    ) -> None:
+        deadline = time.monotonic() + max(0.0, float(seconds))
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            if stop_event.wait(min(remaining, 0.05)):
+                return

@@ -4,6 +4,7 @@ const state = {
   selectedRunId: null,
   pollTimer: null,
   runtime: null,
+  autoDryRunStartedByProfileId: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +22,35 @@ async function api(path, options = {}) {
   return payload;
 }
 
+async function validateSelectedProfile() {
+  if (!state.selectedProfileId) return null;
+  return api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/validate`, {
+    method: "POST",
+  });
+}
+
+async function selectProfile(profileId, { autoDryRun = false } = {}) {
+  state.selectedProfileId = profileId;
+  renderProfiles();
+  renderProfileSelect();
+  renderProfilePackDetail();
+  await refreshReadiness();
+  if (!autoDryRun) return;
+  if (state.autoDryRunStartedByProfileId[profileId]) return;
+  state.autoDryRunStartedByProfileId[profileId] = true;
+  try {
+    await validateSelectedProfile();
+    await refreshProfiles();
+    const selectedProfile = state.profiles.find((profile) => profile.id === profileId);
+    if (!selectedProfile || !selectedProfile.valid) {
+      return;
+    }
+    await startRun("dry-run", null, { skipValidation: true });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 async function refreshProfiles() {
   await refreshRuntimeStatus();
   const payload = await api("/api/profiles");
@@ -30,6 +60,7 @@ async function refreshProfiles() {
   }
   renderProfiles();
   renderProfileSelect();
+  renderProfilePackDetail();
   await refreshReadiness();
 }
 
@@ -70,10 +101,7 @@ function renderProfiles() {
       </span>
     `;
     button.addEventListener("click", async () => {
-      state.selectedProfileId = profile.id;
-      renderProfiles();
-      renderProfileSelect();
-      await refreshReadiness();
+      await selectProfile(profile.id, { autoDryRun: true });
     });
     $("profiles").appendChild(button);
   }
@@ -99,7 +127,6 @@ async function refreshReadiness() {
   $("target-status").textContent = report.target_status;
   $("resolution-status").textContent = report.resolution_status;
   $("compatibility-status").textContent = report.compatibility_status;
-  renderProfilePackDetail();
   renderMessages("blockers", report.blockers);
   renderMessages("warnings", report.warnings);
   await refreshTargetPreview();
@@ -133,6 +160,11 @@ async function refreshTargetPreview() {
 function renderProfilePackDetail() {
   const target = $("profile-pack-detail");
   const profile = state.profiles.find((item) => item.id === state.selectedProfileId);
+  
+  // Save scroll position of existing notes if present to prevent reset
+  const existingNotes = target.querySelector(".notes-preview");
+  const notesScrollTop = existingNotes ? existingNotes.scrollTop : 0;
+  
   target.innerHTML = "";
   if (!profile || !profile.profile_pack) {
     target.textContent = "Not a profile pack";
@@ -160,6 +192,12 @@ function renderProfilePackDetail() {
     <strong>Notes</strong>
     <pre class="notes-preview">${escapeHtml(profile.notes || "No notes.md")}</pre>
   `;
+  
+  // Restore scroll position of notes preview
+  const newNotes = target.querySelector(".notes-preview");
+  if (newNotes) {
+    newNotes.scrollTop = notesScrollTop;
+  }
 }
 
 function renderMessages(id, messages) {
@@ -178,8 +216,13 @@ function renderMessages(id, messages) {
   }
 }
 
-async function startRun(mode, confirmation = null) {
+async function startRun(mode, confirmation = null, options = {}) {
+  const { skipValidation = false } = options;
   if (!state.selectedProfileId) return;
+  if (!skipValidation) {
+    await validateSelectedProfile();
+    await refreshProfiles();
+  }
   const payload = await api("/api/runs", {
     method: "POST",
     body: JSON.stringify({
@@ -189,6 +232,14 @@ async function startRun(mode, confirmation = null) {
     }),
   });
   state.selectedRunId = payload.id;
+  await refreshRuns();
+}
+
+async function stopSelectedRun() {
+  if (!state.selectedRunId) return;
+  await api(`/api/runs/${encodeURIComponent(state.selectedRunId)}/stop`, {
+    method: "POST",
+  });
   await refreshRuns();
 }
 
@@ -204,7 +255,11 @@ async function refreshRuns() {
   const payload = await api("/api/runs");
   const runs = payload.runs || [];
   $("run-count").textContent = `${runs.length} runs`;
-  $("runs").innerHTML = "";
+  
+  const container = $("runs");
+  const scrollTop = container.scrollTop;
+  
+  container.innerHTML = "";
   for (const run of runs) {
     const button = document.createElement("button");
     button.type = "button";
@@ -223,8 +278,11 @@ async function refreshRuns() {
       await refreshRunDetail();
       await refreshRuns();
     });
-    $("runs").appendChild(button);
+    container.appendChild(button);
   }
+  
+  container.scrollTop = scrollTop;
+  
   if (state.selectedRunId) {
     await refreshRunDetail();
   }
@@ -332,13 +390,9 @@ function escapeHtml(value) {
 }
 
 $("refresh-button").addEventListener("click", refreshProfiles);
-$("validate-button").addEventListener("click", async () => {
-  if (!state.selectedProfileId) return;
-  await api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/validate`, { method: "POST" });
-  await refreshProfiles();
-});
 $("dry-run-button").addEventListener("click", () => startRun("dry-run"));
-$("live-run-button").addEventListener("click", () => $("live-dialog").showModal());
+$("live-run-button").addEventListener("click", () => startRun("live"));
+$("stop-run-button").addEventListener("click", () => stopSelectedRun());
 $("runtime-admin-button").addEventListener("click", async () => {
   try {
     await relaunchDashboardAsAdmin();
@@ -347,21 +401,34 @@ $("runtime-admin-button").addEventListener("click", async () => {
     $("runtime-status-message").textContent = error.message;
   }
 });
-$("confirm-live-button").addEventListener("click", async (event) => {
-  event.preventDefault();
-  const confirmation = $("live-confirmation").value;
-  $("live-dialog").close();
-  await startRun("live", confirmation);
-});
 $("profile-select").addEventListener("change", async (event) => {
-  state.selectedProfileId = event.target.value;
-  renderProfiles();
-  await refreshReadiness();
+  await selectProfile(event.target.value, { autoDryRun: true });
 });
 
-refreshProfiles().then(refreshRuns);
+refreshProfiles().then(async () => {
+  await refreshRuns();
+  if (state.selectedProfileId) {
+    await selectProfile(state.selectedProfileId, { autoDryRun: true });
+  }
+});
 state.pollTimer = setInterval(() => {
   refreshRuns().catch(() => {});
   refreshReadiness().catch(() => {});
   refreshRuntimeStatus().catch(() => {});
 }, 1500);
+
+// Sidebar Toggle Handler with LocalStorage Persistence
+const sidebarToggle = $("sidebar-toggle");
+
+if (sidebarToggle) {
+  // Load initial sidebar collapsed state
+  const isCollapsed = localStorage.getItem("sidebar-collapsed") === "true";
+  if (isCollapsed) {
+    document.body.classList.add("sidebar-collapsed");
+  }
+
+  sidebarToggle.addEventListener("click", () => {
+    const collapsed = document.body.classList.toggle("sidebar-collapsed");
+    localStorage.setItem("sidebar-collapsed", collapsed);
+  });
+}

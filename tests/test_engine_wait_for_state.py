@@ -88,7 +88,23 @@ class NoInputAdapter:
     def press_key(self, key: str, seconds: float | None = None) -> None:
         return None
 
+    def press_keys(self, keys: list[str], seconds: float | None = None) -> None:
+        return None
+
     def hold_key(self, key: str, seconds: float) -> None:
+        return None
+
+    def hold_keys(self, keys: list[str], seconds: float) -> None:
+        return None
+
+    def hold_key_while_repeating_key(
+        self,
+        hold_key: str,
+        hold_seconds: float,
+        tap_key: str,
+        tap_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
         return None
 
     def wait(self, seconds: float) -> None:
@@ -97,7 +113,7 @@ class NoInputAdapter:
 
 class RecordingInputAdapter(NoInputAdapter):
     def __init__(self) -> None:
-        self.actions: list[tuple[str, str] | tuple[str, str, float] | tuple[str, str, float | None]] = []
+        self.actions: list[tuple[object, ...]] = []
 
     def click_region(self, region_name: str) -> None:
         self.actions.append(("click_region", region_name))
@@ -110,6 +126,45 @@ class RecordingInputAdapter(NoInputAdapter):
             self.actions.append(("press_key", key))
             return
         self.actions.append(("press_key", key, seconds))
+
+    def press_keys(self, keys: list[str], seconds: float | None = None) -> None:
+        if seconds is None:
+            self.actions.append(("press_keys", tuple(keys)))
+            return
+        self.actions.append(("press_keys", tuple(keys), seconds))
+
+    def hold_keys(self, keys: list[str], seconds: float) -> None:
+        self.actions.append(("hold_keys", tuple(keys), seconds))
+
+    def hold_key_while_repeating_key(
+        self,
+        hold_key: str,
+        hold_seconds: float,
+        tap_key: str,
+        tap_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        if tap_duration_seconds is None:
+            self.actions.append(
+                (
+                    "hold_key_while_repeating_key",
+                    hold_key,
+                    hold_seconds,
+                    tap_key,
+                    tap_every_seconds,
+                )
+            )
+            return
+        self.actions.append(
+            (
+                "hold_key_while_repeating_key",
+                hold_key,
+                hold_seconds,
+                tap_key,
+                tap_every_seconds,
+                tap_duration_seconds,
+            )
+        )
 
 
 def runtime_factory(ready_after_capture: int | None):
@@ -263,6 +318,18 @@ def action_only_profile() -> Profile:
                     Action(type="hold_click", data={"region": "startup_click", "seconds": 1.25}),
                     Action(type="click_point", data={"region": "startup_click"}),
                     Action(type="press_key", data={"key": "2", "seconds": 0.2}),
+                    Action(type="hold_keys", data={"keys": ["shift", "w"], "seconds": 0.5}),
+                    Action(type="press_keys", data={"keys": ["ctrl", "c"]}),
+                    Action(
+                        type="hold_key_while_repeating_key",
+                        data={
+                            "hold_key": "w",
+                            "hold_seconds": 2.0,
+                            "tap_key": "space",
+                            "tap_every_seconds": 0.5,
+                            "tap_duration_seconds": 0.1,
+                        },
+                    ),
                     Action(type="press_key", data={"key": "e"}),
                 ],
                 on_success="complete",
@@ -374,6 +441,16 @@ class EngineWaitForStateTests(unittest.TestCase):
                 ("hold_click", "startup_click", 1.25),
                 ("click_region", "startup_click"),
                 ("press_key", "2", 0.2),
+                ("hold_keys", ("shift", "w"), 0.5),
+                ("press_keys", ("ctrl", "c")),
+                (
+                    "hold_key_while_repeating_key",
+                    "w",
+                    2.0,
+                    "space",
+                    0.5,
+                    0.1,
+                ),
                 ("press_key", "e"),
             ],
         )

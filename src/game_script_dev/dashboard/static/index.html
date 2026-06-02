@@ -4,95 +4,106 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GameScriptDev Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <div>
-        <h1>GameScriptDev</h1>
-        <p id="workspace-status">Local operator dashboard</p>
+      <div class="topbar-brand">
+        <button id="sidebar-toggle" class="sidebar-toggle" type="button" title="Toggle Sidebar">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        </button>
+        <div>
+          <h1>GameScriptDev</h1>
+          <p id="workspace-status">Local operator dashboard</p>
+        </div>
       </div>
       <div class="run-controls">
         <select id="profile-select" aria-label="Profile"></select>
-        <button id="validate-button" type="button">Validate</button>
         <button id="dry-run-button" type="button">Dry Run</button>
         <button id="live-run-button" type="button">Live Run</button>
+        <button id="stop-run-button" type="button">Stop</button>
       </div>
     </header>
 
     <main class="layout">
-      <section class="panel profile-panel">
-        <div class="panel-heading">
-          <h2>Profiles</h2>
-          <button id="refresh-button" type="button">Refresh</button>
-        </div>
-        <div id="profiles" class="profile-list"></div>
-      </section>
+      <div class="sidebar">
+        <section class="panel profile-panel">
+          <div class="panel-heading">
+            <h2>Profiles</h2>
+            <button id="refresh-button" type="button">Refresh</button>
+          </div>
+          <div id="profiles" class="profile-list"></div>
+        </section>
+
+        <section class="panel runs-panel">
+          <div class="panel-heading">
+            <h2>Run History</h2>
+            <span id="run-count" class="muted">0 runs</span>
+          </div>
+          <div id="runs" class="runs"></div>
+        </section>
+      </div>
 
       <section class="panel readiness-panel">
         <div class="panel-heading">
           <h2>Readiness</h2>
           <span id="readiness-badge" class="badge">Unknown</span>
         </div>
-        <div id="runtime-status" class="runtime-status">
-          <div>
-            <strong id="runtime-status-title">Dashboard privilege unknown</strong>
-            <p id="runtime-status-message" class="muted">Checking local dashboard runtime.</p>
+        <div class="readiness-content">
+          <figure id="target-preview" class="target-preview">
+            <div id="target-preview-frame" class="target-preview-frame">
+              <span id="target-preview-empty" class="muted">No target preview</span>
+              <img id="target-preview-image" alt="Matched target window screenshot" hidden />
+            </div>
+            <figcaption id="target-preview-meta" class="muted">Refresh readiness to capture the matched window.</figcaption>
+          </figure>
+          <div id="runtime-status" class="runtime-status">
+            <div>
+              <strong id="runtime-status-title">Dashboard privilege unknown</strong>
+              <p id="runtime-status-message" class="muted">Checking local dashboard runtime.</p>
+            </div>
+            <button id="runtime-admin-button" type="button" hidden>Relaunch as Admin</button>
           </div>
-          <button id="runtime-admin-button" type="button" hidden>Relaunch as Admin</button>
+          <dl class="status-grid">
+            <div>
+              <dt>Target</dt>
+              <dd id="target-status">not_checked</dd>
+            </div>
+            <div>
+              <dt>Resolution</dt>
+              <dd id="resolution-status">not_checked</dd>
+            </div>
+            <div>
+              <dt>Compatibility</dt>
+              <dd id="compatibility-status">not_applicable</dd>
+            </div>
+            <div>
+              <dt>Current State</dt>
+              <dd id="current-state">idle</dd>
+            </div>
+            <div>
+              <dt>Final Result</dt>
+              <dd id="final-result">none</dd>
+            </div>
+          </dl>
+          <h3>Blockers</h3>
+          <ul id="blockers" class="message-list"></ul>
+          <h3>Warnings</h3>
+          <ul id="warnings" class="message-list"></ul>
+          <h3>Profile Pack</h3>
+          <div id="profile-pack-detail" class="pack-detail"></div>
+          <h3>Live Verification</h3>
+          <ol id="live-verification-checklist" class="checklist">
+            <li>Start the selected target window.</li>
+            <li>Run and confirm a successful dashboard dry run.</li>
+            <li>Refresh readiness and resolve every blocker.</li>
+            <li>Start live mode only when ready for real input.</li>
+            <li>Review the final result, log, and screenshot artifacts.</li>
+          </ol>
         </div>
-        <dl class="status-grid">
-          <div>
-            <dt>Target</dt>
-            <dd id="target-status">not_checked</dd>
-          </div>
-          <div>
-            <dt>Resolution</dt>
-            <dd id="resolution-status">not_checked</dd>
-          </div>
-          <div>
-            <dt>Compatibility</dt>
-            <dd id="compatibility-status">not_applicable</dd>
-          </div>
-          <div>
-            <dt>Current State</dt>
-            <dd id="current-state">idle</dd>
-          </div>
-          <div>
-            <dt>Final Result</dt>
-            <dd id="final-result">none</dd>
-          </div>
-        </dl>
-        <h3>Blockers</h3>
-        <ul id="blockers" class="message-list"></ul>
-        <h3>Warnings</h3>
-        <ul id="warnings" class="message-list"></ul>
-        <h3>Target Preview</h3>
-        <figure id="target-preview" class="target-preview">
-          <div id="target-preview-frame" class="target-preview-frame">
-            <span id="target-preview-empty" class="muted">No target preview</span>
-            <img id="target-preview-image" alt="Matched target window screenshot" hidden />
-          </div>
-          <figcaption id="target-preview-meta" class="muted">Refresh readiness to capture the matched window.</figcaption>
-        </figure>
-        <h3>Profile Pack</h3>
-        <div id="profile-pack-detail" class="pack-detail"></div>
-        <h3>Live Verification</h3>
-        <ol id="live-verification-checklist" class="checklist">
-          <li>Start the selected target window.</li>
-          <li>Run and confirm a successful dashboard dry run.</li>
-          <li>Refresh readiness and resolve every blocker.</li>
-          <li>Type RUN only when ready for live desktop input.</li>
-          <li>Review the final result, log, and screenshot artifacts.</li>
-        </ol>
-      </section>
-
-      <section class="panel runs-panel">
-        <div class="panel-heading">
-          <h2>Run History</h2>
-          <span id="run-count" class="muted">0 runs</span>
-        </div>
-        <div id="runs" class="runs"></div>
       </section>
 
       <section class="panel log-panel">
@@ -101,36 +112,26 @@
           <span id="selected-run" class="muted">No run selected</span>
         </div>
         <pre id="log-output"></pre>
-        <div class="panel-heading artifact-heading">
-          <h2>Artifacts</h2>
+        <div class="log-details-section">
+          <div class="panel-heading artifact-heading">
+            <h2>Artifacts</h2>
+          </div>
+          <div id="primary-artifact" class="primary-artifact">
+            <span id="latest-screenshot-link" class="muted">Latest screenshot: none</span>
+          </div>
+          <div id="artifacts" class="artifacts"></div>
+          <div class="panel-heading artifact-heading">
+            <h2>Run Review</h2>
+          </div>
+          <ol id="run-review-timeline" class="timeline"></ol>
+          <div id="selected-run-readiness" class="panel-heading artifact-heading">
+            <h2>Selected Run Readiness</h2>
+            <span id="run-readiness-badge" class="badge">Unknown</span>
+          </div>
+          <ul id="run-readiness-blockers" class="message-list"></ul>
         </div>
-        <div id="primary-artifact" class="primary-artifact">
-          <span id="latest-screenshot-link" class="muted">Latest screenshot: none</span>
-        </div>
-        <div id="artifacts" class="artifacts"></div>
-        <div class="panel-heading artifact-heading">
-          <h2>Run Review</h2>
-        </div>
-        <ol id="run-review-timeline" class="timeline"></ol>
-        <div id="selected-run-readiness" class="panel-heading artifact-heading">
-          <h2>Selected Run Readiness</h2>
-          <span id="run-readiness-badge" class="badge">Unknown</span>
-        </div>
-        <ul id="run-readiness-blockers" class="message-list"></ul>
       </section>
     </main>
-
-    <dialog id="live-dialog">
-      <form method="dialog" class="dialog-body">
-        <h2>Live Confirmation</h2>
-        <p>Type RUN to allow live input for the selected profile.</p>
-        <input id="live-confirmation" autocomplete="off" />
-        <div class="dialog-actions">
-          <button value="cancel">Cancel</button>
-          <button id="confirm-live-button" value="confirm">Start Live Run</button>
-        </div>
-      </form>
-    </dialog>
 
     <script src="/app.js"></script>
   </body>

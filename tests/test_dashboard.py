@@ -77,6 +77,29 @@ states:
     result: success
 """
 
+LONG_WAIT_PROFILE_YAML = """
+version: 1
+name: Dashboard Long Wait
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+execution:
+  max_retries: 1
+initial_state: home
+states:
+  home:
+    actions:
+      - type: wait
+        seconds: 2
+    on_success: done
+  done:
+    terminal: true
+    result: success
+"""
+
 
 class DashboardTests(unittest.TestCase):
     def test_profile_catalog_discovers_and_validates_profiles(self) -> None:
@@ -152,6 +175,22 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(review["timeline"][0]["event"], "run_started")
             self.assertEqual(review["timeline"][-1]["event"], "run_completed")
 
+    def test_run_registry_can_stop_running_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            registry = RunRegistry(root / "logs")
+            with patch("game_script_dev.dashboard.run_registry.Engine", FakeStoppableEngine):
+                record = registry.start_run("demo", profile_path, "dry-run")
+                _wait_for_status(registry, record.id, "running")
+                registry.stop_run(record.id)
+                _wait_for_run(registry, record.id)
+                record = registry.get_run(record.id)
+
+                self.assertEqual(record.status, "completed")
+                self.assertEqual(record.final_result, "operator_stopped")
+                self.assertTrue(record.stop_requested)
+
     def test_server_exposes_profiles_and_starts_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -203,6 +242,35 @@ class DashboardTests(unittest.TestCase):
                 self.assertIn("target_status", readiness)
                 self.assertIn("resolution_status", readiness)
                 self.assertIn("compatibility_status", readiness)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_starts_live_run_without_run_confirmation_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                registry = server.dashboard_state.runs  # type: ignore[attr-defined]
+                registry._last_dry_run_success["demo"] = True  # type: ignore[attr-defined]
+                with patch(
+                    "game_script_dev.dashboard.server.DashboardRequestHandler._readiness"
+                ) as readiness:
+                    readiness.return_value = type(
+                        "Readiness",
+                        (),
+                        {"live_available": True, "to_dict": lambda self: {"live_available": True}},
+                    )()
+                    response = _post_json(
+                        f"{base_url}/api/runs",
+                        {"profile_id": "demo", "mode": "live"},
+                    )
+
+                self.assertEqual(response["mode"], "live")
             finally:
                 server.shutdown()
                 server.server_close()
@@ -292,6 +360,35 @@ class DashboardTests(unittest.TestCase):
             finally:
                 server.server_close()
 
+    def test_server_can_stop_selected_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with patch("game_script_dev.dashboard.run_registry.Engine", FakeStoppableEngine):
+                    response = _post_json(
+                        f"{base_url}/api/runs",
+                        {"profile_id": "demo", "mode": "dry-run"},
+                    )
+                    _wait_for_server_status(base_url, response["id"], "running")
+
+                    stopped = _post_json(
+                        f"{base_url}/api/runs/{response['id']}/stop",
+                        {},
+                    )
+                    self.assertTrue(stopped["stop_requested"])
+
+                    _wait_for_server_run(base_url, response["id"])
+                    run = _get_json(f"{base_url}/api/runs/{response['id']}")
+                    self.assertEqual(run["final_result"], "operator_stopped")
+            finally:
+                server.shutdown()
+                server.server_close()
+
     def test_server_exposes_target_preview_for_selected_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -376,6 +473,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('id="target-preview-meta"', html)
         self.assertIn('id="runtime-admin-button"', html)
         self.assertIn('id="runtime-status"', html)
+        self.assertIn('id="stop-run-button"', html)
+        self.assertNotIn('id="live-dialog"', html)
 
     def test_dashboard_can_relaunch_as_admin(self) -> None:
         with patch(
@@ -429,6 +528,16 @@ def _wait_for_run(registry: RunRegistry, run_id: str) -> None:
     raise AssertionError("run did not finish")
 
 
+def _wait_for_status(registry: RunRegistry, run_id: str, status: str) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        record = registry.get_run(run_id)
+        if record.status == status:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"run did not reach status {status}")
+
+
 def _get_json(url: str) -> dict[str, object]:
     return json.loads(urlopen(url, timeout=5).read())
 
@@ -454,6 +563,36 @@ class FakeTargetPreviewService:
         )
 
 
+class FakeStoppableEngine:
+    def __init__(
+        self,
+        *,
+        stop_requested,
+        sleeper,
+        event_handler=None,
+        **_kwargs,
+    ) -> None:
+        self.stop_requested = stop_requested
+        self.sleeper = sleeper
+        self.event_handler = event_handler
+
+    def run(self) -> str:
+        if self.event_handler is not None:
+            self.event_handler({"event": "state_started", "state": "home"})
+        while not self.stop_requested():
+            self.sleeper(0.05)
+        if self.event_handler is not None:
+            self.event_handler(
+                {
+                    "event": "finished",
+                    "state": "home",
+                    "result": "operator_stopped",
+                    "failure_reason": "stop requested by operator",
+                }
+            )
+        return "operator_stopped"
+
+
 def _wait_for_server_run(base_url: str, run_id: str) -> None:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
@@ -462,6 +601,16 @@ def _wait_for_server_run(base_url: str, run_id: str) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("server run did not finish")
+
+
+def _wait_for_server_status(base_url: str, run_id: str, status: str) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        run = _get_json(f"{base_url}/api/runs/{run_id}")
+        if run["status"] == status:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"server run did not reach status {status}")
 
 
 if __name__ == "__main__":

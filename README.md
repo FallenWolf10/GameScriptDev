@@ -141,6 +141,9 @@ checklist contract. The dashboard blocks live mode for profile packs until their
 compatibility checklist is complete and a successful dashboard dry run has been
 recorded.
 
+For a full annotated authoring example, see
+[docs/PROFILE_TEMPLATE.md](docs/PROFILE_TEMPLATE.md).
+
 Create and check a new pack shape:
 
 ```powershell

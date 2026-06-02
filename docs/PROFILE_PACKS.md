@@ -58,6 +58,33 @@ The standard profile fields still declare target identity, supported
 resolution, states, regions, actions, interruptions, and execution settings.
 The profile-pack block records the compatibility review status for live mode.
 
+Keyboard combo actions are also supported when a workflow needs simultaneous
+input. Use `hold_keys` to hold several keys together for a duration, or
+`press_keys` to tap them together:
+
+```yaml
+actions:
+  - type: hold_keys
+    keys: [shift, w]
+    seconds: 1.5
+  - type: press_keys
+    keys: [ctrl, c]
+```
+
+For overlapping timed input, use `hold_key_while_repeating_key`. This holds one
+key down, waits for the requested interval, taps another key, then repeats that
+tap until the total hold time is over.
+
+```yaml
+actions:
+  - type: hold_key_while_repeating_key
+    hold_key: w
+    hold_seconds: 10
+    tap_key: space
+    tap_every_seconds: 1
+    tap_duration_seconds: 0.1
+```
+
 Targets may also declare:
 
 ```yaml
@@ -124,3 +151,6 @@ game-script-dev check-pack --profile profiles/example_game/daily_task/profile.ya
 
 The check validates folder shape, profile schema, notes, compatibility evidence,
 and known limitations.
+
+For a full annotated `profile.yaml` example that includes every supported field,
+see [docs/PROFILE_TEMPLATE.md](docs/PROFILE_TEMPLATE.md).

@@ -267,6 +267,97 @@ class LiveInputAdapterTests(unittest.TestCase):
         self.assertEqual(sender.events, [("down", ord("L")), ("up", ord("L"))])
         self.assertEqual(slept, [0.25])
 
+    def test_press_keys_sends_combo_down_then_up_in_reverse_order(self) -> None:
+        sender = FakeKeyboardSender()
+        slept: list[float] = []
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            sleeper=slept.append,
+        )
+
+        adapter.press_keys(["ctrl", "c"], 0.2)
+
+        self.assertEqual(
+            sender.events,
+            [("down", 0x11), ("down", ord("C")), ("up", ord("C")), ("up", 0x11)],
+        )
+        self.assertEqual(slept, [0.2])
+
+    def test_hold_keys_background_mode_holds_combo_then_releases(self) -> None:
+        sender = FakeBackgroundKeyboardSender()
+        slept: list[float] = []
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            background_sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+            input_mode="background_window_messages",
+            sleeper=slept.append,
+        )
+
+        adapter.hold_keys(["shift", "w"], 1.5)
+
+        self.assertEqual(
+            sender.events,
+            [
+                ("down", 100, 0x10),
+                ("down", 100, ord("W")),
+                ("up", 100, ord("W")),
+                ("up", 100, 0x10),
+            ],
+        )
+        self.assertEqual(slept, [1.5])
+
+    def test_hold_key_while_repeating_key_interleaves_taps_until_release(self) -> None:
+        sender = FakeKeyboardSender()
+        slept: list[float] = []
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            sleeper=slept.append,
+        )
+
+        adapter.hold_key_while_repeating_key(
+            hold_key="w",
+            hold_seconds=1.1,
+            tap_key="space",
+            tap_every_seconds=0.5,
+            tap_duration_seconds=0.1,
+        )
+
+        self.assertEqual(
+            sender.events,
+            [
+                ("down", ord("W")),
+                ("down", 0x20),
+                ("up", 0x20),
+                ("down", 0x20),
+                ("up", 0x20),
+                ("up", ord("W")),
+            ],
+        )
+        self.assertEqual(slept, [0.5, 0.1, 0.4, 0.1])
+
+    def test_hold_key_while_repeating_key_rejects_non_positive_interval(self) -> None:
+        sender = FakeKeyboardSender()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+        )
+
+        with self.assertRaises(ValueError):
+            adapter.hold_key_while_repeating_key(
+                hold_key="w",
+                hold_seconds=1,
+                tap_key="space",
+                tap_every_seconds=0,
+            )
+
+        self.assertEqual(sender.events, [])
+
     def test_press_key_attempts_release_when_sleep_fails(self) -> None:
         sender = FakeKeyboardSender()
 

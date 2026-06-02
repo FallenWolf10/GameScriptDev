@@ -14,6 +14,7 @@ from game_script_dev.schema import Action, Anchor, Interruption, Profile, State
 
 MIN_LIVE_POLL_INTERVAL_SECONDS = 0.05
 RunEventHandler = Callable[[dict[str, object]], None]
+StopRequestedHandler = Callable[[], bool]
 
 
 class LiveModeUnavailable(Exception):
@@ -22,6 +23,10 @@ class LiveModeUnavailable(Exception):
 
 class StateExecutionError(Exception):
     """Raised when the current state cannot be confirmed or executed."""
+
+
+class StopRequested(Exception):
+    """Raised when the operator requests a running workflow to stop."""
 
 
 class Engine:
@@ -38,6 +43,7 @@ class Engine:
         profile_dir: Path | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         event_handler: RunEventHandler | None = None,
+        stop_requested: StopRequestedHandler | None = None,
     ) -> None:
         self.profile = profile
         self.mode = mode
@@ -47,6 +53,7 @@ class Engine:
         self.profile_dir = profile_dir
         self.sleeper = sleeper
         self.event_handler = event_handler
+        self.stop_requested = stop_requested
 
     def run(self) -> str:
         try:
@@ -60,6 +67,9 @@ class Engine:
         except Exception as error:
             raise LiveModeUnavailable(str(error)) from error
 
+        if hasattr(runtime.input_adapter, "sleeper"):
+            setattr(runtime.input_adapter, "sleeper", self.sleeper)
+
         actions = ActionRunner(runtime=runtime, logger=self.logger)
 
         current_state = self.profile.initial_state
@@ -68,6 +78,7 @@ class Engine:
         interruption_attempts: dict[str, int] = {}
 
         for _ in range(max_steps):
+            self._check_stop_requested()
             state = self.profile.states[current_state]
             self._emit("state_started", state=state.name)
             try:
@@ -107,6 +118,16 @@ class Engine:
                 failures_by_state[state.name] = 0
                 self.logger.info("Transition: %s -> %s", state.name, state.on_success)
                 current_state = state.on_success
+            except StopRequested:
+                self.logger.warning("Run stopped by operator")
+                self._capture_final(runtime, state, "stop-operator_stopped")
+                self._emit(
+                    "finished",
+                    state=state.name,
+                    result="operator_stopped",
+                    failure_reason="stop requested by operator",
+                )
+                return "operator_stopped"
             except StateExecutionError as error:
                 failures_by_state[state.name] = failures_by_state.get(state.name, 0) + 1
                 failure_count = failures_by_state[state.name]
@@ -167,6 +188,7 @@ class Engine:
         return "failed_max_steps"
 
     def _capture(self, runtime: RuntimeContext, context: str) -> Screenshot:
+        self._check_stop_requested()
         try:
             try:
                 return runtime.screen_adapter.capture(runtime.window, context=context)
@@ -243,6 +265,7 @@ class Engine:
             return
 
         for interruption in self.profile.interruptions:
+            self._check_stop_requested()
             screenshot = self._capture(
                 runtime,
                 f"interruption-{interruption.name}-scan",
@@ -263,6 +286,7 @@ class Engine:
                     interruption.max_retries,
                 )
                 for action in interruption.recovery_actions:
+                    self._check_stop_requested()
                     actions.execute(action, screenshot)
             else:
                 attempts_by_name[interruption.name] = 0
@@ -335,6 +359,7 @@ class Engine:
         screenshot: Screenshot,
     ) -> str | None:
         for index, action in enumerate(state.actions, start=1):
+            self._check_stop_requested()
             summary = self._action_summary(action)
             self._emit(
                 "action_started",
@@ -400,9 +425,28 @@ class Engine:
             if "seconds" in action_data:
                 return f"press_key {action_data['key']} {action_data['seconds']}s"
             return f"press_key {action_data['key']}"
+        if action_type == "press_keys":
+            keys = " + ".join(str(key) for key in action_data["keys"])
+            if "seconds" in action_data:
+                return f"press_keys {keys} {action_data['seconds']}s"
+            return f"press_keys {keys}"
         if action_type == "hold_key":
             seconds = action_data.get("seconds", 1)
             return f"hold_key {action_data['key']} {seconds}s"
+        if action_type == "hold_keys":
+            seconds = action_data.get("seconds", 1)
+            keys = " + ".join(str(key) for key in action_data["keys"])
+            return f"hold_keys {keys} {seconds}s"
+        if action_type == "hold_key_while_repeating_key":
+            summary = (
+                "hold_key_while_repeating_key "
+                f"{action_data['hold_key']} for {action_data['hold_seconds']}s "
+                f"while tapping {action_data['tap_key']} every "
+                f"{action_data['tap_every_seconds']}s"
+            )
+            if "tap_duration_seconds" in action_data:
+                summary += f" for {action_data['tap_duration_seconds']}s"
+            return summary
         if action_type == "wait":
             return f"wait {action_data['seconds']}s"
         if action_type == "log":
@@ -438,6 +482,7 @@ class Engine:
         )
 
         while True:
+            self._check_stop_requested()
             screenshot = self._capture(runtime, f"wait-for-{state_name}")
             try:
                 self._confirm_state(expected_state, runtime, screenshot)
@@ -449,3 +494,7 @@ class Engine:
                         f"timed out waiting for state '{state_name}': {error}"
                     ) from error
                 self.sleeper(poll_interval_seconds)
+
+    def _check_stop_requested(self) -> None:
+        if self.stop_requested is not None and self.stop_requested():
+            raise StopRequested()

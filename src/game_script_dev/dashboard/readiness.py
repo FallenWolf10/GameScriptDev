@@ -186,14 +186,30 @@ def _uses_live_input(profile: Profile) -> bool:
     for state in profile.states.values():
         if any(
             action.type
-            in {"click_point", "click_template", "press_key", "hold_key"}
+            in {
+                "click_point",
+                "click_template",
+                "press_key",
+                "press_keys",
+                "hold_key",
+                "hold_keys",
+                "hold_key_while_repeating_key",
+            }
             for action in state.actions
         ):
             return True
     for interruption in profile.interruptions:
         if any(
             action.type
-            in {"click_point", "click_template", "press_key", "hold_key"}
+            in {
+                "click_point",
+                "click_template",
+                "press_key",
+                "press_keys",
+                "hold_key",
+                "hold_keys",
+                "hold_key_while_repeating_key",
+            }
             for action in interruption.recovery_actions
         ):
             return True

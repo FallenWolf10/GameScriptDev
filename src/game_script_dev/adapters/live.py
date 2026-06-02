@@ -610,45 +610,154 @@ class LiveInputAdapter:
             sender.button_up(absolute_x, absolute_y)
 
     def press_key(self, key: str, seconds: float | None = None) -> None:
-        key = self._map_key_name(key)
-        virtual_key = _normalize_key(key)
         duration = self.press_key_duration if seconds is None else float(seconds)
         self._validate_duration(duration, "live key press")
-        window = self._verify_live_target()
-        if self.input_mode == "background_window_messages":
-            sender = self._background_keyboard_sender()
-            sender.key_down(window, virtual_key)
-            try:
-                self.sleeper(duration)
-            finally:
-                sender.key_up(window, virtual_key)
-            return
-        sender = self._keyboard_sender()
-        sender.key_down(virtual_key)
-        try:
-            self.sleeper(duration)
-        finally:
-            sender.key_up(virtual_key)
+        self.press_keys([key], duration)
+
+    def press_keys(self, keys: list[str], seconds: float | None = None) -> None:
+        duration = self.press_key_duration if seconds is None else float(seconds)
+        self._validate_duration(duration, "live key press")
+        virtual_keys = self._normalize_keys(keys)
+        self._send_key_combo(virtual_keys, duration)
 
     def hold_key(self, key: str, seconds: float) -> None:
-        key = self._map_key_name(key)
-        virtual_key = _normalize_key(key)
         self._validate_duration(seconds, "live key hold")
+        self.hold_keys([key], seconds)
+
+    def hold_keys(self, keys: list[str], seconds: float) -> None:
+        self._validate_duration(seconds, "live key hold")
+        virtual_keys = self._normalize_keys(keys)
+        self._send_key_combo(virtual_keys, seconds)
+
+    def hold_key_while_repeating_key(
+        self,
+        hold_key: str,
+        hold_seconds: float,
+        tap_key: str,
+        tap_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        self._validate_duration(hold_seconds, "live repeating key hold")
+        self._validate_positive_duration(
+            tap_every_seconds,
+            "live repeating key interval",
+        )
+        tap_duration = (
+            self.press_key_duration
+            if tap_duration_seconds is None
+            else float(tap_duration_seconds)
+        )
+        self._validate_duration(tap_duration, "live repeating key tap")
+        hold_virtual_key = self._normalize_keys([hold_key])[0]
+        tap_virtual_key = self._normalize_keys([tap_key])[0]
         window = self._verify_live_target()
         if self.input_mode == "background_window_messages":
             sender = self._background_keyboard_sender()
-            sender.key_down(window, virtual_key)
+            sender.key_down(window, hold_virtual_key)
+            try:
+                self._repeat_tap_while_holding_background(
+                    sender,
+                    window,
+                    tap_virtual_key,
+                    hold_seconds,
+                    tap_every_seconds,
+                    tap_duration,
+                )
+            finally:
+                sender.key_up(window, hold_virtual_key)
+            return
+
+        sender = self._keyboard_sender()
+        sender.key_down(hold_virtual_key)
+        try:
+            self._repeat_tap_while_holding_foreground(
+                sender,
+                tap_virtual_key,
+                hold_seconds,
+                tap_every_seconds,
+                tap_duration,
+            )
+        finally:
+            sender.key_up(hold_virtual_key)
+
+    def _normalize_keys(self, keys: list[str]) -> list[int]:
+        if not keys:
+            raise ValueError("live key input requires at least one key")
+        return [_normalize_key(self._map_key_name(key)) for key in keys]
+
+    def _send_key_combo(self, virtual_keys: list[int], seconds: float) -> None:
+        window = self._verify_live_target()
+        if self.input_mode == "background_window_messages":
+            sender = self._background_keyboard_sender()
+            for virtual_key in virtual_keys:
+                sender.key_down(window, virtual_key)
             try:
                 self.sleeper(seconds)
             finally:
-                sender.key_up(window, virtual_key)
+                for virtual_key in reversed(virtual_keys):
+                    sender.key_up(window, virtual_key)
             return
         sender = self._keyboard_sender()
-        sender.key_down(virtual_key)
+        for virtual_key in virtual_keys:
+            sender.key_down(virtual_key)
         try:
             self.sleeper(seconds)
         finally:
-            sender.key_up(virtual_key)
+            for virtual_key in reversed(virtual_keys):
+                sender.key_up(virtual_key)
+
+    def _repeat_tap_while_holding_background(
+        self,
+        sender: BackgroundKeyboardSender,
+        window: TargetWindow,
+        tap_virtual_key: int,
+        hold_seconds: float,
+        tap_every_seconds: float,
+        tap_duration: float,
+    ) -> None:
+        elapsed = 0.0
+        next_tap_at = tap_every_seconds
+        while next_tap_at < hold_seconds:
+            wait_seconds = max(0.0, next_tap_at - elapsed)
+            if wait_seconds > 0:
+                self.sleeper(wait_seconds)
+                elapsed += wait_seconds
+            sender.key_down(window, tap_virtual_key)
+            try:
+                self.sleeper(tap_duration)
+            finally:
+                sender.key_up(window, tap_virtual_key)
+            elapsed += tap_duration
+            next_tap_at += tap_every_seconds
+        remaining = hold_seconds - elapsed
+        if remaining > 0:
+            self.sleeper(remaining)
+
+    def _repeat_tap_while_holding_foreground(
+        self,
+        sender: KeyboardSender,
+        tap_virtual_key: int,
+        hold_seconds: float,
+        tap_every_seconds: float,
+        tap_duration: float,
+    ) -> None:
+        elapsed = 0.0
+        next_tap_at = tap_every_seconds
+        while next_tap_at < hold_seconds:
+            wait_seconds = max(0.0, next_tap_at - elapsed)
+            if wait_seconds > 0:
+                self.sleeper(wait_seconds)
+                elapsed += wait_seconds
+            sender.key_down(tap_virtual_key)
+            try:
+                self.sleeper(tap_duration)
+            finally:
+                sender.key_up(tap_virtual_key)
+            elapsed += tap_duration
+            next_tap_at += tap_every_seconds
+        remaining = hold_seconds - elapsed
+        if remaining > 0:
+            self.sleeper(remaining)
 
     def wait(self, seconds: float) -> None:
         self._validate_duration(seconds, "live wait")
@@ -657,6 +766,14 @@ class LiveInputAdapter:
     def _validate_duration(self, seconds: float, label: str) -> None:
         if not math.isfinite(seconds) or seconds < 0:
             raise ValueError(f"{label} duration must be a finite non-negative number")
+        if seconds > self.max_wait_seconds:
+            raise ValueError(
+                f"{label} duration exceeds maximum of {self.max_wait_seconds} seconds"
+            )
+
+    def _validate_positive_duration(self, seconds: float, label: str) -> None:
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(f"{label} duration must be a finite positive number")
         if seconds > self.max_wait_seconds:
             raise ValueError(
                 f"{label} duration exceeds maximum of {self.max_wait_seconds} seconds"

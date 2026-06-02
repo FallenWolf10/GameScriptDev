@@ -380,6 +380,172 @@ states:
             with self.assertRaises(ProfileValidationError):
                 validate_profile(profile, profile_path.parent)
 
+    def test_accepts_hold_keys_combo(self) -> None:
+        profile_yaml = """
+version: 1
+name: Combo Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: hold_keys
+        keys: [shift, w]
+        seconds: 0.5
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_hold_keys_without_keys(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: hold_keys
+        seconds: 0.5
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
+
+    def test_rejects_press_keys_with_unsupported_key(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: press_keys
+        keys: [ctrl, volume_up]
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
+
+    def test_accepts_hold_key_while_repeating_key(self) -> None:
+        profile_yaml = """
+version: 1
+name: Repeat Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: hold_key_while_repeating_key
+        hold_key: w
+        hold_seconds: 5
+        tap_key: space
+        tap_every_seconds: 1
+        tap_duration_seconds: 0.1
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_hold_key_while_repeating_key_without_positive_interval(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: hold_key_while_repeating_key
+        hold_key: w
+        hold_seconds: 5
+        tap_key: space
+        tap_every_seconds: 0
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
+
     def test_rejects_invalid_default_timeout(self) -> None:
         profile_yaml = """
 version: 1
