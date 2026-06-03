@@ -71,6 +71,17 @@ actions:
     keys: [ctrl, c]
 ```
 
+For repeated taps of the same key over a fixed window, use `repeat_key`:
+
+```yaml
+actions:
+  - type: repeat_key
+    key: space
+    repeat_for_seconds: 3
+    repeat_every_seconds: 0.5
+    tap_duration_seconds: 0.1
+```
+
 For overlapping timed input, use `hold_key_while_repeating_key`. This holds one
 key down, waits for the requested interval, taps another key, then repeats that
 tap until the total hold time is over.

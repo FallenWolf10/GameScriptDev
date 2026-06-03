@@ -41,12 +41,27 @@ class ActionRunner:
         return None
 
     def _execute_click_point(self, action: Action, screenshot: Screenshot) -> None:
-        self.runtime.input_adapter.click_region(str(action.data["region"]))
+        self.runtime.input_adapter.click_region(
+            str(action.data["region"]),
+            input_mode=(
+                str(action.data["input_mode"])
+                if "input_mode" in action.data
+                else None
+            ),
+        )
         return None
 
     def _execute_hold_click(self, action: Action, screenshot: Screenshot) -> None:
         duration = float(action.data["seconds"])
-        self.runtime.input_adapter.hold_click(str(action.data["region"]), duration)
+        self.runtime.input_adapter.hold_click(
+            str(action.data["region"]),
+            duration,
+            input_mode=(
+                str(action.data["input_mode"])
+                if "input_mode" in action.data
+                else None
+            ),
+        )
         return None
 
     def _execute_press_key(self, action: Action, screenshot: Screenshot) -> None:
@@ -75,6 +90,20 @@ class ActionRunner:
         self.runtime.input_adapter.hold_keys(keys, duration)
         return None
 
+    def _execute_repeat_key(self, action: Action, screenshot: Screenshot) -> None:
+        tap_duration = (
+            float(action.data["tap_duration_seconds"])
+            if "tap_duration_seconds" in action.data
+            else None
+        )
+        self.runtime.input_adapter.repeat_key(
+            key=str(action.data["key"]),
+            repeat_for_seconds=float(action.data["repeat_for_seconds"]),
+            repeat_every_seconds=float(action.data["repeat_every_seconds"]),
+            tap_duration_seconds=tap_duration,
+        )
+        return None
+
     def _execute_hold_key_while_repeating_key(
         self,
         action: Action,
@@ -92,6 +121,62 @@ class ActionRunner:
             tap_every_seconds=float(action.data["tap_every_seconds"]),
             tap_duration_seconds=tap_duration,
         )
+        return None
+
+    def _execute_move_mouse(self, action: Action, screenshot: Screenshot) -> None:
+        duration = (
+            float(action.data["seconds"]) if "seconds" in action.data else None
+        )
+        self.runtime.input_adapter.move_mouse(
+            dx=float(action.data["dx"]),
+            dy=float(action.data["dy"]),
+            seconds=duration,
+            input_mode=(
+                str(action.data["input_mode"])
+                if "input_mode" in action.data
+                else None
+            ),
+        )
+        return None
+
+    def _execute_hold_mouse_button_and_move(
+        self,
+        action: Action,
+        screenshot: Screenshot,
+    ) -> None:
+        duration = (
+            float(action.data["seconds"]) if "seconds" in action.data else None
+        )
+        self.runtime.input_adapter.hold_mouse_button_and_move(
+            button=str(action.data["button"]),
+            dx=float(action.data["dx"]),
+            dy=float(action.data["dy"]),
+            seconds=duration,
+            input_mode=(
+                str(action.data["input_mode"])
+                if "input_mode" in action.data
+                else None
+            ),
+        )
+        return None
+
+    def _execute_start_continuous_input(
+        self,
+        action: Action,
+        screenshot: Screenshot,
+    ) -> None:
+        data = dict(action.data)
+        name = str(data.pop("name"))
+        action_type = str(data.pop("action"))
+        self.runtime.input_adapter.start_continuous_input(name, action_type, data)
+        return None
+
+    def _execute_stop_continuous_input(
+        self,
+        action: Action,
+        screenshot: Screenshot,
+    ) -> None:
+        self.runtime.input_adapter.stop_continuous_input(str(action.data["name"]))
         return None
 
     def _execute_wait(self, action: Action, screenshot: Screenshot) -> None:

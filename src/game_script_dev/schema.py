@@ -16,11 +16,17 @@ SUPPORTED_ACTION_TYPES = {
     "press_keys",
     "hold_key",
     "hold_keys",
+    "repeat_key",
     "hold_key_while_repeating_key",
+    "move_mouse",
+    "hold_mouse_button_and_move",
+    "start_continuous_input",
+    "stop_continuous_input",
     "wait",
     "log",
     "stop",
 }
+SUPPORTED_MOUSE_BUTTONS = {"left", "right"}
 SUPPORTED_KEY_NAMES = {
     *{chr(code).lower() for code in range(ord("A"), ord("Z") + 1)},
     *{str(number) for number in range(10)},
@@ -621,6 +627,12 @@ def _validate_actions(
                 errors.append(
                     f"{action_context}.region references unknown region '{region}'"
                 )
+            if "input_mode" in action.data:
+                input_mode = str(action.data["input_mode"])
+                if input_mode not in SUPPORTED_INPUT_MODES:
+                    errors.append(
+                        f"{action_context}.input_mode uses unknown input mode '{input_mode}'"
+                    )
         if action.type == "hold_click":
             if "seconds" not in action.data:
                 errors.append(f"{action_context}.seconds is required")
@@ -628,7 +640,7 @@ def _validate_actions(
                 _validate_duration(
                     action.data["seconds"], f"{action_context}.seconds", errors
                 )
-        if action.type in {"press_key", "hold_key"}:
+        if action.type in {"press_key", "hold_key", "repeat_key"}:
             if "key" not in action.data:
                 errors.append(f"{action_context}.key is required")
             else:
@@ -646,6 +658,29 @@ def _validate_actions(
             _validate_duration(
                 action.data["seconds"], f"{action_context}.seconds", errors
             )
+        if action.type == "repeat_key":
+            if "repeat_for_seconds" not in action.data:
+                errors.append(f"{action_context}.repeat_for_seconds is required")
+            else:
+                _validate_duration(
+                    action.data["repeat_for_seconds"],
+                    f"{action_context}.repeat_for_seconds",
+                    errors,
+                )
+            if "repeat_every_seconds" not in action.data:
+                errors.append(f"{action_context}.repeat_every_seconds is required")
+            else:
+                _validate_positive_duration(
+                    action.data["repeat_every_seconds"],
+                    f"{action_context}.repeat_every_seconds",
+                    errors,
+                )
+            if "tap_duration_seconds" in action.data:
+                _validate_duration(
+                    action.data["tap_duration_seconds"],
+                    f"{action_context}.tap_duration_seconds",
+                    errors,
+                )
         if action.type == "hold_key_while_repeating_key":
             if "hold_key" not in action.data:
                 errors.append(f"{action_context}.hold_key is required")
@@ -685,6 +720,19 @@ def _validate_actions(
                     f"{action_context}.tap_duration_seconds",
                     errors,
                 )
+        if action.type in {"move_mouse", "hold_mouse_button_and_move"}:
+            _validate_mouse_move_action(action, action_context, errors)
+        if action.type == "start_continuous_input":
+            _validate_continuous_input_action(
+                action,
+                action_context,
+                regions,
+                errors,
+            )
+        if action.type == "stop_continuous_input":
+            name = action.data.get("name")
+            if not isinstance(name, str) or not name.strip():
+                errors.append(f"{action_context}.name is required")
         if action.type == "wait":
             if "seconds" not in action.data:
                 errors.append(f"{action_context}.seconds is required")
@@ -692,6 +740,174 @@ def _validate_actions(
                 _validate_duration(
                     action.data["seconds"], f"{action_context}.seconds", errors
                 )
+
+
+def _validate_continuous_input_action(
+    action: Action,
+    action_context: str,
+    regions: dict[str, ClickRegion],
+    errors: list[str],
+) -> None:
+    name = action.data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        errors.append(f"{action_context}.name is required")
+
+    continuous_action = action.data.get("action")
+    allowed_actions = {
+        "click_point",
+        "hold_click",
+        "press_key",
+        "press_keys",
+        "hold_key",
+        "hold_keys",
+        "repeat_key",
+        "hold_key_while_repeating_key",
+    }
+    if continuous_action not in allowed_actions:
+        errors.append(
+            f"{action_context}.action must be one of: {', '.join(sorted(allowed_actions))}"
+        )
+        return
+
+    if "stop_after_seconds" in action.data:
+        _validate_positive_duration(
+            action.data["stop_after_seconds"],
+            f"{action_context}.stop_after_seconds",
+            errors,
+        )
+
+    if continuous_action in {"press_key", "hold_key", "repeat_key"}:
+        if "key" not in action.data:
+            errors.append(f"{action_context}.key is required")
+        else:
+            _validate_key(action.data["key"], f"{action_context}.key", errors)
+
+    if continuous_action in {"click_point", "hold_click"}:
+        region = action.data.get("region")
+        if not region:
+            errors.append(f"{action_context}.region is required")
+        elif region not in regions:
+            errors.append(
+                f"{action_context}.region references unknown region '{region}'"
+            )
+        if "input_mode" in action.data:
+            input_mode = str(action.data["input_mode"])
+            if input_mode not in SUPPORTED_INPUT_MODES:
+                errors.append(
+                    f"{action_context}.input_mode uses unknown input mode '{input_mode}'"
+                )
+
+    if continuous_action == "click_point":
+        if "repeat_every_seconds" not in action.data:
+            errors.append(f"{action_context}.repeat_every_seconds is required")
+        else:
+            _validate_positive_duration(
+                action.data["repeat_every_seconds"],
+                f"{action_context}.repeat_every_seconds",
+                errors,
+            )
+
+    if continuous_action in {"press_keys", "hold_keys"}:
+        if "keys" not in action.data:
+            errors.append(f"{action_context}.keys is required")
+        else:
+            _validate_keys(action.data["keys"], f"{action_context}.keys", errors)
+
+    if continuous_action in {"press_key", "press_keys"}:
+        if "repeat_every_seconds" not in action.data:
+            errors.append(f"{action_context}.repeat_every_seconds is required")
+        else:
+            _validate_positive_duration(
+                action.data["repeat_every_seconds"],
+                f"{action_context}.repeat_every_seconds",
+                errors,
+            )
+        if "seconds" in action.data:
+            _validate_duration(
+                action.data["seconds"],
+                f"{action_context}.seconds",
+                errors,
+            )
+
+    if continuous_action in {"repeat_key", "hold_key_while_repeating_key"}:
+        if "tap_duration_seconds" in action.data:
+            _validate_duration(
+                action.data["tap_duration_seconds"],
+                f"{action_context}.tap_duration_seconds",
+                errors,
+            )
+
+    if continuous_action == "repeat_key":
+        if "repeat_every_seconds" not in action.data:
+            errors.append(f"{action_context}.repeat_every_seconds is required")
+        else:
+            _validate_positive_duration(
+                action.data["repeat_every_seconds"],
+                f"{action_context}.repeat_every_seconds",
+                errors,
+            )
+
+    if continuous_action == "hold_key_while_repeating_key":
+        if "hold_key" not in action.data:
+            errors.append(f"{action_context}.hold_key is required")
+        else:
+            _validate_key(
+                action.data["hold_key"],
+                f"{action_context}.hold_key",
+                errors,
+            )
+        if "tap_key" not in action.data:
+            errors.append(f"{action_context}.tap_key is required")
+        else:
+            _validate_key(
+                action.data["tap_key"],
+                f"{action_context}.tap_key",
+                errors,
+            )
+        if "tap_every_seconds" not in action.data:
+            errors.append(f"{action_context}.tap_every_seconds is required")
+        else:
+            _validate_positive_duration(
+                action.data["tap_every_seconds"],
+                f"{action_context}.tap_every_seconds",
+                errors,
+            )
+
+
+def _validate_mouse_move_action(
+    action: Action,
+    action_context: str,
+    errors: list[str],
+) -> None:
+    if "dx" not in action.data:
+        errors.append(f"{action_context}.dx is required")
+    else:
+        _validate_number(action.data["dx"], f"{action_context}.dx", errors)
+    if "dy" not in action.data:
+        errors.append(f"{action_context}.dy is required")
+    else:
+        _validate_number(action.data["dy"], f"{action_context}.dy", errors)
+    if "seconds" in action.data:
+        _validate_duration(action.data["seconds"], f"{action_context}.seconds", errors)
+    if "input_mode" in action.data:
+        input_mode = str(action.data["input_mode"])
+        if input_mode not in SUPPORTED_INPUT_MODES:
+            errors.append(
+                f"{action_context}.input_mode uses unknown input mode '{input_mode}'"
+            )
+        elif input_mode != "foreground":
+            errors.append(
+                f"{action_context}.input_mode must be foreground for mouse-look actions"
+            )
+    if action.type == "hold_mouse_button_and_move":
+        if "button" not in action.data:
+            errors.append(f"{action_context}.button is required")
+        else:
+            _validate_mouse_button(
+                action.data["button"],
+                f"{action_context}.button",
+                errors,
+            )
 
 
 def _validate_duration(value: object, label: str, errors: list[str]) -> None:
@@ -716,6 +932,17 @@ def _validate_positive_duration(value: object, label: str, errors: list[str]) ->
         errors.append(f"{label} must be a finite positive number")
 
 
+def _validate_number(value: object, label: str, errors: list[str]) -> None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        errors.append(f"{label} must be a number")
+        return
+
+    if not math.isfinite(number):
+        errors.append(f"{label} must be finite")
+
+
 def _validate_integer(
     value: object,
     label: str,
@@ -737,6 +964,16 @@ def _validate_key(value: object, label: str, errors: list[str]) -> None:
     normalized = value.strip().lower()
     if normalized not in SUPPORTED_KEY_NAMES:
         errors.append(f"{label} uses unsupported key '{value}'")
+
+
+def _validate_mouse_button(value: object, label: str, errors: list[str]) -> None:
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{label} must be a non-empty string")
+        return
+
+    normalized = value.strip().lower()
+    if normalized not in SUPPORTED_MOUSE_BUTTONS:
+        errors.append(f"{label} uses unsupported mouse button '{value}'")
 
 
 def _validate_keys(value: object, label: str, errors: list[str]) -> None:

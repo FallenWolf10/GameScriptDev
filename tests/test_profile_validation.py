@@ -412,6 +412,74 @@ states:
 
             validate_profile(profile, profile_path.parent)
 
+    def test_accepts_repeat_key(self) -> None:
+        profile_yaml = """
+version: 1
+name: Repeat Key Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: repeat_key
+        key: space
+        repeat_for_seconds: 2
+        repeat_every_seconds: 0.5
+        tap_duration_seconds: 0.1
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_repeat_key_without_positive_interval(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: repeat_key
+        key: space
+        repeat_for_seconds: 2
+        repeat_every_seconds: 0
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
+
     def test_rejects_hold_keys_without_keys(self) -> None:
         profile_yaml = """
 version: 1
@@ -510,6 +578,157 @@ states:
             profile = load_profile(profile_path)
 
             validate_profile(profile, profile_path.parent)
+
+    def test_accepts_start_continuous_input(self) -> None:
+        profile_yaml = """
+version: 1
+name: Continuous Input Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: forward_motion
+        action: hold_key
+        key: w
+      - type: press_key
+        key: e
+      - type: stop_continuous_input
+        name: forward_motion
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_continuous_press_key_without_repeat_interval(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Continuous Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: scanner
+        action: press_key
+        key: tab
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
+
+    def test_accepts_continuous_click_point(self) -> None:
+        profile_yaml = """
+version: 1
+name: Continuous Click Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+regions:
+  start_button:
+    x: 10
+    y: 20
+    width: 30
+    height: 40
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: keep_clicking
+        action: click_point
+        region: start_button
+        repeat_every_seconds: 0.5
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_continuous_click_point_without_repeat_interval(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Continuous Click Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+regions:
+  start_button:
+    x: 10
+    y: 20
+    width: 30
+    height: 40
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: keep_clicking
+        action: click_point
+        region: start_button
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
 
     def test_rejects_hold_key_while_repeating_key_without_positive_interval(self) -> None:
         profile_yaml = """
@@ -703,6 +922,208 @@ states:
 
             validate_profile(profile, profile_path.parent)
             self.assertEqual(profile.target.input_mode, "background_window_messages")
+
+    def test_accepts_click_action_input_mode_override(self) -> None:
+        profile_yaml = """
+version: 1
+name: Click Override Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+regions:
+  button:
+    x: 10
+    y: 20
+    width: 30
+    height: 40
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: click_point
+        region: button
+        input_mode: foreground
+      - type: hold_click
+        region: button
+        seconds: 0.5
+        input_mode: background_window_messages
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_accepts_foreground_mouse_look_actions(self) -> None:
+        profile_yaml = """
+version: 1
+name: Mouse Look Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: move_mouse
+        dx: 120
+        dy: -30
+        seconds: 0.2
+        input_mode: foreground
+      - type: hold_mouse_button_and_move
+        button: right
+        dx: 50
+        dy: 10
+        seconds: 0.15
+        input_mode: foreground
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_background_mouse_look_action_override(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Mouse Look Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: move_mouse
+        dx: 120
+        dy: -30
+        input_mode: background_window_messages
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError) as captured:
+                validate_profile(profile, profile_path.parent)
+
+            self.assertIn(
+                "input_mode must be foreground for mouse-look actions",
+                str(captured.exception),
+            )
+
+    def test_rejects_unknown_mouse_button(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Mouse Button Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: hold_mouse_button_and_move
+        button: middle
+        dx: 20
+        dy: 5
+        input_mode: foreground
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError) as captured:
+                validate_profile(profile, profile_path.parent)
+
+            self.assertIn("unsupported mouse button", str(captured.exception))
+
+    def test_rejects_unknown_click_action_input_mode_override(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Click Override Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+regions:
+  button:
+    x: 10
+    y: 20
+    width: 30
+    height: 40
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: click_point
+        region: button
+        input_mode: teleport
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError) as captured:
+                validate_profile(profile, profile_path.parent)
+
+            self.assertIn(
+                "state 'home_screen' actions[0].click_point.input_mode uses unknown input mode",
+                str(captured.exception),
+            )
 
     def test_rejects_unreachable_state(self) -> None:
         profile_yaml = """

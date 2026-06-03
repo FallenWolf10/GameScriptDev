@@ -1,0 +1,63 @@
+version: 1
+name: NevernessTheEverness Mouse Movement Test
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Mouse Movement Test
+  detection_strategy: template_matching
+  known_limitations:
+    - This pack assumes the client is already on a safe in-world screen where a small foreground mouse movement is acceptable.
+    - The pack does not include a visual confirmation anchor, so success means the foreground mouse movement action completed without adapter failure.
+    - Mouse-look actions currently require foreground input mode and active focus on the target window.
+    - This pack is limited to local operator-approved camera-input testing and does not automate gameplay, farming, account progression, or evasion behavior.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+  use_qwerty_physical_keys: true
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  default_timeout_seconds: 15
+  max_retries: 1
+
+initial_state: world_view
+
+states:
+  world_view:
+    actions:
+      - type: log
+        message: Applying one foreground mouse movement to test in-game camera input.
+      - type: move_mouse
+        dx: 120
+        dy: 0
+        seconds: 0.2
+        input_mode: foreground
+      - type: wait
+        seconds: 0.5
+    on_success: completed_test
+    on_failure: failed_world_missing
+
+  completed_test:
+    terminal: true
+    result: success
+
+  failed_world_missing:
+    terminal: true
+    result: failed_world_missing

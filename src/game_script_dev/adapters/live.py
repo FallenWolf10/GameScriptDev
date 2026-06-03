@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import math
+import threading
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -25,6 +26,9 @@ KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_EXTENDEDKEY = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MOVE = 0x0001
 MK_LBUTTON = 0x0001
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
@@ -54,6 +58,7 @@ TOKEN_QUERY = 0x0008
 TOKEN_INTEGRITY_LEVEL = 25
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 DEFAULT_PRESS_KEY_SECONDS = 0.1
+MOUSE_MOVE_STEP_SECONDS = 0.01
 
 KEY_CODES: dict[str, int] = {
     **{chr(code).lower(): code for code in range(ord("A"), ord("Z") + 1)},
@@ -95,6 +100,13 @@ class WindowCandidate:
     width: int
     height: int
     minimized: bool = False
+
+
+@dataclass
+class _ContinuousInputTask:
+    name: str
+    stop_event: threading.Event
+    thread: threading.Thread
 
 
 def current_process_integrity_rid() -> int:
@@ -358,6 +370,18 @@ class MouseSender(Protocol):
     def button_up(self, x: int, y: int) -> None:
         """Release the left mouse button at an absolute screen coordinate."""
 
+    def set_cursor(self, x: int, y: int) -> None:
+        """Move the cursor to an absolute screen coordinate."""
+
+    def move_relative(self, dx: int, dy: int) -> None:
+        """Move the mouse cursor by a relative delta."""
+
+    def button_down_named(self, button: str) -> None:
+        """Press a supported mouse button without repositioning the cursor."""
+
+    def button_up_named(self, button: str) -> None:
+        """Release a supported mouse button without repositioning the cursor."""
+
 
 class FocusVerifier(Protocol):
     def is_foreground(self, window: TargetWindow) -> bool:
@@ -555,13 +579,19 @@ class LiveInputAdapter:
         self.use_qwerty_physical_keys = use_qwerty_physical_keys
         self.press_key_duration = press_key_duration
         self.key_mapper: QwertyPhysicalKeyMapper | None = None
+        self._continuous_inputs: dict[str, _ContinuousInputTask] = {}
+        self._continuous_inputs_lock = threading.Lock()
 
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         raise LiveAdaptersUnavailable(
             "live template clicks require a resolved template target"
         )
 
-    def click_region(self, region_name: str) -> None:
+    def click_region(
+        self,
+        region_name: str,
+        input_mode: str | None = None,
+    ) -> None:
         region = self.regions.get(region_name)
         if region is None:
             raise LiveAdaptersUnavailable(
@@ -569,11 +599,21 @@ class LiveInputAdapter:
             )
         x = region.x + region.width // 2
         y = region.y + region.height // 2
-        self.click_coordinates(x, y, f"region:{region_name}")
+        self._click_coordinates_with_mode(x, y, f"region:{region_name}", input_mode)
 
     def click_coordinates(self, x: int, y: int, label: str) -> None:
-        window = self._verify_live_target()
-        if self.input_mode == "background_window_messages":
+        self._click_coordinates_with_mode(x, y, label, None)
+
+    def _click_coordinates_with_mode(
+        self,
+        x: int,
+        y: int,
+        label: str,
+        input_mode: str | None,
+    ) -> None:
+        mode = self.input_mode if input_mode is None else input_mode
+        window = self._verify_live_target(mode)
+        if mode == "background_window_messages":
             sender = self._background_mouse_sender()
             sender.click(window, int(x), int(y))
             return
@@ -582,7 +622,12 @@ class LiveInputAdapter:
         sender = self._mouse_sender()
         sender.click(absolute_x, absolute_y)
 
-    def hold_click(self, region_name: str, seconds: float) -> None:
+    def hold_click(
+        self,
+        region_name: str,
+        seconds: float,
+        input_mode: str | None = None,
+    ) -> None:
         region = self.regions.get(region_name)
         if region is None:
             raise LiveAdaptersUnavailable(
@@ -591,8 +636,9 @@ class LiveInputAdapter:
         x = region.x + region.width // 2
         y = region.y + region.height // 2
         self._validate_duration(seconds, "live mouse hold")
-        window = self._verify_live_target()
-        if self.input_mode == "background_window_messages":
+        mode = self.input_mode if input_mode is None else input_mode
+        window = self._verify_live_target(mode)
+        if mode == "background_window_messages":
             sender = self._background_mouse_sender()
             sender.button_down(window, int(x), int(y))
             try:
@@ -628,6 +674,47 @@ class LiveInputAdapter:
         self._validate_duration(seconds, "live key hold")
         virtual_keys = self._normalize_keys(keys)
         self._send_key_combo(virtual_keys, seconds)
+
+    def repeat_key(
+        self,
+        key: str,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        self._validate_duration(repeat_for_seconds, "live repeating key duration")
+        self._validate_positive_duration(
+            repeat_every_seconds,
+            "live repeating key interval",
+        )
+        tap_duration = (
+            self.press_key_duration
+            if tap_duration_seconds is None
+            else float(tap_duration_seconds)
+        )
+        self._validate_duration(tap_duration, "live repeating key tap")
+        tap_virtual_key = self._normalize_keys([key])[0]
+        window = self._verify_live_target()
+        if self.input_mode == "background_window_messages":
+            sender = self._background_keyboard_sender()
+            self._repeat_key_background(
+                sender,
+                window,
+                tap_virtual_key,
+                repeat_for_seconds,
+                repeat_every_seconds,
+                tap_duration,
+            )
+            return
+
+        sender = self._keyboard_sender()
+        self._repeat_key_foreground(
+            sender,
+            tap_virtual_key,
+            repeat_for_seconds,
+            repeat_every_seconds,
+            tap_duration,
+        )
 
     def hold_key_while_repeating_key(
         self,
@@ -679,6 +766,93 @@ class LiveInputAdapter:
             )
         finally:
             sender.key_up(hold_virtual_key)
+
+    def move_mouse(
+        self,
+        dx: float,
+        dy: float,
+        seconds: float | None = None,
+        input_mode: str | None = None,
+    ) -> None:
+        duration = None if seconds is None else float(seconds)
+        if duration is not None:
+            self._validate_duration(duration, "live mouse move")
+        window = self._verify_mouse_motion_target(input_mode)
+        sender = self._mouse_sender()
+        self._move_mouse_relative(
+            sender=sender,
+            window=window,
+            dx=float(dx),
+            dy=float(dy),
+            duration=duration,
+        )
+
+    def hold_mouse_button_and_move(
+        self,
+        button: str,
+        dx: float,
+        dy: float,
+        seconds: float | None = None,
+        input_mode: str | None = None,
+    ) -> None:
+        normalized_button = self._normalize_mouse_button(button)
+        duration = None if seconds is None else float(seconds)
+        if duration is not None:
+            self._validate_duration(duration, "live mouse hold-and-move")
+        window = self._verify_mouse_motion_target(input_mode)
+        sender = self._mouse_sender()
+        self._focus_mouse_target(window)
+        sender.button_down_named(normalized_button)
+        try:
+            self._move_mouse_relative(
+                sender=sender,
+                window=window,
+                dx=float(dx),
+                dy=float(dy),
+                duration=duration,
+                already_focused=True,
+            )
+        finally:
+            sender.button_up_named(normalized_button)
+
+    def start_continuous_input(
+        self,
+        name: str,
+        action_type: str,
+        data: dict[str, object],
+    ) -> None:
+        continuous_name = name.strip()
+        if not continuous_name:
+            raise ValueError("continuous input name is required")
+
+        task = self._build_continuous_input_task(
+            continuous_name,
+            action_type,
+            data,
+        )
+        with self._continuous_inputs_lock:
+            if continuous_name in self._continuous_inputs:
+                raise ValueError(
+                    f"continuous input '{continuous_name}' is already active"
+                )
+            self._continuous_inputs[continuous_name] = task
+        task.thread.start()
+
+    def stop_continuous_input(self, name: str) -> None:
+        continuous_name = name.strip()
+        if not continuous_name:
+            raise ValueError("continuous input name is required")
+        with self._continuous_inputs_lock:
+            task = self._continuous_inputs.get(continuous_name)
+        if task is None:
+            raise ValueError(f"continuous input '{continuous_name}' is not active")
+        self._stop_continuous_task(task)
+
+    def stop_all_continuous_inputs(self) -> None:
+        with self._continuous_inputs_lock:
+            tasks = list(self._continuous_inputs.values())
+        for task in tasks:
+            self._stop_continuous_task(task)
 
     def _normalize_keys(self, keys: list[str]) -> list[int]:
         if not keys:
@@ -733,6 +907,23 @@ class LiveInputAdapter:
         if remaining > 0:
             self.sleeper(remaining)
 
+    def _repeat_key_background(
+        self,
+        sender: BackgroundKeyboardSender,
+        window: TargetWindow,
+        tap_virtual_key: int,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration: float,
+    ) -> None:
+        self._repeat_key(
+            repeat_for_seconds=repeat_for_seconds,
+            repeat_every_seconds=repeat_every_seconds,
+            tap_duration=tap_duration,
+            key_down=lambda: sender.key_down(window, tap_virtual_key),
+            key_up=lambda: sender.key_up(window, tap_virtual_key),
+        )
+
     def _repeat_tap_while_holding_foreground(
         self,
         sender: KeyboardSender,
@@ -759,9 +950,636 @@ class LiveInputAdapter:
         if remaining > 0:
             self.sleeper(remaining)
 
+    def _repeat_key_foreground(
+        self,
+        sender: KeyboardSender,
+        tap_virtual_key: int,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration: float,
+    ) -> None:
+        self._repeat_key(
+            repeat_for_seconds=repeat_for_seconds,
+            repeat_every_seconds=repeat_every_seconds,
+            tap_duration=tap_duration,
+            key_down=lambda: sender.key_down(tap_virtual_key),
+            key_up=lambda: sender.key_up(tap_virtual_key),
+        )
+
+    def _repeat_key(
+        self,
+        *,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration: float,
+        key_down: Callable[[], None],
+        key_up: Callable[[], None],
+    ) -> None:
+        elapsed = 0.0
+        next_tap_at = 0.0
+        while next_tap_at < repeat_for_seconds:
+            wait_seconds = max(0.0, next_tap_at - elapsed)
+            if wait_seconds > 0:
+                self.sleeper(wait_seconds)
+                elapsed += wait_seconds
+            key_down()
+            try:
+                self.sleeper(tap_duration)
+            finally:
+                key_up()
+            elapsed += tap_duration
+            next_tap_at += repeat_every_seconds
+        remaining = repeat_for_seconds - elapsed
+        if remaining > 0:
+            self.sleeper(remaining)
+
     def wait(self, seconds: float) -> None:
         self._validate_duration(seconds, "live wait")
         self.sleeper(seconds)
+
+    def _build_continuous_input_task(
+        self,
+        name: str,
+        action_type: str,
+        data: dict[str, object],
+    ) -> _ContinuousInputTask:
+        stop_after = (
+            float(data["stop_after_seconds"])
+            if "stop_after_seconds" in data
+            else None
+        )
+        if stop_after is not None:
+            self._validate_positive_duration(
+                stop_after,
+                "continuous input stop_after_seconds",
+            )
+
+        stop_event = threading.Event()
+        action_data = dict(data)
+        action_data.pop("stop_after_seconds", None)
+
+        if action_type == "hold_key":
+            key_code = self._normalize_keys([str(action_data["key"])])[0]
+            window = self._verify_live_target()
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_hold_keys(
+                    window,
+                    [key_code],
+                    stop_event,
+                    stop_after,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "click_point":
+            repeat_every = float(action_data["repeat_every_seconds"])
+            self._validate_positive_duration(
+                repeat_every,
+                "continuous click_point interval",
+            )
+            region_name = str(action_data["region"])
+            input_mode = (
+                str(action_data["input_mode"])
+                if "input_mode" in action_data
+                else None
+            )
+            x, y, window, mode = self._resolve_region_center_for_mode(
+                region_name,
+                input_mode,
+            )
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_click_point(
+                    window,
+                    mode,
+                    x,
+                    y,
+                    stop_event,
+                    stop_after,
+                    repeat_every,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "hold_click":
+            region_name = str(action_data["region"])
+            input_mode = (
+                str(action_data["input_mode"])
+                if "input_mode" in action_data
+                else None
+            )
+            x, y, window, mode = self._resolve_region_center_for_mode(
+                region_name,
+                input_mode,
+            )
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_hold_click(
+                    window,
+                    mode,
+                    x,
+                    y,
+                    stop_event,
+                    stop_after,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "hold_keys":
+            key_codes = self._normalize_keys([str(key) for key in action_data["keys"]])
+            window = self._verify_live_target()
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_hold_keys(
+                    window,
+                    key_codes,
+                    stop_event,
+                    stop_after,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "press_key":
+            tap_duration = (
+                self.press_key_duration
+                if "seconds" not in action_data
+                else float(action_data["seconds"])
+            )
+            self._validate_duration(tap_duration, "continuous press_key tap")
+            repeat_every = float(action_data["repeat_every_seconds"])
+            self._validate_positive_duration(
+                repeat_every,
+                "continuous press_key interval",
+            )
+            key_codes = self._normalize_keys([str(action_data["key"])])
+            window = self._verify_live_target()
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_repeat_keys(
+                    window,
+                    key_codes,
+                    stop_event,
+                    stop_after,
+                    repeat_every,
+                    tap_duration,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "press_keys":
+            tap_duration = (
+                self.press_key_duration
+                if "seconds" not in action_data
+                else float(action_data["seconds"])
+            )
+            self._validate_duration(tap_duration, "continuous press_keys tap")
+            repeat_every = float(action_data["repeat_every_seconds"])
+            self._validate_positive_duration(
+                repeat_every,
+                "continuous press_keys interval",
+            )
+            key_codes = self._normalize_keys([str(key) for key in action_data["keys"]])
+            window = self._verify_live_target()
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_repeat_keys(
+                    window,
+                    key_codes,
+                    stop_event,
+                    stop_after,
+                    repeat_every,
+                    tap_duration,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "repeat_key":
+            tap_duration = (
+                self.press_key_duration
+                if "tap_duration_seconds" not in action_data
+                else float(action_data["tap_duration_seconds"])
+            )
+            self._validate_duration(tap_duration, "continuous repeat_key tap")
+            repeat_every = float(action_data["repeat_every_seconds"])
+            self._validate_positive_duration(
+                repeat_every,
+                "continuous repeat_key interval",
+            )
+            key_codes = self._normalize_keys([str(action_data["key"])])
+            window = self._verify_live_target()
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_repeat_keys(
+                    window,
+                    key_codes,
+                    stop_event,
+                    stop_after,
+                    repeat_every,
+                    tap_duration,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "hold_key_while_repeating_key":
+            tap_duration = (
+                self.press_key_duration
+                if "tap_duration_seconds" not in action_data
+                else float(action_data["tap_duration_seconds"])
+            )
+            self._validate_duration(
+                tap_duration,
+                "continuous hold_key_while_repeating_key tap",
+            )
+            tap_every = float(action_data["tap_every_seconds"])
+            self._validate_positive_duration(
+                tap_every,
+                "continuous hold_key_while_repeating_key interval",
+            )
+            hold_key = self._normalize_keys([str(action_data["hold_key"])])[0]
+            tap_key = self._normalize_keys([str(action_data["tap_key"])])[0]
+            window = self._verify_live_target()
+            thread = self._create_continuous_task_thread(
+                name,
+                stop_event,
+                lambda: self._run_continuous_hold_and_repeat(
+                    window,
+                    hold_key,
+                    tap_key,
+                    stop_event,
+                    stop_after,
+                    tap_every,
+                    tap_duration,
+                ),
+            )
+            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        raise ValueError(f"unsupported continuous input action '{action_type}'")
+
+    def _create_continuous_task_thread(
+        self,
+        name: str,
+        stop_event: threading.Event,
+        runner: Callable[[], None],
+    ) -> threading.Thread:
+        def run_task() -> None:
+            try:
+                runner()
+            finally:
+                stop_event.set()
+                with self._continuous_inputs_lock:
+                    existing = self._continuous_inputs.get(name)
+                    if existing is not None and existing.stop_event is stop_event:
+                        self._continuous_inputs.pop(name, None)
+
+        return threading.Thread(
+            target=run_task,
+            name=f"continuous-input-{name}",
+            daemon=True,
+        )
+
+    def _stop_continuous_task(self, task: _ContinuousInputTask) -> None:
+        task.stop_event.set()
+        task.thread.join(self.max_wait_seconds)
+        if task.thread.is_alive():
+            raise LiveAdaptersUnavailable(
+                f"continuous input '{task.name}' did not stop within "
+                f"{self.max_wait_seconds} seconds"
+            )
+
+    def _run_continuous_hold_keys(
+        self,
+        window: TargetWindow,
+        virtual_keys: list[int],
+        stop_event: threading.Event,
+        stop_after: float | None,
+    ) -> None:
+        deadline = self._continuous_deadline(stop_after)
+        if self.input_mode == "background_window_messages":
+            sender = self._background_keyboard_sender()
+            for virtual_key in virtual_keys:
+                sender.key_down(window, virtual_key)
+            try:
+                self._wait_for_stop_event(stop_event, deadline)
+            finally:
+                for virtual_key in reversed(virtual_keys):
+                    sender.key_up(window, virtual_key)
+            return
+
+        sender = self._keyboard_sender()
+        for virtual_key in virtual_keys:
+            sender.key_down(virtual_key)
+        try:
+            self._wait_for_stop_event(stop_event, deadline)
+        finally:
+            for virtual_key in reversed(virtual_keys):
+                sender.key_up(virtual_key)
+
+    def _run_continuous_click_point(
+        self,
+        window: TargetWindow,
+        mode: str,
+        x: int,
+        y: int,
+        stop_event: threading.Event,
+        stop_after: float | None,
+        repeat_every_seconds: float,
+    ) -> None:
+        deadline = self._continuous_deadline(stop_after)
+        next_click_at = time.monotonic()
+        while not stop_event.is_set():
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
+                return
+            wait_seconds = max(0.0, next_click_at - now)
+            if wait_seconds > 0 and self._wait_for_stop_event(
+                stop_event,
+                self._limit_wait(wait_seconds, deadline),
+            ):
+                return
+            self._click_coordinates_direct(window, mode, x, y)
+            next_click_at += repeat_every_seconds
+
+    def _run_continuous_hold_click(
+        self,
+        window: TargetWindow,
+        mode: str,
+        x: int,
+        y: int,
+        stop_event: threading.Event,
+        stop_after: float | None,
+    ) -> None:
+        deadline = self._continuous_deadline(stop_after)
+        if mode == "background_window_messages":
+            sender = self._background_mouse_sender()
+            sender.button_down(window, x, y)
+            try:
+                self._wait_for_stop_event(stop_event, self._remaining_until(deadline))
+            finally:
+                sender.button_up(window, x, y)
+            return
+
+        sender = self._mouse_sender()
+        absolute_x = window.left + x
+        absolute_y = window.top + y
+        sender.button_down(absolute_x, absolute_y)
+        try:
+            self._wait_for_stop_event(stop_event, self._remaining_until(deadline))
+        finally:
+            sender.button_up(absolute_x, absolute_y)
+
+    def _run_continuous_repeat_keys(
+        self,
+        window: TargetWindow,
+        virtual_keys: list[int],
+        stop_event: threading.Event,
+        stop_after: float | None,
+        repeat_every_seconds: float,
+        tap_duration: float,
+    ) -> None:
+        deadline = self._continuous_deadline(stop_after)
+        next_tap_at = time.monotonic()
+        while not stop_event.is_set():
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
+                return
+            wait_seconds = max(0.0, next_tap_at - now)
+            if wait_seconds > 0 and self._wait_for_stop_event(
+                stop_event,
+                self._limit_wait(wait_seconds, deadline),
+            ):
+                return
+            self._tap_key_combo(window, virtual_keys, stop_event, deadline, tap_duration)
+            next_tap_at += repeat_every_seconds
+
+    def _run_continuous_hold_and_repeat(
+        self,
+        window: TargetWindow,
+        hold_virtual_key: int,
+        tap_virtual_key: int,
+        stop_event: threading.Event,
+        stop_after: float | None,
+        tap_every_seconds: float,
+        tap_duration: float,
+    ) -> None:
+        deadline = self._continuous_deadline(stop_after)
+        next_tap_at = time.monotonic()
+        if self.input_mode == "background_window_messages":
+            sender = self._background_keyboard_sender()
+            sender.key_down(window, hold_virtual_key)
+            try:
+                while not stop_event.is_set():
+                    now = time.monotonic()
+                    if deadline is not None and now >= deadline:
+                        return
+                    wait_seconds = max(0.0, next_tap_at - now)
+                    if wait_seconds > 0 and self._wait_for_stop_event(
+                        stop_event,
+                        self._limit_wait(wait_seconds, deadline),
+                    ):
+                        return
+                    self._tap_background_key(
+                        sender,
+                        window,
+                        tap_virtual_key,
+                        stop_event,
+                        deadline,
+                        tap_duration,
+                    )
+                    next_tap_at += tap_every_seconds
+            finally:
+                sender.key_up(window, hold_virtual_key)
+            return
+
+        sender = self._keyboard_sender()
+        sender.key_down(hold_virtual_key)
+        try:
+            while not stop_event.is_set():
+                now = time.monotonic()
+                if deadline is not None and now >= deadline:
+                    return
+                wait_seconds = max(0.0, next_tap_at - now)
+                if wait_seconds > 0 and self._wait_for_stop_event(
+                    stop_event,
+                    self._limit_wait(wait_seconds, deadline),
+                ):
+                    return
+                self._tap_foreground_key(
+                    sender,
+                    tap_virtual_key,
+                    stop_event,
+                    deadline,
+                    tap_duration,
+                )
+                next_tap_at += tap_every_seconds
+        finally:
+            sender.key_up(hold_virtual_key)
+
+    def _tap_key_combo(
+        self,
+        window: TargetWindow,
+        virtual_keys: list[int],
+        stop_event: threading.Event,
+        deadline: float | None,
+        tap_duration: float,
+    ) -> None:
+        if self.input_mode == "background_window_messages":
+            sender = self._background_keyboard_sender()
+            for virtual_key in virtual_keys:
+                sender.key_down(window, virtual_key)
+            try:
+                self._wait_for_stop_event(
+                    stop_event,
+                    self._limit_wait(tap_duration, deadline),
+                )
+            finally:
+                for virtual_key in reversed(virtual_keys):
+                    sender.key_up(window, virtual_key)
+            return
+
+        sender = self._keyboard_sender()
+        for virtual_key in virtual_keys:
+            sender.key_down(virtual_key)
+        try:
+            self._wait_for_stop_event(
+                stop_event,
+                self._limit_wait(tap_duration, deadline),
+            )
+        finally:
+            for virtual_key in reversed(virtual_keys):
+                sender.key_up(virtual_key)
+
+    def _click_coordinates_direct(
+        self,
+        window: TargetWindow,
+        mode: str,
+        x: int,
+        y: int,
+    ) -> None:
+        if mode == "background_window_messages":
+            sender = self._background_mouse_sender()
+            sender.click(window, x, y)
+            return
+        sender = self._mouse_sender()
+        sender.click(window.left + x, window.top + y)
+
+    def _move_mouse_relative(
+        self,
+        sender: MouseSender,
+        window: TargetWindow,
+        dx: float,
+        dy: float,
+        duration: float | None,
+        already_focused: bool = False,
+    ) -> None:
+        if not already_focused:
+            self._focus_mouse_target(window)
+        if duration is None or duration == 0:
+            sender.move_relative(int(round(dx)), int(round(dy)))
+            return
+
+        steps = max(1, int(math.ceil(duration / MOUSE_MOVE_STEP_SECONDS)))
+        step_dx = dx / steps
+        step_dy = dy / steps
+        sent_dx = 0
+        sent_dy = 0
+        for index in range(steps):
+            if index == steps - 1:
+                move_x = int(round(dx)) - sent_dx
+                move_y = int(round(dy)) - sent_dy
+            else:
+                move_x = int(round(step_dx))
+                move_y = int(round(step_dy))
+            sent_dx += move_x
+            sent_dy += move_y
+            if move_x or move_y:
+                sender.move_relative(move_x, move_y)
+            self.sleeper(duration / steps)
+
+    def _tap_background_key(
+        self,
+        sender: BackgroundKeyboardSender,
+        window: TargetWindow,
+        virtual_key: int,
+        stop_event: threading.Event,
+        deadline: float | None,
+        tap_duration: float,
+    ) -> None:
+        sender.key_down(window, virtual_key)
+        try:
+            self._wait_for_stop_event(
+                stop_event,
+                self._limit_wait(tap_duration, deadline),
+            )
+        finally:
+            sender.key_up(window, virtual_key)
+
+    def _tap_foreground_key(
+        self,
+        sender: KeyboardSender,
+        virtual_key: int,
+        stop_event: threading.Event,
+        deadline: float | None,
+        tap_duration: float,
+    ) -> None:
+        sender.key_down(virtual_key)
+        try:
+            self._wait_for_stop_event(
+                stop_event,
+                self._limit_wait(tap_duration, deadline),
+            )
+        finally:
+            sender.key_up(virtual_key)
+
+    def _continuous_deadline(self, stop_after: float | None) -> float | None:
+        if stop_after is None:
+            return None
+        return time.monotonic() + stop_after
+
+    def _remaining_until(self, deadline: float | None) -> float | None:
+        if deadline is None:
+            return None
+        return max(0.0, deadline - time.monotonic())
+
+    def _limit_wait(self, seconds: float, deadline: float | None) -> float:
+        if deadline is None:
+            return max(0.0, seconds)
+        return max(0.0, min(seconds, deadline - time.monotonic()))
+
+    def _wait_for_stop_event(
+        self,
+        stop_event: threading.Event,
+        seconds: float | None,
+    ) -> bool:
+        if seconds is None:
+            stop_event.wait()
+            return stop_event.is_set()
+        if seconds <= 0:
+            return stop_event.is_set()
+        return stop_event.wait(seconds)
+
+    def _resolve_region_center_for_mode(
+        self,
+        region_name: str,
+        input_mode: str | None,
+    ) -> tuple[int, int, TargetWindow, str]:
+        region = self.regions.get(region_name)
+        if region is None:
+            raise LiveAdaptersUnavailable(
+                f"live click requires a known profile region: {region_name}"
+            )
+        x = int(region.x + region.width // 2)
+        y = int(region.y + region.height // 2)
+        mode = self.input_mode if input_mode is None else input_mode
+        window = self._verify_live_target(mode)
+        return x, y, window, mode
 
     def _validate_duration(self, seconds: float, label: str) -> None:
         if not math.isfinite(seconds) or seconds < 0:
@@ -805,7 +1623,22 @@ class LiveInputAdapter:
         self.background_mouse_sender = Win32BackgroundMouseSender.create()
         return self.background_mouse_sender
 
-    def _verify_live_target(self) -> TargetWindow:
+    def _verify_mouse_motion_target(self, input_mode: str | None) -> TargetWindow:
+        mode = self.input_mode if input_mode is None else input_mode
+        if mode != "foreground":
+            raise LiveAdaptersUnavailable(
+                "mouse-look actions currently require foreground input mode"
+            )
+        return self._verify_live_target(mode)
+
+    def _focus_mouse_target(self, window: TargetWindow) -> None:
+        if window.handle is None:
+            return
+        center_x = int(window.left + (window.width // 2))
+        center_y = int(window.top + (window.height // 2))
+        self._mouse_sender().set_cursor(center_x, center_y)
+
+    def _verify_live_target(self, input_mode: str | None = None) -> TargetWindow:
         if self.target_window is None:
             raise LiveAdaptersUnavailable("live input requires target window context")
         if self.target_window.handle is None:
@@ -816,7 +1649,8 @@ class LiveInputAdapter:
             window = self.window_adapter.verify_window(window, self.profile)
             self.target_window = window
 
-        if self.input_mode == "background_window_messages":
+        mode = self.input_mode if input_mode is None else input_mode
+        if mode == "background_window_messages":
             return window
 
         verifier = self._focus_verifier()
@@ -858,6 +1692,15 @@ class LiveInputAdapter:
             return self.key_mapper
         self.key_mapper = QwertyPhysicalKeyMapper.create()
         return self.key_mapper
+
+    def _normalize_mouse_button(self, button: str) -> str:
+        normalized = button.strip().lower()
+        if normalized not in {"left", "right"}:
+            raise ValueError(
+                "unsupported live mouse button "
+                f"'{button}'; allowed buttons: left, right"
+            )
+        return normalized
 
 
 class _KeyboardInput(ctypes.Structure):
@@ -1159,6 +2002,9 @@ class Win32MouseSender:
         self.button_down(x, y)
         self.button_up(x, y)
 
+    def set_cursor(self, x: int, y: int) -> None:
+        self._set_cursor(x, y)
+
     def button_down(self, x: int, y: int) -> None:
         self._set_cursor(x, y)
         self.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
@@ -1166,6 +2012,27 @@ class Win32MouseSender:
     def button_up(self, x: int, y: int) -> None:
         self._set_cursor(x, y)
         self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+    def move_relative(self, dx: int, dy: int) -> None:
+        self.user32.mouse_event(MOUSEEVENTF_MOVE, int(dx), int(dy), 0, 0)
+
+    def button_down_named(self, button: str) -> None:
+        if button == "left":
+            self.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            return
+        if button == "right":
+            self.user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+            return
+        raise LiveAdaptersUnavailable(f"unsupported mouse button: {button}")
+
+    def button_up_named(self, button: str) -> None:
+        if button == "left":
+            self.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            return
+        if button == "right":
+            self.user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+            return
+        raise LiveAdaptersUnavailable(f"unsupported mouse button: {button}")
 
     def _set_cursor(self, x: int, y: int) -> None:
         ctypes.set_last_error(0)

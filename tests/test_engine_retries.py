@@ -37,7 +37,15 @@ class StaticInputAdapter:
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         return None
 
-    def click_region(self, region_name: str) -> None:
+    def click_region(self, region_name: str, input_mode: str | None = None) -> None:
+        return None
+
+    def hold_click(
+        self,
+        region_name: str,
+        seconds: float,
+        input_mode: str | None = None,
+    ) -> None:
         return None
 
     def press_key(self, key: str) -> None:
@@ -52,6 +60,15 @@ class StaticInputAdapter:
     def hold_keys(self, keys: list[str], seconds: float) -> None:
         return None
 
+    def repeat_key(
+        self,
+        key: str,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        return None
+
     def hold_key_while_repeating_key(
         self,
         hold_key: str,
@@ -60,6 +77,20 @@ class StaticInputAdapter:
         tap_every_seconds: float,
         tap_duration_seconds: float | None = None,
     ) -> None:
+        return None
+
+    def start_continuous_input(
+        self,
+        name: str,
+        action_type: str,
+        data: dict[str, object],
+    ) -> None:
+        return None
+
+    def stop_continuous_input(self, name: str) -> None:
+        return None
+
+    def stop_all_continuous_inputs(self) -> None:
         return None
 
     def wait(self, seconds: float) -> None:

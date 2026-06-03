@@ -154,7 +154,16 @@ def _uses_text_anchors(profile: Profile) -> bool:
 
 
 def uses_pointer_actions(actions: list[Action]) -> bool:
-    return any(action.type in {"click_point", "click_template"} for action in actions)
+    return any(
+        action.type
+        in {
+            "click_point",
+            "click_template",
+            "move_mouse",
+            "hold_mouse_button_and_move",
+        }
+        for action in actions
+    )
 
 
 def _background_input_privilege_blocker(
@@ -193,7 +202,10 @@ def _uses_live_input(profile: Profile) -> bool:
                 "press_keys",
                 "hold_key",
                 "hold_keys",
+                "repeat_key",
                 "hold_key_while_repeating_key",
+                "move_mouse",
+                "hold_mouse_button_and_move",
             }
             for action in state.actions
         ):
@@ -208,7 +220,10 @@ def _uses_live_input(profile: Profile) -> bool:
                 "press_keys",
                 "hold_key",
                 "hold_keys",
+                "repeat_key",
                 "hold_key_while_repeating_key",
+                "move_mouse",
+                "hold_mouse_button_and_move",
             }
             for action in interruption.recovery_actions
         ):

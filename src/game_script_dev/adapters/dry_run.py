@@ -89,19 +89,44 @@ class DryRunVisionAdapter:
 class DryRunInputAdapter:
     def __init__(self, logger: logging.Logger) -> None:
         self.logger = logger
+        self.active_continuous_inputs: set[str] = set()
 
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         self.logger.info("Dry-run click_template: %s on %s", asset, screenshot.source)
 
-    def click_region(self, region_name: str) -> None:
-        self.logger.info("Dry-run click_point region: %s", region_name)
+    def click_region(
+        self,
+        region_name: str,
+        input_mode: str | None = None,
+    ) -> None:
+        if input_mode is None:
+            self.logger.info("Dry-run click_point region: %s", region_name)
+            return
+        self.logger.info(
+            "Dry-run click_point region: %s using input_mode=%s",
+            region_name,
+            input_mode,
+        )
 
     def click_coordinates(self, x: int, y: int, label: str) -> None:
         self.logger.info("Dry-run click coordinates: %s at %s,%s", label, x, y)
 
-    def hold_click(self, region_name: str, seconds: float) -> None:
+    def hold_click(
+        self,
+        region_name: str,
+        seconds: float,
+        input_mode: str | None = None,
+    ) -> None:
+        if input_mode is None:
+            self.logger.info(
+                "Dry-run hold_click region: %s for %s seconds", region_name, seconds
+            )
+            return
         self.logger.info(
-            "Dry-run hold_click region: %s for %s seconds", region_name, seconds
+            "Dry-run hold_click region: %s for %s seconds using input_mode=%s",
+            region_name,
+            seconds,
+            input_mode,
         )
 
     def press_key(self, key: str, seconds: float | None = None) -> None:
@@ -125,6 +150,29 @@ class DryRunInputAdapter:
             "Dry-run hold_keys: %s for %s seconds",
             " + ".join(keys),
             seconds,
+        )
+
+    def repeat_key(
+        self,
+        key: str,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        if tap_duration_seconds is None:
+            self.logger.info(
+                "Dry-run repeat_key: %s every %s seconds for %s seconds",
+                key,
+                repeat_every_seconds,
+                repeat_for_seconds,
+            )
+            return
+        self.logger.info(
+            "Dry-run repeat_key: %s every %s seconds for %s seconds with %s second taps",
+            key,
+            repeat_every_seconds,
+            repeat_for_seconds,
+            tap_duration_seconds,
         )
 
     def hold_key_while_repeating_key(
@@ -152,6 +200,93 @@ class DryRunInputAdapter:
             tap_every_seconds,
             tap_duration_seconds,
         )
+
+    def move_mouse(
+        self,
+        dx: float,
+        dy: float,
+        seconds: float | None = None,
+        input_mode: str | None = None,
+    ) -> None:
+        suffix = ""
+        if input_mode is not None:
+            suffix += f" using input_mode={input_mode}"
+        if seconds is None:
+            self.logger.info("Dry-run move_mouse: dx=%s dy=%s%s", dx, dy, suffix)
+            return
+        self.logger.info(
+            "Dry-run move_mouse: dx=%s dy=%s for %s seconds%s",
+            dx,
+            dy,
+            seconds,
+            suffix,
+        )
+
+    def hold_mouse_button_and_move(
+        self,
+        button: str,
+        dx: float,
+        dy: float,
+        seconds: float | None = None,
+        input_mode: str | None = None,
+    ) -> None:
+        suffix = ""
+        if input_mode is not None:
+            suffix += f" using input_mode={input_mode}"
+        if seconds is None:
+            self.logger.info(
+                "Dry-run hold_mouse_button_and_move: %s dx=%s dy=%s%s",
+                button,
+                dx,
+                dy,
+                suffix,
+            )
+            return
+        self.logger.info(
+            "Dry-run hold_mouse_button_and_move: %s dx=%s dy=%s for %s seconds%s",
+            button,
+            dx,
+            dy,
+            seconds,
+            suffix,
+        )
+
+    def start_continuous_input(
+        self,
+        name: str,
+        action_type: str,
+        data: dict[str, object],
+    ) -> None:
+        if name in self.active_continuous_inputs:
+            raise ValueError(f"continuous input '{name}' is already active")
+        self.active_continuous_inputs.add(name)
+        detail = ", ".join(f"{key}={value}" for key, value in sorted(data.items()))
+        if detail:
+            self.logger.info(
+                "Dry-run start_continuous_input: %s action=%s (%s)",
+                name,
+                action_type,
+                detail,
+            )
+            return
+        self.logger.info(
+            "Dry-run start_continuous_input: %s action=%s",
+            name,
+            action_type,
+        )
+
+    def stop_continuous_input(self, name: str) -> None:
+        if name not in self.active_continuous_inputs:
+            raise ValueError(f"continuous input '{name}' is not active")
+        self.active_continuous_inputs.remove(name)
+        self.logger.info("Dry-run stop_continuous_input: %s", name)
+
+    def stop_all_continuous_inputs(self) -> None:
+        if not self.active_continuous_inputs:
+            return
+        for name in sorted(self.active_continuous_inputs):
+            self.logger.info("Dry-run stop_continuous_input: %s", name)
+        self.active_continuous_inputs.clear()
 
     def wait(self, seconds: float) -> None:
         self.logger.info("Dry-run bounded wait: %s seconds", seconds)

@@ -46,10 +46,15 @@ class UnavailableInputAdapter:
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         raise LiveAdaptersUnavailable("live mouse input is not implemented yet")
 
-    def click_region(self, region_name: str) -> None:
+    def click_region(self, region_name: str, input_mode: str | None = None) -> None:
         raise LiveAdaptersUnavailable("live mouse input is not implemented yet")
 
-    def hold_click(self, region_name: str, seconds: float) -> None:
+    def hold_click(
+        self,
+        region_name: str,
+        seconds: float,
+        input_mode: str | None = None,
+    ) -> None:
         raise LiveAdaptersUnavailable("live mouse input is not implemented yet")
 
     def press_key(self, key: str, seconds: float | None = None) -> None:
@@ -64,6 +69,15 @@ class UnavailableInputAdapter:
     def hold_keys(self, keys: list[str], seconds: float) -> None:
         raise LiveAdaptersUnavailable("target window is not foreground")
 
+    def repeat_key(
+        self,
+        key: str,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        raise LiveAdaptersUnavailable("target window is not foreground")
+
     def hold_key_while_repeating_key(
         self,
         hold_key: str,
@@ -73,6 +87,20 @@ class UnavailableInputAdapter:
         tap_duration_seconds: float | None = None,
     ) -> None:
         raise LiveAdaptersUnavailable("target window is not foreground")
+
+    def start_continuous_input(
+        self,
+        name: str,
+        action_type: str,
+        data: dict[str, object],
+    ) -> None:
+        raise LiveAdaptersUnavailable("target window is not foreground")
+
+    def stop_continuous_input(self, name: str) -> None:
+        raise LiveAdaptersUnavailable("target window is not foreground")
+
+    def stop_all_continuous_inputs(self) -> None:
+        return None
 
     def wait(self, seconds: float) -> None:
         return None

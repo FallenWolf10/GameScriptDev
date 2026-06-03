@@ -1,0 +1,342 @@
+version: 1
+name: NevernessTheEverness Pink Paw Automation
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Pink Paw Automation
+  detection_strategy: template_matching
+  known_limitations:
+    - This pack is a key-driven approximation of the Pink Paw route reconstructed from recordings, not a frame-perfect replay.
+    - The current profile schema does not support declarative mouse-look movement, so the route omits the recorded right/left/up/down camera shaping that would be required for accurate live navigation.
+    - The current profile schema does not support prompt-aware branching, so `F` interactions are scheduled by timing rather than by confirmed prompt detection.
+    - Character swaps `1` through `4` are included only as optional route approximations from the recording analysis.
+    - Left click is intentionally excluded from scripted selection behavior; it should be treated as attack by default outside dialogue or menu UI.
+    - This pack is limited to local operator-approved testing of a reconstructed route plan and does not automate farming, account progression, matchmaking abuse, or evasion behavior.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+  use_qwerty_physical_keys: true
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: verify_only
+
+execution:
+  default_timeout_seconds: 15
+  max_retries: 1
+
+initial_state: npc_prompt_start
+
+states:
+  npc_prompt_start:
+    required_anchors:
+      - name: pink_paw_npc_prompt
+        type: template
+        asset: assets/start_npc_prompt.png
+    actions:
+      - type: log
+        message: Starting Pink Paw automation route at NPC prompt.
+      - type: start_continuous_input
+        name: press_f
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+        stop_after_seconds: 2.0
+      - type: wait
+        seconds: 1.5
+    on_success: lobby_departure
+    on_failure: failed_route
+
+  lobby_departure:
+    actions:
+      - type: log
+        message: Phase 1, departing lobby and entering the corridor with key-only routing.
+      - type: hold_key
+        key: w
+        seconds: 3.0
+      - type: wait
+        seconds: 0.2
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: wait
+        seconds: 0.1
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 2.5
+      - type: wait
+        seconds: 0.2
+      - type: hold_key
+        key: w
+        seconds: 3.0
+    on_success: stairs_transition
+    on_failure: failed_route
+
+  stairs_transition:
+    actions:
+      - type: log
+        message: Phase 2, approximating stairs and elevation changes without mouse pitch control.
+      - type: hold_key
+        key: w
+        seconds: 2.5
+      - type: wait
+        seconds: 0.3
+      - type: hold_key
+        key: w
+        seconds: 1.8
+      - type: wait
+        seconds: 0.3
+      - type: hold_key
+        key: w
+        seconds: 1.2
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 2.5
+    on_success: large_room_route
+    on_failure: failed_route
+
+  large_room_route:
+    actions:
+      - type: log
+        message: Phase 3, large-room hazard route with steering taps only.
+      - type: hold_key
+        key: w
+        seconds: 2.0
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 1.4
+      - type: press_key
+        key: a
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 1.8
+      - type: hold_key
+        key: w
+        seconds: 2.0
+      - type: wait
+        seconds: 0.3
+      - type: press_key
+        key: "2"
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 1.2
+    on_success: interaction_desk
+    on_failure: failed_route
+
+  interaction_desk:
+    actions:
+      - type: log
+        message: Phase 4, timed interaction checkpoints using F.
+      - type: hold_key
+        key: w
+        seconds: 1.8
+      - type: wait
+        seconds: 0.2
+      - type: hold_key
+        key: w
+        seconds: 1.0
+      - type: press_key
+        key: f
+        seconds: 0.1
+      - type: wait
+        seconds: 0.4
+      - type: hold_key
+        key: w
+        seconds: 1.2
+      - type: press_key
+        key: f
+        seconds: 0.1
+    on_success: laser_entry
+    on_failure: failed_route
+
+  laser_entry:
+    actions:
+      - type: log
+        message: Phase 5, entering laser section with short burst movement.
+      - type: hold_key
+        key: w
+        seconds: 0.9
+      - type: wait
+        seconds: 0.15
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 0.7
+      - type: wait
+        seconds: 0.2
+      - type: press_key
+        key: w
+        seconds: 0.1
+      - type: press_key
+        key: a
+        seconds: 0.1
+      - type: press_key
+        key: w
+        seconds: 0.1
+    on_success: laser_precision
+    on_failure: failed_route
+
+  laser_precision:
+    actions:
+      - type: log
+        message: Phase 6, laser precision cycle repeated as a key-only fallback.
+      - type: press_key
+        key: w
+        seconds: 0.1
+      - type: wait
+        seconds: 0.12
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: wait
+        seconds: 0.12
+      - type: press_key
+        key: w
+        seconds: 0.1
+      - type: wait
+        seconds: 0.15
+      - type: press_key
+        key: w
+        seconds: 0.1
+      - type: wait
+        seconds: 0.12
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: wait
+        seconds: 0.12
+      - type: press_key
+        key: w
+        seconds: 0.1
+      - type: wait
+        seconds: 0.15
+      - type: press_key
+        key: w
+        seconds: 0.1
+      - type: wait
+        seconds: 0.12
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: wait
+        seconds: 0.12
+      - type: press_key
+        key: w
+        seconds: 0.1
+      - type: wait
+        seconds: 0.15
+    on_success: post_laser_route
+    on_failure: failed_route
+
+  post_laser_route:
+    actions:
+      - type: log
+        message: Phase 7, post-laser pickups and side-room traversal.
+      - type: hold_key
+        key: w
+        seconds: 2.0
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 1.5
+      - type: press_key
+        key: f
+        seconds: 0.1
+      - type: wait
+        seconds: 0.25
+      - type: hold_key
+        key: w
+        seconds: 1.2
+      - type: hold_key
+        key: w
+        seconds: 1.2
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 1.4
+    on_success: late_route
+    on_failure: failed_route
+
+  late_route:
+    actions:
+      - type: log
+        message: Phase 8, late route cleanup and optional character swap.
+      - type: hold_key
+        key: w
+        seconds: 2.2
+      - type: press_key
+        key: d
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 1.8
+      - type: press_key
+        key: "3"
+        seconds: 0.1
+      - type: wait
+        seconds: 0.2
+      - type: hold_key
+        key: w
+        seconds: 1.5
+      - type: press_key
+        key: f
+        seconds: 0.1
+    on_success: finish_sequence
+    on_failure: failed_route
+
+  finish_sequence:
+    actions:
+      - type: log
+        message: Phase 9, finish and summary approximation.
+      - type: hold_key
+        key: w
+        seconds: 1.0
+      - type: wait
+        seconds: 0.5
+      - type: press_key
+        key: f
+        seconds: 0.1
+      - type: wait
+        seconds: 3.0
+    on_success: completed
+    on_failure: failed_route
+
+  completed:
+    terminal: true
+    result: success
+
+  failed_route:
+    terminal: true
+    result: failed_route

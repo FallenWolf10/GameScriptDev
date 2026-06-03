@@ -66,13 +66,22 @@ class InputAdapter(Protocol):
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         """Click a detected template target."""
 
-    def click_region(self, region_name: str) -> None:
-        """Click a named profile region."""
+    def click_region(
+        self,
+        region_name: str,
+        input_mode: str | None = None,
+    ) -> None:
+        """Click a named profile region, optionally overriding the input mode."""
 
     def click_coordinates(self, x: int, y: int, label: str) -> None:
         """Click a target-window-relative point."""
 
-    def hold_click(self, region_name: str, seconds: float) -> None:
+    def hold_click(
+        self,
+        region_name: str,
+        seconds: float,
+        input_mode: str | None = None,
+    ) -> None:
         """Hold the left mouse button on a named profile region."""
 
     def press_key(self, key: str, seconds: float | None = None) -> None:
@@ -87,6 +96,15 @@ class InputAdapter(Protocol):
     def hold_keys(self, keys: list[str], seconds: float) -> None:
         """Hold multiple keys together for a duration."""
 
+    def repeat_key(
+        self,
+        key: str,
+        repeat_for_seconds: float,
+        repeat_every_seconds: float,
+        tap_duration_seconds: float | None = None,
+    ) -> None:
+        """Repeat one key on an interval for a bounded duration."""
+
     def hold_key_while_repeating_key(
         self,
         hold_key: str,
@@ -96,6 +114,39 @@ class InputAdapter(Protocol):
         tap_duration_seconds: float | None = None,
     ) -> None:
         """Hold one key while tapping another key on an interval."""
+
+    def move_mouse(
+        self,
+        dx: float,
+        dy: float,
+        seconds: float | None = None,
+        input_mode: str | None = None,
+    ) -> None:
+        """Move the mouse by a relative delta, optionally over a duration."""
+
+    def hold_mouse_button_and_move(
+        self,
+        button: str,
+        dx: float,
+        dy: float,
+        seconds: float | None = None,
+        input_mode: str | None = None,
+    ) -> None:
+        """Hold a mouse button while applying a relative mouse movement."""
+
+    def start_continuous_input(
+        self,
+        name: str,
+        action_type: str,
+        data: dict[str, object],
+    ) -> None:
+        """Start a named continuous input task that runs alongside later actions."""
+
+    def stop_continuous_input(self, name: str) -> None:
+        """Stop a previously-started continuous input task."""
+
+    def stop_all_continuous_inputs(self) -> None:
+        """Stop every active continuous input task."""
 
     def wait(self, seconds: float) -> None:
         """Wait for a bounded duration."""

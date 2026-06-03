@@ -161,11 +161,15 @@ states:
 
       - type: click_point
         region: start_button
+        # Optional. Override the profile target input mode for this click only.
+        # input_mode: foreground
       # Clicks the center of a named region.
 
       - type: hold_click
         region: start_button
         seconds: 1.0
+        # Optional. Override the profile target input mode for this click only.
+        # input_mode: foreground
       # Holds the left mouse button on a named region for a duration.
 
       - type: click_template
@@ -194,6 +198,13 @@ states:
         seconds: 1.5
       # Holds several supported keys together for a duration.
 
+      - type: repeat_key
+        key: space
+        repeat_for_seconds: 3
+        repeat_every_seconds: 0.5
+        tap_duration_seconds: 0.1
+      # Repeats one key on an interval for a bounded duration.
+
       - type: hold_key_while_repeating_key
         hold_key: w
         hold_seconds: 10
@@ -201,6 +212,66 @@ states:
         tap_every_seconds: 1
         tap_duration_seconds: 0.1
       # Holds one key while tapping another key on a repeating interval.
+
+      - type: start_continuous_input
+        name: forward_motion
+        action: hold_key
+        key: w
+      # Starts a named continuous keyboard action and immediately continues to
+      # later actions.
+
+      - type: start_continuous_input
+        name: scan_shortcuts
+        action: press_key
+        key: tab
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+        stop_after_seconds: 3
+      # Repeated tap variants need repeat_every_seconds. stop_after_seconds is
+      # optional; without it the action runs until a matching stop action or
+      # until the run exits. For repeated press-style continuous input, 0.2
+      # seconds is the recommended baseline cadence.
+
+      - type: wait
+        seconds: 2.5
+      # Common recorded-input sequence:
+      # start_continuous_input -> wait -> next start_continuous_input.
+      # A good baseline is wait_seconds = previous stop_after_seconds - 0.5.
+
+      - type: start_continuous_input
+        name: keep_clicking
+        action: click_point
+        region: start_button
+        repeat_every_seconds: 0.2
+        stop_after_seconds: 1.0
+      # Repeated click variant. It keeps clicking the named region center until
+      # stopped or until stop_after_seconds expires.
+
+      - type: wait
+        seconds: 0.5
+      # Example of the same timing rule:
+      # previous stop_after_seconds 1.0 -> wait 0.5.
+
+      - type: start_continuous_input
+        name: confirm_enter
+        action: press_key
+        key: enter
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+        stop_after_seconds: 1.0
+      # Another repeated press example using the same recommended cadence.
+
+      - type: start_continuous_input
+        name: drag_hold
+        action: hold_click
+        region: start_button
+        stop_after_seconds: 2
+      # Continuous hold-click variant. It keeps the mouse button held down
+      # until stopped or until stop_after_seconds expires.
+
+      - type: stop_continuous_input
+        name: forward_motion
+      # Stops a previously-started continuous keyboard action.
 
       - type: wait_for_state
         state: mission_screen
@@ -315,9 +386,31 @@ Anchors can appear in:
   - Fields: `keys`, optional `seconds`
 - `hold_keys`
   - Fields: `keys`, optional `seconds` (defaults to `1`)
+- `repeat_key`
+  - Fields: `key`, `repeat_for_seconds`, `repeat_every_seconds`, optional
+    `tap_duration_seconds`
 - `hold_key_while_repeating_key`
   - Fields: `hold_key`, `hold_seconds`, `tap_key`, `tap_every_seconds`,
     optional `tap_duration_seconds`
+- `start_continuous_input`
+  - Fields: `name`, `action`, optional `stop_after_seconds`
+  - Supported `action` values:
+    `click_point`, `hold_click`, `press_key`, `press_keys`, `hold_key`,
+    `hold_keys`, `repeat_key`, `hold_key_while_repeating_key`
+  - `click_point` requires `region` and `repeat_every_seconds`
+  - `hold_click` requires `region`
+  - `press_key` and `press_keys` also require `repeat_every_seconds`
+  - `repeat_key` requires `key` and `repeat_every_seconds`
+  - `hold_key_while_repeating_key` requires `hold_key`, `tap_key`,
+    `tap_every_seconds`, optional `tap_duration_seconds`
+  - Recorded-workflow reference:
+    prefer `repeat_every_seconds: 0.2` for repeated press/click continuous
+    input unless the target proves it needs a slower interval
+  - Chained timing reference:
+    after each `start_continuous_input`, add an explicit `wait`; a useful
+    baseline is `wait = previous stop_after_seconds - 0.5`
+- `stop_continuous_input`
+  - Fields: `name`
 - `wait_for_state`
   - Fields: `state`, optional `timeout_seconds`, optional
     `poll_interval_seconds`
@@ -349,6 +442,9 @@ The current schema accepts these keys:
 - Use `required_anchors` for the minimum proof that the state is really on
   screen.
 - Add `forbidden_anchors` for known bad states that look similar to valid ones.
+- For chained continuous inputs from recording reconstruction, start with
+  `repeat_every_seconds: 0.2`, then place a `wait` after each start. A strong
+  default is `wait = previous stop_after_seconds - 0.5`.
 - Keep `known_limitations` honest. They are part of the readiness contract, not
   just a comment bucket.
 - Start with dry-run and validation before attempting live mode.

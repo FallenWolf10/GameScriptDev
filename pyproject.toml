@@ -9,6 +9,11 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+opencv = [
+    "opencv-python>=4.10",
+]
+
 [project.scripts]
 game-script-dev = "game_script_dev.cli:main"
 game-script-dev-dashboard = "game_script_dev.dashboard.server:main"

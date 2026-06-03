@@ -76,116 +76,118 @@ class Engine:
         max_steps = max(1, len(self.profile.states) * (self.profile.max_retries + 2))
         failures_by_state: dict[str, int] = {}
         interruption_attempts: dict[str, int] = {}
+        try:
+            for _ in range(max_steps):
+                self._check_stop_requested()
+                state = self.profile.states[current_state]
+                self._emit("state_started", state=state.name)
+                try:
+                    self._handle_interruptions(runtime, actions, interruption_attempts)
+                    screenshot = self._capture_for_state_if_needed(runtime, state)
 
-        for _ in range(max_steps):
-            self._check_stop_requested()
-            state = self.profile.states[current_state]
-            self._emit("state_started", state=state.name)
-            try:
-                self._handle_interruptions(runtime, actions, interruption_attempts)
-                screenshot = self._capture_for_state_if_needed(runtime, state)
+                    if state.terminal:
+                        result = state.result or "success"
+                        self.logger.info(
+                            "Reached terminal state '%s': %s",
+                            state.name,
+                            result,
+                        )
+                        self._capture_final(runtime, state, result)
+                        self._emit("finished", state=state.name, result=result)
+                        return result
 
-                if state.terminal:
-                    result = state.result or "success"
-                    self.logger.info(
-                        "Reached terminal state '%s': %s",
-                        state.name,
-                        result,
+                    stop_result = self._execute_state_actions(
+                        state,
+                        actions,
+                        runtime,
+                        screenshot,
                     )
-                    self._capture_final(runtime, state, result)
-                    self._emit("finished", state=state.name, result=result)
-                    return result
+                    if stop_result is not None:
+                        self._capture_final(runtime, state, f"stop-{stop_result}")
+                        return stop_result
 
-                stop_result = self._execute_state_actions(
-                    state,
-                    actions,
-                    runtime,
-                    screenshot,
-                )
-                if stop_result is not None:
-                    self._capture_final(runtime, state, f"stop-{stop_result}")
-                    return stop_result
+                    if state.on_success is None:
+                        self._emit(
+                            "finished",
+                            state=state.name,
+                            result="failed_missing_transition",
+                            failure_reason="missing transition",
+                        )
+                        return "failed_missing_transition"
 
-                if state.on_success is None:
+                    failures_by_state[state.name] = 0
+                    self.logger.info("Transition: %s -> %s", state.name, state.on_success)
+                    current_state = state.on_success
+                except StopRequested:
+                    self.logger.warning("Run stopped by operator")
+                    self._capture_final(runtime, state, "stop-operator_stopped")
                     self._emit(
                         "finished",
                         state=state.name,
-                        result="failed_missing_transition",
-                        failure_reason="missing transition",
+                        result="operator_stopped",
+                        failure_reason="stop requested by operator",
                     )
-                    return "failed_missing_transition"
-
-                failures_by_state[state.name] = 0
-                self.logger.info("Transition: %s -> %s", state.name, state.on_success)
-                current_state = state.on_success
-            except StopRequested:
-                self.logger.warning("Run stopped by operator")
-                self._capture_final(runtime, state, "stop-operator_stopped")
-                self._emit(
-                    "finished",
-                    state=state.name,
-                    result="operator_stopped",
-                    failure_reason="stop requested by operator",
-                )
-                return "operator_stopped"
-            except StateExecutionError as error:
-                failures_by_state[state.name] = failures_by_state.get(state.name, 0) + 1
-                failure_count = failures_by_state[state.name]
-                self.logger.warning(
-                    "State '%s' failed attempt %s/%s: %s",
-                    state.name,
-                    failure_count,
-                    self.profile.max_retries,
-                    error,
-                )
-                self._emit(
-                    "state_failed",
-                    state=state.name,
-                    failure_count=failure_count,
-                    failure_reason=str(error),
-                )
-
-                if failure_count < self.profile.max_retries:
-                    self.logger.info("Retrying state: %s", state.name)
-                    continue
-
-                if state.on_failure == "graceful_termination":
-                    self.logger.error(
-                        "Graceful termination from state '%s' after %s failures",
+                    return "operator_stopped"
+                except StateExecutionError as error:
+                    failures_by_state[state.name] = failures_by_state.get(state.name, 0) + 1
+                    failure_count = failures_by_state[state.name]
+                    self.logger.warning(
+                        "State '%s' failed attempt %s/%s: %s",
                         state.name,
                         failure_count,
-                    )
-                    self._capture_final(
-                        runtime,
-                        state,
-                        f"failed-{state.name}",
+                        self.profile.max_retries,
+                        error,
                     )
                     self._emit(
-                        "finished",
+                        "state_failed",
                         state=state.name,
-                        result=f"failed_{state.name}",
+                        failure_count=failure_count,
                         failure_reason=str(error),
                     )
-                    return f"failed_{state.name}"
 
-                self.logger.info(
-                    "Failure transition: %s -> %s",
-                    state.name,
-                    state.on_failure,
-                )
-                current_state = state.on_failure
-            except LiveAdaptersUnavailable as error:
-                if runtime.mode == "live":
-                    raise LiveModeUnavailable(str(error)) from error
-                raise
+                    if failure_count < self.profile.max_retries:
+                        self.logger.info("Retrying state: %s", state.name)
+                        continue
 
-        self.logger.error("Exceeded maximum dry-run steps: %s", max_steps)
-        self._emit(
-            "finished",
-            result="failed_max_steps",
-            failure_reason="exceeded maximum workflow steps",
-        )
-        return "failed_max_steps"
+                    if state.on_failure == "graceful_termination":
+                        self.logger.error(
+                            "Graceful termination from state '%s' after %s failures",
+                            state.name,
+                            failure_count,
+                        )
+                        self._capture_final(
+                            runtime,
+                            state,
+                            f"failed-{state.name}",
+                        )
+                        self._emit(
+                            "finished",
+                            state=state.name,
+                            result=f"failed_{state.name}",
+                            failure_reason=str(error),
+                        )
+                        return f"failed_{state.name}"
+
+                    self.logger.info(
+                        "Failure transition: %s -> %s",
+                        state.name,
+                        state.on_failure,
+                    )
+                    current_state = state.on_failure
+                except LiveAdaptersUnavailable as error:
+                    if runtime.mode == "live":
+                        raise LiveModeUnavailable(str(error)) from error
+                    raise
+
+            self.logger.error("Exceeded maximum dry-run steps: %s", max_steps)
+            self._emit(
+                "finished",
+                result="failed_max_steps",
+                failure_reason="exceeded maximum workflow steps",
+            )
+            return "failed_max_steps"
+        finally:
+            runtime.input_adapter.stop_all_continuous_inputs()
 
     def _capture(self, runtime: RuntimeContext, context: str) -> Screenshot:
         self._check_stop_requested()
@@ -309,9 +311,16 @@ class Engine:
         screenshot: Screenshot,
     ) -> None:
         self.logger.info("Confirming state: %s", state.name)
+        started_at = time.monotonic()
         self._check_anchors("required", state.required_anchors, runtime, screenshot)
         self._check_optional_anchors(state.optional_anchors, runtime, screenshot)
         self._check_forbidden_anchors(state.forbidden_anchors, runtime, screenshot)
+        self.logger.info(
+            "State '%s' confirmed after %s using anchors: %s",
+            state.name,
+            self._format_seconds(time.monotonic() - started_at),
+            self._summarize_anchor_names(state),
+        )
 
     def _check_anchors(
         self,
@@ -437,6 +446,15 @@ class Engine:
             seconds = action_data.get("seconds", 1)
             keys = " + ".join(str(key) for key in action_data["keys"])
             return f"hold_keys {keys} {seconds}s"
+        if action_type == "repeat_key":
+            summary = (
+                f"repeat_key {action_data['key']} every "
+                f"{action_data['repeat_every_seconds']}s for "
+                f"{action_data['repeat_for_seconds']}s"
+            )
+            if "tap_duration_seconds" in action_data:
+                summary += f" with {action_data['tap_duration_seconds']}s taps"
+            return summary
         if action_type == "hold_key_while_repeating_key":
             summary = (
                 "hold_key_while_repeating_key "
@@ -447,6 +465,29 @@ class Engine:
             if "tap_duration_seconds" in action_data:
                 summary += f" for {action_data['tap_duration_seconds']}s"
             return summary
+        if action_type == "move_mouse":
+            summary = f"move_mouse dx={action_data['dx']} dy={action_data['dy']}"
+            if "seconds" in action_data:
+                summary += f" {action_data['seconds']}s"
+            return summary
+        if action_type == "hold_mouse_button_and_move":
+            summary = (
+                "hold_mouse_button_and_move "
+                f"{action_data['button']} dx={action_data['dx']} dy={action_data['dy']}"
+            )
+            if "seconds" in action_data:
+                summary += f" {action_data['seconds']}s"
+            return summary
+        if action_type == "start_continuous_input":
+            summary = (
+                f"start_continuous_input {action_data['name']} "
+                f"{action_data['action']}"
+            )
+            if "stop_after_seconds" in action_data:
+                summary += f" for {action_data['stop_after_seconds']}s"
+            return summary
+        if action_type == "stop_continuous_input":
+            return f"stop_continuous_input {action_data['name']}"
         if action_type == "wait":
             return f"wait {action_data['seconds']}s"
         if action_type == "log":
@@ -466,6 +507,7 @@ class Engine:
             action_data.get("timeout_seconds", self.profile.default_timeout_seconds)
         )
         poll_interval_seconds = float(action_data.get("poll_interval_seconds", 0.5))
+        started_at = time.monotonic()
         if poll_interval_seconds < MIN_LIVE_POLL_INTERVAL_SECONDS:
             self.logger.info(
                 "Using minimum live poll interval %s seconds instead of %s",
@@ -473,7 +515,7 @@ class Engine:
                 poll_interval_seconds,
             )
             poll_interval_seconds = MIN_LIVE_POLL_INTERVAL_SECONDS
-        deadline = time.monotonic() + timeout_seconds
+        deadline = started_at + timeout_seconds
 
         self.logger.info(
             "Waiting for state '%s' for up to %s seconds",
@@ -486,15 +528,36 @@ class Engine:
             screenshot = self._capture(runtime, f"wait-for-{state_name}")
             try:
                 self._confirm_state(expected_state, runtime, screenshot)
-                self.logger.info("Wait for state succeeded: %s", state_name)
+                self.logger.info(
+                    "Wait for state succeeded after %s: %s",
+                    self._format_seconds(time.monotonic() - started_at),
+                    state_name,
+                )
                 return
             except StateExecutionError as error:
                 if time.monotonic() >= deadline:
                     raise StateExecutionError(
-                        f"timed out waiting for state '{state_name}': {error}"
+                        f"timed out waiting for state '{state_name}' after "
+                        f"{self._format_seconds(time.monotonic() - started_at)}: {error}"
                     ) from error
                 self.sleeper(poll_interval_seconds)
 
     def _check_stop_requested(self) -> None:
         if self.stop_requested is not None and self.stop_requested():
             raise StopRequested()
+
+    @staticmethod
+    def _format_seconds(seconds: float) -> str:
+        return f"{max(0.0, seconds):.2f} seconds"
+
+    @staticmethod
+    def _summarize_anchor_names(state: State) -> str:
+        names = [
+            anchor.name
+            for anchor in (
+                state.required_anchors + state.optional_anchors + state.forbidden_anchors
+            )
+        ]
+        if not names:
+            return "none"
+        return ", ".join(names)
