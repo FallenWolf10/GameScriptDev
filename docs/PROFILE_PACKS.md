@@ -134,6 +134,11 @@ validation while `successful_validation_or_dry_run` or another checklist item is
 still `false`; the dashboard will block live mode until the checklist is
 complete and the dashboard has recorded a successful dry run.
 
+For intentionally infinite manual-stop profiles, set
+`execution.manual_stop_is_dry_run_success: true` to let a dashboard dry run
+that ends as `operator_stopped` count as that readiness evidence. Use this only
+when manual stop is the expected normal outcome for the dry run.
+
 Checklist meaning:
 
 - `target_identity`: process and/or title matching identifies only the intended target.

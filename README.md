@@ -139,7 +139,9 @@ and a compatibility checklist.
 See [docs/PROFILE_PACKS.md](docs/PROFILE_PACKS.md) for the folder structure and
 checklist contract. The dashboard blocks live mode for profile packs until their
 compatibility checklist is complete and a successful dashboard dry run has been
-recorded.
+recorded. Intentionally infinite manual-stop profiles can opt into treating an
+operator-stopped dashboard dry run as that evidence with
+`execution.manual_stop_is_dry_run_success: true`.
 
 For a full annotated authoring example, see
 [docs/PROFILE_TEMPLATE.md](docs/PROFILE_TEMPLATE.md).

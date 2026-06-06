@@ -1,17 +1,15 @@
 version: 1
-name: NevernessTheEverness Pink Paw Automation
+name: NevernessTheEverness Pink Paw Automation 
 
 profile_pack:
   game: NevernessTheEverness
   game_mode: Pink Paw Automation
   detection_strategy: template_matching
   known_limitations:
-    - This pack is a key-driven approximation of the Pink Paw route reconstructed from recordings, not a frame-perfect replay.
-    - The current profile schema does not support declarative mouse-look movement, so the route omits the recorded right/left/up/down camera shaping that would be required for accurate live navigation.
-    - The current profile schema does not support prompt-aware branching, so `F` interactions are scheduled by timing rather than by confirmed prompt detection.
-    - Character swaps `1` through `4` are included only as optional route approximations from the recording analysis.
-    - Left click is intentionally excluded from scripted selection behavior; it should be treated as attack by default outside dialogue or menu UI.
-    - This pack is limited to local operator-approved testing of a reconstructed route plan and does not automate farming, account progression, matchmaking abuse, or evasion behavior.
+    - This pack now covers only the opening route slice from the Pink Paw NPC prompt through the second gold entry seen in the 2026-06-02 recordings.
+    - The route still uses timed movement segments between anchors, so camera drift, combat variance, or missed pathing can prevent the later anchor states from appearing.
+    - The first gold gate is opened by repeated `F` presses after anchor confirmation. The second gold entry is confirmed visually and then crossed immediately.
+    - This pack is limited to the reviewed 1280x720 capture layout and may require new anchor crops if the scene composition changes.
   compatibility:
     target_identity: true
     supported_resolution: true
@@ -27,7 +25,7 @@ target:
   process_name: HTGame.exe
   window_title_contains: NTE
   input_mode: background_window_messages
-  use_qwerty_physical_keys: true
+
 
 window:
   resolution:
@@ -36,8 +34,20 @@ window:
     policy: verify_only
 
 execution:
-  default_timeout_seconds: 15
+  default_timeout_seconds: 20
   max_retries: 1
+
+regions:
+  event_enter_button:
+    x: 784
+    y: 650
+    width: 410
+    height: 46
+  exit_confirm_button:
+    x: 654
+    y: 470
+    width: 236
+    height: 46
 
 initial_state: npc_prompt_start
 
@@ -49,294 +59,324 @@ states:
         asset: assets/start_npc_prompt.png
     actions:
       - type: log
-        message: Starting Pink Paw automation route at NPC prompt.
+        message: Starting Pink Paw route at NPC prompt.
       - type: start_continuous_input
         name: press_f
         action: press_key
         key: f
         repeat_every_seconds: 0.2
         seconds: 0.1
-        stop_after_seconds: 2.0
+        stop_after_seconds: 2.5
       - type: wait
         seconds: 1.5
-    on_success: lobby_departure
-    on_failure: failed_route
-
-  lobby_departure:
-    actions:
-      - type: log
-        message: Phase 1, departing lobby and entering the corridor with key-only routing.
-      - type: hold_key
-        key: w
-        seconds: 3.0
-      - type: wait
-        seconds: 0.2
-      - type: press_key
-        key: d
+      - type: start_continuous_input
+        name: press_esc
+        action: press_key
+        key: esc
+        repeat_every_seconds: 0.2
         seconds: 0.1
-      - type: wait
-        seconds: 0.1
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 2.5
-      - type: wait
-        seconds: 0.2
-      - type: hold_key
-        key: w
-        seconds: 3.0
-    on_success: stairs_transition
-    on_failure: failed_route
-
-  stairs_transition:
-    actions:
-      - type: log
-        message: Phase 2, approximating stairs and elevation changes without mouse pitch control.
-      - type: hold_key
-        key: w
-        seconds: 2.5
-      - type: wait
-        seconds: 0.3
-      - type: hold_key
-        key: w
-        seconds: 1.8
-      - type: wait
-        seconds: 0.3
-      - type: hold_key
-        key: w
-        seconds: 1.2
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 2.5
-    on_success: large_room_route
-    on_failure: failed_route
-
-  large_room_route:
-    actions:
-      - type: log
-        message: Phase 3, large-room hazard route with steering taps only.
-      - type: hold_key
-        key: w
-        seconds: 2.0
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 1.4
-      - type: press_key
-        key: a
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 1.8
-      - type: hold_key
-        key: w
-        seconds: 2.0
-      - type: wait
-        seconds: 0.3
-      - type: press_key
-        key: "2"
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 1.2
-    on_success: interaction_desk
-    on_failure: failed_route
-
-  interaction_desk:
-    actions:
-      - type: log
-        message: Phase 4, timed interaction checkpoints using F.
-      - type: hold_key
-        key: w
-        seconds: 1.8
-      - type: wait
-        seconds: 0.2
-      - type: hold_key
-        key: w
-        seconds: 1.0
-      - type: press_key
-        key: f
-        seconds: 0.1
-      - type: wait
-        seconds: 0.4
-      - type: hold_key
-        key: w
-        seconds: 1.2
-      - type: press_key
-        key: f
-        seconds: 0.1
-    on_success: laser_entry
-    on_failure: failed_route
-
-  laser_entry:
-    actions:
-      - type: log
-        message: Phase 5, entering laser section with short burst movement.
-      - type: hold_key
-        key: w
-        seconds: 0.9
-      - type: wait
-        seconds: 0.15
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 0.7
-      - type: wait
-        seconds: 0.2
-      - type: press_key
-        key: w
-        seconds: 0.1
-      - type: press_key
-        key: a
-        seconds: 0.1
-      - type: press_key
-        key: w
-        seconds: 0.1
-    on_success: laser_precision
-    on_failure: failed_route
-
-  laser_precision:
-    actions:
-      - type: log
-        message: Phase 6, laser precision cycle repeated as a key-only fallback.
-      - type: press_key
-        key: w
-        seconds: 0.1
-      - type: wait
-        seconds: 0.12
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: wait
-        seconds: 0.12
-      - type: press_key
-        key: w
-        seconds: 0.1
-      - type: wait
-        seconds: 0.15
-      - type: press_key
-        key: w
-        seconds: 0.1
-      - type: wait
-        seconds: 0.12
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: wait
-        seconds: 0.12
-      - type: press_key
-        key: w
-        seconds: 0.1
-      - type: wait
-        seconds: 0.15
-      - type: press_key
-        key: w
-        seconds: 0.1
-      - type: wait
-        seconds: 0.12
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: wait
-        seconds: 0.12
-      - type: press_key
-        key: w
-        seconds: 0.1
-      - type: wait
-        seconds: 0.15
-    on_success: post_laser_route
-    on_failure: failed_route
-
-  post_laser_route:
-    actions:
-      - type: log
-        message: Phase 7, post-laser pickups and side-room traversal.
-      - type: hold_key
-        key: w
-        seconds: 2.0
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 1.5
-      - type: press_key
-        key: f
-        seconds: 0.1
-      - type: wait
-        seconds: 0.25
-      - type: hold_key
-        key: w
-        seconds: 1.2
-      - type: hold_key
-        key: w
-        seconds: 1.2
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 1.4
-    on_success: late_route
-    on_failure: failed_route
-
-  late_route:
-    actions:
-      - type: log
-        message: Phase 8, late route cleanup and optional character swap.
-      - type: hold_key
-        key: w
-        seconds: 2.2
-      - type: press_key
-        key: d
-        seconds: 0.1
-      - type: hold_key
-        key: w
-        seconds: 1.8
-      - type: press_key
-        key: "3"
-        seconds: 0.1
-      - type: wait
-        seconds: 0.2
-      - type: hold_key
-        key: w
-        seconds: 1.5
-      - type: press_key
-        key: f
-        seconds: 0.1
-    on_success: finish_sequence
-    on_failure: failed_route
-
-  finish_sequence:
-    actions:
-      - type: log
-        message: Phase 9, finish and summary approximation.
-      - type: hold_key
-        key: w
-        seconds: 1.0
+        stop_after_seconds: 1.0
       - type: wait
         seconds: 0.5
+      - type: start_continuous_input
+        name: keep_clicking
+        action: click_point
+        region: event_enter_button
+        input_mode: foreground
+        repeat_every_seconds: 0.2
+        stop_after_seconds: 1.0
+      - type: wait
+        seconds: 0.5
+      - type: wait_for_state
+        state: event_entered
+        timeout_seconds: 30
+        poll_interval_seconds: 0.1
+    on_success: event_entered
+    on_failure: failed_route
+
+  event_entered:
+    required_anchors:
+      - name: skip_button
+        type: template
+        asset: assets/skip_button.png
+    actions:
+      - type: log
+        message: Entered the event; skipping cutscene and waiting for the bank entrance.
+      - type : press_key
+        key: esc
+        seconds: 0.1
+      - type: press_key
+        key: "1"
+        seconds: 0.1
+      - type: wait_for_state
+        state: bank_entered
+        timeout_seconds: 30
+        poll_interval_seconds: 0.1
+    on_success: bank_entered
+    on_failure: failed_route
+
+  bank_entered:
+    required_anchors:
+      - name: bank_enter
+        type: template
+        asset: assets/bank_enter.png
+    actions:
+      - type: log
+        message: Entered the bank.
+      - type: start_continuous_input
+        name: hold_w
+        action: hold_key
+        key: w
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: start_continuous_input
+        name: character_loop_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.8
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.8
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "3"
+            repeat_every_seconds: 0.8
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "4"
+            repeat_every_seconds: 0.8
+            seconds: 0.1
+            run_for_seconds: 0.8
+      - type: wait
+        seconds: 2.0
+      - type: hold_key
+        key: d
+        seconds: 2.0
+      - type: hold_key
+        key: a
+        seconds: 0.8
+      - type: stop_continuous_input
+        name: press_left_shift
+      - type: stop_continuous_input
+        name: hold_w
+      - type: stop_continuous_input
+        name: character_loop_cycle
       - type: press_key
         key: f
-        seconds: 0.1
+      - type: wait_for_state
+        state: first_gold_entry
+        timeout_seconds: 20
+        poll_interval_seconds: 0.2
+    on_success: first_gold_entry
+    on_failure: failed_route
+
+  first_gold_entry:
+    required_anchors:
+      - name: first_gold_entry
+        type: template
+        asset: assets/door_break.png
+    actions:
+      - type: log
+        message: Reached the first gold entry
       - type: wait
         seconds: 3.0
-    on_success: completed
+      - type: start_continuous_input
+        name: hold_w
+        action: hold_key
+        key: w
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: start_continuous_input
+        name: character_loop_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "3"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "4"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+      - type: wait
+        seconds: 0.2
+      - type: hold_key
+        key: d
+        seconds: 0.8
+      - type: wait
+        seconds: 1.8
+      - type: hold_key
+        key: a
+        seconds: 0.8
+      - type: hold_key
+        key: d
+        seconds: 0.4
+      - type: stop_continuous_input
+        name: hold_w
+      - type: stop_continuous_input
+        name: character_loop_cycle
+      - type: hold_keys
+        keys: [w, d]
+        seconds: 0.4
+      - type: stop_continuous_input
+        name: press_left_shift
+      - type: press_key
+        key: f
+      - type: wait_for_state
+        state: second_gold_entry
+        timeout_seconds: 20
+        poll_interval_seconds: 0.2
+    on_success: second_gold_entry
     on_failure: failed_route
+
+  second_gold_entry:
+    required_anchors:
+      - name: second_gold_entry
+        type: template
+        asset: assets/door_break.png
+    actions:
+      - type: log
+        message: Reached the second gold entry
+      - type: wait
+        seconds: 3.0
+      - type: start_continuous_input
+        name: press_f
+        action: press_key
+        key: f
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: start_continuous_input
+        name: hold_w
+        action: hold_key
+        key: w
+        stop_after_seconds: 0.3
+      - type: start_continuous_input
+        name: hold_a
+        action: hold_key
+        key: a
+        stop_after_seconds: 0.1
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: hold_key
+        key: a
+        seconds: 3.0
+      - type: hold_key
+        key: s
+        seconds: 0.8
+      - type: hold_key
+        key: d
+        seconds: 1.4
+      # After the stair
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+      - type: wait
+        seconds: 3.0
+      - type: hold_key
+        key: d
+        seconds: 0.8
+      - type: hold_key
+        key: a
+        seconds: 0.8
+      - type: stop_continuous_input
+        name: hold_s
+      - type: stop_continuous_input
+        name: press_left_shift
+      - type: wait
+        seconds: 1.0
+      - type: press_key
+        key: left_shift
+    on_success: lg1
+    on_failure: failed_route
+
+  lg1:
+    actions:
+      - type: log
+        message: Waiting to exit the elavator after crossing the second gold entry.
+      - type: wait
+        seconds: 3.0
+      - type: wait_for_state
+        state: exit
+        timeout_seconds: 20
+        poll_interval_seconds: 0.2
+    on_success: exit
+    on_failure: failed_route
+
+  exit:
+      required_anchors:
+        - name: exit
+          type: template
+          asset: assets/first_gold_entry.png
+      actions:
+        - type: log
+          message: Exited the elavator, completing the route.
+        - type: wait
+          seconds: 3.0
+      on_success: completed
+      on_failure: failed_route
 
   completed:
     terminal: true
     result: success
 
   failed_route:
+    actions:
+      - type: start_continuous_input
+        name: press_esc
+        action: press_key
+        key: esc
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+        stop_after_seconds: 1.0
+      - type: wait
+        seconds: 0.5
+      - type: start_continuous_input
+        name: keep_clicking
+        action: click_point
+        region: exit_confirm_button
+        input_mode: foreground
+        repeat_every_seconds: 0.2
+        stop_after_seconds: 1.0
+    on_success: exit_confirm
+  
+  exit_confirm:
     terminal: true
-    result: failed_route
+    result: failure
+

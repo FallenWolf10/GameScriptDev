@@ -142,6 +142,14 @@ class NoInputAdapter:
     ) -> None:
         return None
 
+    def scroll_mouse(
+        self,
+        direction: str,
+        steps: int = 1,
+        input_mode: str | None = None,
+    ) -> None:
+        return None
+
     def start_continuous_input(
         self,
         name: str,
@@ -270,6 +278,14 @@ class RecordingInputAdapter(NoInputAdapter):
         self.actions.append(
             ("hold_mouse_button_and_move", button, dx, dy, seconds, input_mode)
         )
+
+    def scroll_mouse(
+        self,
+        direction: str,
+        steps: int = 1,
+        input_mode: str | None = None,
+    ) -> None:
+        self.actions.append(("scroll_mouse", direction, steps, input_mode))
 
     def start_continuous_input(
         self,
@@ -483,6 +499,14 @@ def action_only_profile() -> Profile:
                         },
                     ),
                     Action(
+                        type="scroll_mouse",
+                        data={
+                            "direction": "down",
+                            "steps": 2,
+                            "input_mode": "foreground",
+                        },
+                    ),
+                    Action(
                         type="start_continuous_input",
                         data={
                             "name": "forward_motion",
@@ -676,6 +700,7 @@ class EngineWaitForStateTests(unittest.TestCase):
                     0.1,
                     "foreground",
                 ),
+                ("scroll_mouse", "down", 2, "foreground"),
                 (
                     "start_continuous_input",
                     "forward_motion",

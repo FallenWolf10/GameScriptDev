@@ -98,6 +98,42 @@ class WindowsWindowAdapterTests(unittest.TestCase):
                 Resolution(width=1280, height=720, policy="verify_only"),
             )
 
+    def test_verify_only_accepts_matching_client_resolution_with_window_frame(self) -> None:
+        controller = FakeWindowController()
+        adapter = WindowsWindowAdapter(
+            logging.getLogger("tests.window"),
+            candidates_provider=lambda: [
+                candidate(
+                    width=1296,
+                    height=759,
+                    client_left=8,
+                    client_top=31,
+                    client_width=1280,
+                    client_height=720,
+                )
+            ],
+            window_controller=controller,
+        )
+
+        adapter.prepare_window(
+            TargetWindow(
+                "test",
+                "test.exe",
+                0,
+                0,
+                1296,
+                759,
+                handle=1,
+                client_left=8,
+                client_top=31,
+                client_width=1280,
+                client_height=720,
+            ),
+            Resolution(width=1280, height=720, policy="verify_only"),
+        )
+
+        self.assertEqual(controller.focused_handles, [1])
+
     def test_attempt_resize_is_explicitly_unavailable(self) -> None:
         adapter = WindowsWindowAdapter(
             logging.getLogger("tests.window"),
@@ -212,6 +248,10 @@ def candidate(
     process_name: str = "test.exe",
     width: int = 1280,
     height: int = 720,
+    client_left: int | None = None,
+    client_top: int | None = None,
+    client_width: int | None = None,
+    client_height: int | None = None,
     minimized: bool = False,
 ) -> WindowCandidate:
     return WindowCandidate(
@@ -223,6 +263,10 @@ def candidate(
         top=0,
         width=width,
         height=height,
+        client_left=client_left,
+        client_top=client_top,
+        client_width=client_width,
+        client_height=client_height,
         minimized=minimized,
     )
 

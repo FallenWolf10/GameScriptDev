@@ -82,7 +82,15 @@ def evaluate_readiness(
                 "profile pack compatibility checklist is incomplete: " + missing
             )
     if not last_dry_run_success:
-        blockers.append("live mode requires a successful dry-run from the dashboard")
+        if profile.manual_stop_is_dry_run_success:
+            blockers.append(
+                "live mode requires a dashboard dry-run that finishes with "
+                "success or is stopped by the operator"
+            )
+        else:
+            blockers.append(
+                "live mode requires a successful dry-run from the dashboard"
+            )
 
     if check_target:
         adapter = window_adapter or WindowsWindowAdapter(logging.getLogger(__name__))
@@ -93,11 +101,15 @@ def evaluate_readiness(
                 blockers.append("target window is not running")
             else:
                 target_status = "matched"
-                resolution_status = _resolution_status(profile, target.width, target.height)
+                resolution_status = _resolution_status(
+                    profile,
+                    target.content_width,
+                    target.content_height,
+                )
                 if resolution_status == "failed":
                     blockers.append(
                         "target window resolution mismatch: "
-                        f"actual={target.width}x{target.height} "
+                        f"actual={target.content_width}x{target.content_height} "
                         f"expected={profile.resolution.width}x{profile.resolution.height}"
                     )
                 checker = background_input_blocker

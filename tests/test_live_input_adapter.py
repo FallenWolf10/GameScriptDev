@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import unittest
 from math import inf
@@ -23,6 +24,10 @@ TARGET_WINDOW = TargetWindow(
     width=1280,
     height=720,
     handle=100,
+    client_left=0,
+    client_top=0,
+    client_width=1280,
+    client_height=720,
 )
 
 
@@ -58,6 +63,14 @@ class FakeBackgroundKeyboardSender:
     def key_up(self, window: TargetWindow, virtual_key: int) -> None:
         assert window.handle is not None
         self.events.append(("up", window.handle, virtual_key))
+
+
+class FailingBackgroundKeyboardSender:
+    def key_down(self, window: TargetWindow, virtual_key: int) -> None:
+        raise LiveAdaptersUnavailable("background key delivery failed")
+
+    def key_up(self, window: TargetWindow, virtual_key: int) -> None:
+        return None
 
 
 class FakeBackgroundMouseSender:
@@ -101,6 +114,9 @@ class FakeMouseSender:
 
     def button_up_named(self, button: str) -> None:
         self.events.append((f"{button}_up", 0, 0))
+
+    def scroll_vertical(self, delta: int) -> None:
+        self.events.append(("wheel", delta, 0))
 
 
 class FakePhysicalKeyMapper:
@@ -321,6 +337,45 @@ class LiveInputAdapterTests(unittest.TestCase):
             ],
         )
         self.assertEqual(slept, [1.5])
+
+    def test_hold_keys_supports_explicit_left_shift(self) -> None:
+        sender = FakeBackgroundKeyboardSender()
+        slept: list[float] = []
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            background_sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+            input_mode="background_window_messages",
+            sleeper=slept.append,
+        )
+
+        adapter.hold_keys(["left_shift", "w"], 1.5)
+
+        self.assertEqual(
+            sender.events,
+            [
+                ("down", 100, 0xA0),
+                ("down", 100, ord("W")),
+                ("up", 100, ord("W")),
+                ("up", 100, 0xA0),
+            ],
+        )
+        self.assertEqual(slept, [1.5])
+
+    def test_press_key_supports_explicit_right_shift(self) -> None:
+        sender = FakeKeyboardSender()
+        slept: list[float] = []
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            sleeper=slept.append,
+        )
+
+        adapter.press_key("right_shift")
+
+        self.assertEqual(sender.events, [("down", 0xA1), ("up", 0xA1)])
+        self.assertEqual(slept, [0.1])
 
     def test_hold_key_while_repeating_key_interleaves_taps_until_release(self) -> None:
         sender = FakeKeyboardSender()
@@ -701,6 +756,108 @@ class LiveInputAdapterTests(unittest.TestCase):
             [("down", 100, 25, 40), ("up", 100, 25, 40)],
         )
 
+    def test_continuous_sequence_runs_steps_one_at_a_time_in_order(self) -> None:
+        sender = FakeKeyboardSender()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+        )
+
+        adapter.start_continuous_input(
+            "combat_cycle",
+            "sequence",
+            {
+                "sequence": [
+                    {
+                        "action": "hold_key",
+                        "key": "1",
+                        "run_for_seconds": 0.01,
+                    },
+                    {
+                        "action": "hold_key",
+                        "key": "2",
+                        "run_for_seconds": 0.01,
+                    },
+                    {
+                        "action": "hold_key",
+                        "key": "3",
+                        "run_for_seconds": 0.01,
+                    },
+                    {
+                        "action": "hold_key",
+                        "key": "4",
+                        "run_for_seconds": 0.01,
+                    },
+                ]
+            },
+        )
+        time.sleep(0.05)
+        adapter.stop_continuous_input("combat_cycle")
+
+        self.assertGreaterEqual(len(sender.events), 8)
+        self.assertEqual(
+            sender.events[:8],
+            [
+                ("down", ord("1")),
+                ("up", ord("1")),
+                ("down", ord("2")),
+                ("up", ord("2")),
+                ("down", ord("3")),
+                ("up", ord("3")),
+                ("down", ord("4")),
+                ("up", ord("4")),
+            ],
+        )
+
+    def test_continuous_scroll_mouse_repeats_until_stopped(self) -> None:
+        sender = FakeMouseSender()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+        )
+
+        adapter.start_continuous_input(
+            "keep_scrolling",
+            "scroll_mouse",
+            {
+                "direction": "down",
+                "steps": 2,
+                "repeat_every_seconds": 0.01,
+                "input_mode": "foreground",
+            },
+        )
+        time.sleep(0.04)
+        adapter.stop_continuous_input("keep_scrolling")
+
+        wheel_events = [event for event in sender.events if event == ("wheel", -120, 0)]
+        self.assertGreaterEqual(len(wheel_events), 4)
+
+    def test_continuous_input_failure_surfaces_through_wait(self) -> None:
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            background_sender=FailingBackgroundKeyboardSender(),
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+            input_mode="background_window_messages",
+        )
+
+        adapter.start_continuous_input(
+            "repeat_f_key",
+            "press_key",
+            {
+                "key": "f",
+                "repeat_every_seconds": 0.01,
+                "seconds": 0.01,
+            },
+        )
+        time.sleep(0.02)
+
+        with self.assertRaises(LiveAdaptersUnavailable) as captured:
+            adapter.wait(0.1)
+
+        self.assertIn("continuous input 'repeat_f_key' failed", str(captured.exception))
+
     def test_mouse_methods_remain_unavailable(self) -> None:
         adapter = LiveInputAdapter(sender=FakeKeyboardSender())
 
@@ -764,6 +921,32 @@ class LiveInputAdapterTests(unittest.TestCase):
         self.assertEqual(foreground_sender.events, [("click", 25, 40)])
         self.assertEqual(background_sender.events, [])
         self.assertEqual(window_adapter.confirm_calls, [TARGET_WINDOW])
+
+    def test_click_region_uses_client_origin_for_foreground_clicks(self) -> None:
+        sender = FakeMouseSender()
+        window = TargetWindow(
+            title="decorated",
+            process_name="demo.exe",
+            left=100,
+            top=200,
+            width=1296,
+            height=759,
+            handle=100,
+            client_left=108,
+            client_top=231,
+            client_width=1280,
+            client_height=720,
+        )
+        adapter = LiveInputAdapter(
+            target_window=window,
+            mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
+        )
+
+        adapter.click_region("start")
+
+        self.assertEqual(sender.events, [("click", 133, 271)])
 
     def test_hold_click_background_mode_holds_then_releases(self) -> None:
         sender = FakeBackgroundMouseSender()
@@ -893,6 +1076,76 @@ class LiveInputAdapterTests(unittest.TestCase):
         )
         self.assertEqual(slept, [0.01, 0.01])
 
+    def test_move_mouse_uses_client_center_for_foreground_target(self) -> None:
+        sender = FakeMouseSender()
+        window = TargetWindow(
+            title="decorated",
+            process_name="demo.exe",
+            left=100,
+            top=200,
+            width=1296,
+            height=759,
+            handle=100,
+            client_left=108,
+            client_top=231,
+            client_width=1280,
+            client_height=720,
+        )
+        adapter = LiveInputAdapter(
+            target_window=window,
+            mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            sleeper=lambda _seconds: None,
+        )
+
+        adapter.move_mouse(20, -10, input_mode="foreground")
+
+        self.assertEqual(sender.events, [("cursor", 748, 591), ("move", 20, -10)])
+
+    def test_scroll_mouse_requires_foreground_mode(self) -> None:
+        sender = FakeMouseSender()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            input_mode="background_window_messages",
+        )
+
+        with self.assertRaises(LiveAdaptersUnavailable):
+            adapter.scroll_mouse("down")
+
+    def test_scroll_mouse_can_override_background_profile_to_foreground(self) -> None:
+        sender = FakeMouseSender()
+        window_adapter = FakeWindowAdapter(can_focus=True)
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+            window_adapter=window_adapter,  # type: ignore[arg-type]
+            input_mode="background_window_messages",
+        )
+
+        adapter.scroll_mouse("down", steps=2, input_mode="foreground")
+
+        self.assertEqual(
+            sender.events,
+            [("cursor", 640, 360), ("wheel", -120, 0), ("wheel", -120, 0)],
+        )
+        self.assertEqual(window_adapter.confirm_calls, [TARGET_WINDOW])
+
+    def test_scroll_mouse_rejects_unknown_direction(self) -> None:
+        sender = FakeMouseSender()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+        )
+
+        with self.assertRaises(ValueError):
+            adapter.scroll_mouse("sideways")
+
+        self.assertEqual(sender.events, [])
+
     def test_hold_mouse_button_and_move_releases_button_when_sleep_fails(self) -> None:
         sender = FakeMouseSender()
 
@@ -921,6 +1174,21 @@ class LiveInputAdapterTests(unittest.TestCase):
         adapter.wait(1.25)
 
         self.assertEqual(slept, [1.25])
+
+    def test_wait_returns_promptly_when_interrupted_with_active_continuous_input(self) -> None:
+        stop_event = threading.Event()
+        adapter = LiveInputAdapter(sleeper=lambda seconds: stop_event.wait(seconds))
+        adapter.sleep_is_interruptible = True
+        with adapter._continuous_inputs_lock:
+            adapter._continuous_inputs["repeat_f_key"] = object()  # type: ignore[assignment]
+
+        thread = threading.Thread(target=lambda: adapter.wait(10), daemon=True)
+        thread.start()
+        time.sleep(0.02)
+        stop_event.set()
+        thread.join(0.2)
+
+        self.assertFalse(thread.is_alive())
 
     def test_wait_rejects_unsafe_durations(self) -> None:
         slept: list[float] = []
@@ -1070,6 +1338,34 @@ class LiveInputAdapterTests(unittest.TestCase):
                 ),
             ],
         )
+
+    def test_repeat_key_stops_after_interrupted_sleep(self) -> None:
+        sender = FakeKeyboardSender()
+        stop_event = threading.Event()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            sender=sender,
+            focus_verifier=FakeFocusVerifier(),
+            sleeper=lambda seconds: stop_event.wait(seconds),
+        )
+        adapter.sleep_is_interruptible = True
+
+        thread = threading.Thread(
+            target=lambda: adapter.repeat_key(
+                key="space",
+                repeat_for_seconds=5,
+                repeat_every_seconds=0.5,
+                tap_duration_seconds=0.2,
+            ),
+            daemon=True,
+        )
+        thread.start()
+        time.sleep(0.02)
+        stop_event.set()
+        thread.join(0.2)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(sender.events[:2], [("down", 0x20), ("up", 0x20)])
 
 
 if __name__ == "__main__":

@@ -146,6 +146,10 @@ class PresentDemoWindowAdapter:
             height=759,
             handle=100,
             process_id=200,
+            client_left=8,
+            client_top=31,
+            client_width=1280,
+            client_height=720,
         )
 
 

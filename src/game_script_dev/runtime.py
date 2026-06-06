@@ -57,7 +57,10 @@ def create_runtime(
         window_adapter = DryRunWindowAdapter(logger)
         screen_adapter = DryRunScreenAdapter(logger)
         vision_adapter = DryRunVisionAdapter(logger)
-        input_adapter = DryRunInputAdapter(logger)
+        input_adapter = DryRunInputAdapter(
+            logger,
+            interactive_timing=profile.manual_stop_is_dry_run_success,
+        )
 
     window = window_adapter.find_target(profile)
     if window is None:
@@ -71,6 +74,7 @@ def create_runtime(
             profile=profile,
             regions=profile.regions,
             window_adapter=window_adapter,
+            logger=logger,
             input_mode=profile.target.input_mode,
             foreground_key_method=profile.target.foreground_key_method,
             background_key_method=profile.target.background_key_method,

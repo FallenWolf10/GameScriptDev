@@ -29,6 +29,8 @@ MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_RIGHTDOWN = 0x0008
 MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_WHEEL = 0x0800
+WHEEL_DELTA = 120
 MK_LBUTTON = 0x0001
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
@@ -68,6 +70,8 @@ KEY_CODES: dict[str, int] = {
     "enter": 0x0D,
     "f1": 0x70,
     "shift": 0x10,
+    "left_shift": 0xA0,
+    "right_shift": 0xA1,
     "ctrl": 0x11,
     "control": 0x11,
     "alt": 0x12,
@@ -99,6 +103,10 @@ class WindowCandidate:
     top: int
     width: int
     height: int
+    client_left: int | None = None
+    client_top: int | None = None
+    client_width: int | None = None
+    client_height: int | None = None
     minimized: bool = False
 
 
@@ -207,33 +215,29 @@ class WindowsWindowAdapter:
             return None
 
         self.logger.info(
-            "Matched target window: handle=%s process=%s title=%s size=%sx%s",
+            "Matched target window: handle=%s process=%s title=%s size=%sx%s client=%sx%s",
             match.handle,
             match.process_name,
             match.title,
             match.width,
             match.height,
+            match.client_width if match.client_width is not None else match.width,
+            match.client_height if match.client_height is not None else match.height,
         )
-        return TargetWindow(
-            title=match.title,
-            process_name=match.process_name,
-            left=match.left,
-            top=match.top,
-            width=match.width,
-            height=match.height,
-            handle=match.handle,
-            process_id=match.process_id,
-        )
+        return _target_window_from_candidate(match)
 
     def prepare_window(self, window: TargetWindow, resolution: Resolution) -> None:
         current = self._require_live_candidate(window)
         if resolution.policy == "ignore":
             self.logger.info("Skipping resolution check for '%s'", window.title)
-        elif current.width == resolution.width and current.height == resolution.height:
+        elif (
+            _candidate_content_width(current) == resolution.width
+            and _candidate_content_height(current) == resolution.height
+        ):
             self.logger.info(
                 "Target window resolution verified: %sx%s",
-                current.width,
-                current.height,
+                _candidate_content_width(current),
+                _candidate_content_height(current),
             )
         elif resolution.policy == "attempt_resize":
             raise LiveAdaptersUnavailable(
@@ -242,7 +246,7 @@ class WindowsWindowAdapter:
         else:
             raise TargetWindowNotReady(
                 "target window resolution mismatch: "
-                f"actual={current.width}x{current.height} "
+                f"actual={_candidate_content_width(current)}x{_candidate_content_height(current)} "
                 f"expected={resolution.width}x{resolution.height}"
             )
 
@@ -382,6 +386,9 @@ class MouseSender(Protocol):
     def button_up_named(self, button: str) -> None:
         """Release a supported mouse button without repositioning the cursor."""
 
+    def scroll_vertical(self, delta: int) -> None:
+        """Send one vertical mouse wheel delta."""
+
 
 class FocusVerifier(Protocol):
     def is_foreground(self, window: TargetWindow) -> bool:
@@ -481,10 +488,10 @@ class LiveScreenAdapter:
 
     def _capture_window_bounds(self, window: TargetWindow) -> Image.Image:
         bbox = (
-            window.left,
-            window.top,
-            window.left + window.width,
-            window.top + window.height,
+            window.content_left,
+            window.content_top,
+            window.content_left + window.content_width,
+            window.content_top + window.content_height,
         )
         return self.grabber(bbox)
 
@@ -549,6 +556,7 @@ class LiveInputAdapter:
         profile: Profile | None = None,
         regions: dict[str, ClickRegion] | None = None,
         window_adapter: WindowsWindowAdapter | None = None,
+        logger: logging.Logger | None = None,
         sender: KeyboardSender | None = None,
         mouse_sender: MouseSender | None = None,
         background_sender: BackgroundKeyboardSender | None = None,
@@ -566,6 +574,7 @@ class LiveInputAdapter:
         self.profile = profile
         self.regions = regions or {}
         self.window_adapter = window_adapter
+        self.logger = logger
         self.sender = sender
         self.mouse_sender = mouse_sender
         self.background_sender = background_sender
@@ -581,6 +590,8 @@ class LiveInputAdapter:
         self.key_mapper: QwertyPhysicalKeyMapper | None = None
         self._continuous_inputs: dict[str, _ContinuousInputTask] = {}
         self._continuous_inputs_lock = threading.Lock()
+        self._continuous_input_failure: tuple[str, Exception] | None = None
+        self.sleep_is_interruptible = False
 
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         raise LiveAdaptersUnavailable(
@@ -617,8 +628,8 @@ class LiveInputAdapter:
             sender = self._background_mouse_sender()
             sender.click(window, int(x), int(y))
             return
-        absolute_x = window.left + int(x)
-        absolute_y = window.top + int(y)
+        absolute_x = window.content_left + int(x)
+        absolute_y = window.content_top + int(y)
         sender = self._mouse_sender()
         sender.click(absolute_x, absolute_y)
 
@@ -642,16 +653,16 @@ class LiveInputAdapter:
             sender = self._background_mouse_sender()
             sender.button_down(window, int(x), int(y))
             try:
-                self.sleeper(seconds)
+                self._sleep_for(seconds)
             finally:
                 sender.button_up(window, int(x), int(y))
             return
-        absolute_x = window.left + int(x)
-        absolute_y = window.top + int(y)
+        absolute_x = window.content_left + int(x)
+        absolute_y = window.content_top + int(y)
         sender = self._mouse_sender()
         sender.button_down(absolute_x, absolute_y)
         try:
-            self.sleeper(seconds)
+            self._sleep_for(seconds)
         finally:
             sender.button_up(absolute_x, absolute_y)
 
@@ -815,12 +826,34 @@ class LiveInputAdapter:
         finally:
             sender.button_up_named(normalized_button)
 
+    def scroll_mouse(
+        self,
+        direction: str,
+        steps: int = 1,
+        input_mode: str | None = None,
+    ) -> None:
+        normalized_direction = direction.strip().lower()
+        if normalized_direction not in {"up", "down"}:
+            raise ValueError(
+                "unsupported live scroll direction "
+                f"'{direction}'; allowed directions: down, up"
+            )
+        if steps < 1:
+            raise ValueError("live mouse scroll steps must be at least 1")
+        window = self._verify_mouse_motion_target(input_mode)
+        sender = self._mouse_sender()
+        self._focus_mouse_target(window)
+        delta = WHEEL_DELTA if normalized_direction == "up" else -WHEEL_DELTA
+        for _ in range(int(steps)):
+            sender.scroll_vertical(delta)
+
     def start_continuous_input(
         self,
         name: str,
         action_type: str,
         data: dict[str, object],
     ) -> None:
+        self._raise_continuous_input_failure()
         continuous_name = name.strip()
         if not continuous_name:
             raise ValueError("continuous input name is required")
@@ -839,6 +872,7 @@ class LiveInputAdapter:
         task.thread.start()
 
     def stop_continuous_input(self, name: str) -> None:
+        self._raise_continuous_input_failure()
         continuous_name = name.strip()
         if not continuous_name:
             raise ValueError("continuous input name is required")
@@ -866,7 +900,7 @@ class LiveInputAdapter:
             for virtual_key in virtual_keys:
                 sender.key_down(window, virtual_key)
             try:
-                self.sleeper(seconds)
+                self._sleep_for(seconds)
             finally:
                 for virtual_key in reversed(virtual_keys):
                     sender.key_up(window, virtual_key)
@@ -875,7 +909,7 @@ class LiveInputAdapter:
         for virtual_key in virtual_keys:
             sender.key_down(virtual_key)
         try:
-            self.sleeper(seconds)
+            self._sleep_for(seconds)
         finally:
             for virtual_key in reversed(virtual_keys):
                 sender.key_up(virtual_key)
@@ -894,18 +928,20 @@ class LiveInputAdapter:
         while next_tap_at < hold_seconds:
             wait_seconds = max(0.0, next_tap_at - elapsed)
             if wait_seconds > 0:
-                self.sleeper(wait_seconds)
+                if not self._sleep_for(wait_seconds):
+                    return
                 elapsed += wait_seconds
             sender.key_down(window, tap_virtual_key)
             try:
-                self.sleeper(tap_duration)
+                if not self._sleep_for(tap_duration):
+                    return
             finally:
                 sender.key_up(window, tap_virtual_key)
             elapsed += tap_duration
             next_tap_at += tap_every_seconds
         remaining = hold_seconds - elapsed
         if remaining > 0:
-            self.sleeper(remaining)
+            self._sleep_for(remaining)
 
     def _repeat_key_background(
         self,
@@ -937,18 +973,20 @@ class LiveInputAdapter:
         while next_tap_at < hold_seconds:
             wait_seconds = max(0.0, next_tap_at - elapsed)
             if wait_seconds > 0:
-                self.sleeper(wait_seconds)
+                if not self._sleep_for(wait_seconds):
+                    return
                 elapsed += wait_seconds
             sender.key_down(tap_virtual_key)
             try:
-                self.sleeper(tap_duration)
+                if not self._sleep_for(tap_duration):
+                    return
             finally:
                 sender.key_up(tap_virtual_key)
             elapsed += tap_duration
             next_tap_at += tap_every_seconds
         remaining = hold_seconds - elapsed
         if remaining > 0:
-            self.sleeper(remaining)
+            self._sleep_for(remaining)
 
     def _repeat_key_foreground(
         self,
@@ -980,22 +1018,37 @@ class LiveInputAdapter:
         while next_tap_at < repeat_for_seconds:
             wait_seconds = max(0.0, next_tap_at - elapsed)
             if wait_seconds > 0:
-                self.sleeper(wait_seconds)
+                if not self._sleep_for(wait_seconds):
+                    return
                 elapsed += wait_seconds
             key_down()
             try:
-                self.sleeper(tap_duration)
+                if not self._sleep_for(tap_duration):
+                    return
             finally:
                 key_up()
             elapsed += tap_duration
             next_tap_at += repeat_every_seconds
         remaining = repeat_for_seconds - elapsed
         if remaining > 0:
-            self.sleeper(remaining)
+            self._sleep_for(remaining)
 
     def wait(self, seconds: float) -> None:
         self._validate_duration(seconds, "live wait")
-        self.sleeper(seconds)
+        with self._continuous_inputs_lock:
+            has_active_continuous_inputs = bool(self._continuous_inputs)
+            has_pending_failure = self._continuous_input_failure is not None
+        if not has_active_continuous_inputs and not has_pending_failure:
+            self._sleep_for(seconds)
+            return
+        deadline = time.monotonic() + seconds
+        while True:
+            self._raise_continuous_input_failure()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            if not self._sleep_for(min(remaining, 0.05)):
+                return
 
     def _build_continuous_input_task(
         self,
@@ -1017,21 +1070,51 @@ class LiveInputAdapter:
         stop_event = threading.Event()
         action_data = dict(data)
         action_data.pop("stop_after_seconds", None)
+        runner = self._build_continuous_action_runner(
+            action_type,
+            action_data,
+            stop_event,
+            stop_after,
+            name,
+        )
+        thread = self._create_continuous_task_thread(name, stop_event, runner)
+        return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+    def _build_continuous_action_runner(
+        self,
+        action_type: str,
+        action_data: dict[str, object],
+        stop_event: threading.Event,
+        stop_after: float | None,
+        task_name: str,
+    ) -> Callable[[], None]:
+        if action_type == "sequence":
+            steps = action_data.get("sequence")
+            if not isinstance(steps, list) or not steps:
+                raise ValueError("continuous sequence requires a non-empty sequence list")
+            normalized_steps: list[dict[str, object]] = []
+            for index, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    raise ValueError(
+                        f"continuous sequence step {index} must be an object"
+                    )
+                normalized_steps.append(dict(step))
+            return lambda: self._run_continuous_sequence(
+                task_name,
+                normalized_steps,
+                stop_event,
+                stop_after,
+            )
 
         if action_type == "hold_key":
             key_code = self._normalize_keys([str(action_data["key"])])[0]
             window = self._verify_live_target()
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_hold_keys(
+                window,
+                [key_code],
                 stop_event,
-                lambda: self._run_continuous_hold_keys(
-                    window,
-                    [key_code],
-                    stop_event,
-                    stop_after,
-                ),
+                stop_after,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
 
         if action_type == "click_point":
             repeat_every = float(action_data["repeat_every_seconds"])
@@ -1049,20 +1132,15 @@ class LiveInputAdapter:
                 region_name,
                 input_mode,
             )
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_click_point(
+                window,
+                mode,
+                x,
+                y,
                 stop_event,
-                lambda: self._run_continuous_click_point(
-                    window,
-                    mode,
-                    x,
-                    y,
-                    stop_event,
-                    stop_after,
-                    repeat_every,
-                ),
+                stop_after,
+                repeat_every,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
 
         if action_type == "hold_click":
             region_name = str(action_data["region"])
@@ -1075,34 +1153,55 @@ class LiveInputAdapter:
                 region_name,
                 input_mode,
             )
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_hold_click(
+                window,
+                mode,
+                x,
+                y,
                 stop_event,
-                lambda: self._run_continuous_hold_click(
-                    window,
-                    mode,
-                    x,
-                    y,
-                    stop_event,
-                    stop_after,
-                ),
+                stop_after,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
+
+        if action_type == "scroll_mouse":
+            normalized_direction = str(action_data["direction"]).strip().lower()
+            if normalized_direction not in {"up", "down"}:
+                raise ValueError(
+                    "unsupported continuous scroll direction "
+                    f"'{action_data['direction']}'; allowed directions: down, up"
+                )
+            steps = int(action_data.get("steps", 1))
+            if steps < 1:
+                raise ValueError("continuous scroll_mouse steps must be at least 1")
+            repeat_every = float(action_data["repeat_every_seconds"])
+            self._validate_positive_duration(
+                repeat_every,
+                "continuous scroll_mouse interval",
+            )
+            input_mode = (
+                str(action_data["input_mode"])
+                if "input_mode" in action_data
+                else None
+            )
+            window = self._verify_mouse_motion_target(input_mode)
+            delta = WHEEL_DELTA if normalized_direction == "up" else -WHEEL_DELTA
+            return lambda: self._run_continuous_scroll_mouse(
+                window,
+                stop_event,
+                stop_after,
+                repeat_every,
+                delta,
+                steps,
+            )
 
         if action_type == "hold_keys":
             key_codes = self._normalize_keys([str(key) for key in action_data["keys"]])
             window = self._verify_live_target()
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_hold_keys(
+                window,
+                key_codes,
                 stop_event,
-                lambda: self._run_continuous_hold_keys(
-                    window,
-                    key_codes,
-                    stop_event,
-                    stop_after,
-                ),
+                stop_after,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
 
         if action_type == "press_key":
             tap_duration = (
@@ -1118,19 +1217,14 @@ class LiveInputAdapter:
             )
             key_codes = self._normalize_keys([str(action_data["key"])])
             window = self._verify_live_target()
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_repeat_keys(
+                window,
+                key_codes,
                 stop_event,
-                lambda: self._run_continuous_repeat_keys(
-                    window,
-                    key_codes,
-                    stop_event,
-                    stop_after,
-                    repeat_every,
-                    tap_duration,
-                ),
+                stop_after,
+                repeat_every,
+                tap_duration,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
 
         if action_type == "press_keys":
             tap_duration = (
@@ -1146,19 +1240,14 @@ class LiveInputAdapter:
             )
             key_codes = self._normalize_keys([str(key) for key in action_data["keys"]])
             window = self._verify_live_target()
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_repeat_keys(
+                window,
+                key_codes,
                 stop_event,
-                lambda: self._run_continuous_repeat_keys(
-                    window,
-                    key_codes,
-                    stop_event,
-                    stop_after,
-                    repeat_every,
-                    tap_duration,
-                ),
+                stop_after,
+                repeat_every,
+                tap_duration,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
 
         if action_type == "repeat_key":
             tap_duration = (
@@ -1174,19 +1263,14 @@ class LiveInputAdapter:
             )
             key_codes = self._normalize_keys([str(action_data["key"])])
             window = self._verify_live_target()
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_repeat_keys(
+                window,
+                key_codes,
                 stop_event,
-                lambda: self._run_continuous_repeat_keys(
-                    window,
-                    key_codes,
-                    stop_event,
-                    stop_after,
-                    repeat_every,
-                    tap_duration,
-                ),
+                stop_after,
+                repeat_every,
+                tap_duration,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
 
         if action_type == "hold_key_while_repeating_key":
             tap_duration = (
@@ -1206,22 +1290,53 @@ class LiveInputAdapter:
             hold_key = self._normalize_keys([str(action_data["hold_key"])])[0]
             tap_key = self._normalize_keys([str(action_data["tap_key"])])[0]
             window = self._verify_live_target()
-            thread = self._create_continuous_task_thread(
-                name,
+            return lambda: self._run_continuous_hold_and_repeat(
+                window,
+                hold_key,
+                tap_key,
                 stop_event,
-                lambda: self._run_continuous_hold_and_repeat(
-                    window,
-                    hold_key,
-                    tap_key,
-                    stop_event,
-                    stop_after,
-                    tap_every,
-                    tap_duration,
-                ),
+                stop_after,
+                tap_every,
+                tap_duration,
             )
-            return _ContinuousInputTask(name=name, stop_event=stop_event, thread=thread)
 
         raise ValueError(f"unsupported continuous input action '{action_type}'")
+
+    def _run_continuous_sequence(
+        self,
+        task_name: str,
+        steps: list[dict[str, object]],
+        stop_event: threading.Event,
+        stop_after: float | None,
+    ) -> None:
+        deadline = self._continuous_deadline(stop_after)
+        while not stop_event.is_set():
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            for index, raw_step in enumerate(steps):
+                if stop_event.is_set():
+                    return
+                remaining = self._remaining_until(deadline)
+                if remaining is not None and remaining <= 0:
+                    return
+                step = dict(raw_step)
+                step_action = str(step.pop("action"))
+                run_for_seconds = float(step.pop("run_for_seconds"))
+                step_stop_after = (
+                    run_for_seconds
+                    if remaining is None
+                    else min(run_for_seconds, remaining)
+                )
+                if step_stop_after <= 0:
+                    return
+                runner = self._build_continuous_action_runner(
+                    step_action,
+                    step,
+                    stop_event,
+                    step_stop_after,
+                    f"{task_name}-step-{index + 1}",
+                )
+                runner()
 
     def _create_continuous_task_thread(
         self,
@@ -1232,6 +1347,8 @@ class LiveInputAdapter:
         def run_task() -> None:
             try:
                 runner()
+            except Exception as error:
+                self._record_continuous_input_failure(name, error)
             finally:
                 stop_event.set()
                 with self._continuous_inputs_lock:
@@ -1254,6 +1371,24 @@ class LiveInputAdapter:
                 f"{self.max_wait_seconds} seconds"
             )
 
+    def _record_continuous_input_failure(self, name: str, error: Exception) -> None:
+        with self._continuous_inputs_lock:
+            if self._continuous_input_failure is None:
+                self._continuous_input_failure = (name, error)
+        if self.logger is not None:
+            self.logger.exception("Continuous input '%s' failed", name)
+
+    def _raise_continuous_input_failure(self) -> None:
+        with self._continuous_inputs_lock:
+            failure = self._continuous_input_failure
+            self._continuous_input_failure = None
+        if failure is None:
+            return
+        name, error = failure
+        raise LiveAdaptersUnavailable(
+            f"continuous input '{name}' failed: {error}"
+        ) from error
+
     def _run_continuous_hold_keys(
         self,
         window: TargetWindow,
@@ -1267,7 +1402,7 @@ class LiveInputAdapter:
             for virtual_key in virtual_keys:
                 sender.key_down(window, virtual_key)
             try:
-                self._wait_for_stop_event(stop_event, deadline)
+                self._wait_for_stop_event(stop_event, self._remaining_until(deadline))
             finally:
                 for virtual_key in reversed(virtual_keys):
                     sender.key_up(window, virtual_key)
@@ -1277,7 +1412,7 @@ class LiveInputAdapter:
         for virtual_key in virtual_keys:
             sender.key_down(virtual_key)
         try:
-            self._wait_for_stop_event(stop_event, deadline)
+            self._wait_for_stop_event(stop_event, self._remaining_until(deadline))
         finally:
             for virtual_key in reversed(virtual_keys):
                 sender.key_up(virtual_key)
@@ -1334,6 +1469,37 @@ class LiveInputAdapter:
             self._wait_for_stop_event(stop_event, self._remaining_until(deadline))
         finally:
             sender.button_up(absolute_x, absolute_y)
+
+    def _run_continuous_scroll_mouse(
+        self,
+        window: TargetWindow,
+        stop_event: threading.Event,
+        stop_after: float | None,
+        repeat_every_seconds: float,
+        delta: int,
+        steps: int,
+    ) -> None:
+        deadline = self._continuous_deadline(stop_after)
+        next_scroll_at = time.monotonic()
+        sender = self._mouse_sender()
+        self._focus_mouse_target(window)
+        while not stop_event.is_set():
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
+                return
+            wait_seconds = max(0.0, next_scroll_at - now)
+            if wait_seconds > 0 and self._wait_for_stop_event(
+                stop_event,
+                self._limit_wait(wait_seconds, deadline),
+            ):
+                return
+            for _ in range(steps):
+                if stop_event.is_set():
+                    return
+                if deadline is not None and time.monotonic() >= deadline:
+                    return
+                sender.scroll_vertical(delta)
+            next_scroll_at += repeat_every_seconds
 
     def _run_continuous_repeat_keys(
         self,
@@ -1501,7 +1667,19 @@ class LiveInputAdapter:
             sent_dy += move_y
             if move_x or move_y:
                 sender.move_relative(move_x, move_y)
-            self.sleeper(duration / steps)
+            if not self._sleep_for(duration / steps):
+                return
+
+    def _sleep_for(self, seconds: float) -> bool:
+        duration = max(0.0, float(seconds))
+        if duration == 0:
+            return True
+        if not self.sleep_is_interruptible:
+            self.sleeper(duration)
+            return True
+        started_at = time.monotonic()
+        self.sleeper(duration)
+        return time.monotonic() >= started_at + duration - 0.001
 
     def _tap_background_key(
         self,
@@ -1634,8 +1812,8 @@ class LiveInputAdapter:
     def _focus_mouse_target(self, window: TargetWindow) -> None:
         if window.handle is None:
             return
-        center_x = int(window.left + (window.width // 2))
-        center_y = int(window.top + (window.height // 2))
+        center_x = int(window.content_left + (window.content_width // 2))
+        center_y = int(window.content_top + (window.content_height // 2))
         self._mouse_sender().set_cursor(center_x, center_y)
 
     def _verify_live_target(self, input_mode: str | None = None) -> TargetWindow:
@@ -2033,6 +2211,9 @@ class Win32MouseSender:
             self.user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
             return
         raise LiveAdaptersUnavailable(f"unsupported mouse button: {button}")
+
+    def scroll_vertical(self, delta: int) -> None:
+        self.user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, int(delta), 0)
 
     def _set_cursor(self, x: int, y: int) -> None:
         ctypes.set_last_error(0)
@@ -2641,6 +2822,20 @@ def _target_window_from_candidate(candidate: WindowCandidate) -> TargetWindow:
         height=candidate.height,
         handle=candidate.handle,
         process_id=candidate.process_id,
+        client_left=candidate.client_left,
+        client_top=candidate.client_top,
+        client_width=candidate.client_width,
+        client_height=candidate.client_height,
+    )
+
+
+def _candidate_content_width(candidate: WindowCandidate) -> int:
+    return candidate.client_width if candidate.client_width is not None else candidate.width
+
+
+def _candidate_content_height(candidate: WindowCandidate) -> int:
+    return (
+        candidate.client_height if candidate.client_height is not None else candidate.height
     )
 
 
@@ -2818,6 +3013,13 @@ def enumerate_windows() -> list[WindowCandidate]:
     user32.GetWindowTextW.restype = ctypes.c_int
     user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetClientRect.restype = wintypes.BOOL
+    user32.ClientToScreen.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.POINT),
+    ]
+    user32.ClientToScreen.restype = wintypes.BOOL
     user32.GetWindowThreadProcessId.argtypes = [
         wintypes.HWND,
         ctypes.POINTER(wintypes.DWORD),
@@ -2836,6 +3038,7 @@ def enumerate_windows() -> list[WindowCandidate]:
             rect = wintypes.RECT()
             if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
                 return True
+            client_rect = _get_client_rect(user32, hwnd)
 
             process_id = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
@@ -2851,6 +3054,10 @@ def enumerate_windows() -> list[WindowCandidate]:
                     top=int(rect.top),
                     width=int(rect.right - rect.left),
                     height=int(rect.bottom - rect.top),
+                    client_left=client_rect[0] if client_rect is not None else None,
+                    client_top=client_rect[1] if client_rect is not None else None,
+                    client_width=client_rect[2] if client_rect is not None else None,
+                    client_height=client_rect[3] if client_rect is not None else None,
                     minimized=bool(user32.IsIconic(hwnd)),
                 )
             )
@@ -2903,3 +3110,21 @@ def _same_process_name(actual: str | None, expected: str) -> bool:
     if actual is None:
         return False
     return actual.lower() == expected.lower()
+
+
+def _get_client_rect(
+    user32: ctypes.WinDLL,
+    hwnd: int,
+) -> tuple[int, int, int, int] | None:
+    rect = wintypes.RECT()
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        return None
+    width = int(rect.right - rect.left)
+    height = int(rect.bottom - rect.top)
+    if width <= 0 or height <= 0:
+        return None
+
+    point = wintypes.POINT(0, 0)
+    if not user32.ClientToScreen(hwnd, ctypes.byref(point)):
+        return None
+    return int(point.x), int(point.y), width, height

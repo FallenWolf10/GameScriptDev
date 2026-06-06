@@ -77,8 +77,8 @@ class TargetPreviewService:
         return TargetPreview(
             title=target.title,
             process_name=target.process_name,
-            width=target.width,
-            height=target.height,
+            width=target.content_width,
+            height=target.content_height,
             data_url=_image_data_url(image),
         )
 
@@ -88,10 +88,10 @@ class TargetPreviewService:
             return capture.capture_client(target)
 
         bbox = (
-            target.left,
-            target.top,
-            target.left + target.width,
-            target.top + target.height,
+            target.content_left,
+            target.content_top,
+            target.content_left + target.content_width,
+            target.content_top + target.content_height,
         )
         return ImageGrab.grab(bbox)
 

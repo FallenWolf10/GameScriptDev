@@ -1,0 +1,65 @@
+version: 1
+name: NevernessTheEverness Repeat F Key
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Repeat F Key
+  detection_strategy: template_matching
+  known_limitations:
+    - This pack does not use screen anchors or a manual hotkey stop; it keeps tapping F and repeating the keep-alive loop until the operator stops the run.
+    - The target identity and input mode assumptions match the current NevernessTheEverness examples and may need adjustment if the live client changes.
+    - This pack uses background window messages, so the target window must remain available to receive posted input while the run is active.
+    - This pack only repeats the F key and does not verify in-game context before sending input.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  default_timeout_seconds: 30
+  max_retries: 1
+  manual_stop_is_dry_run_success: true
+
+initial_state: start_repeat_f
+
+states:
+  start_repeat_f:
+    actions:
+      - type: log
+        message: Starting repeated F input.
+      - type: start_continuous_input
+        name: repeat_f_key
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+    on_success: keep_alive
+    on_failure: failed
+
+  keep_alive:
+    actions:
+      - type: wait
+        seconds: 0.1
+    on_success: keep_alive
+    on_failure: failed
+
+  failed:
+    terminal: true
+    result: failed_repeat_f_key

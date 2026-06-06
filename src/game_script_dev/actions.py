@@ -160,6 +160,19 @@ class ActionRunner:
         )
         return None
 
+    def _execute_scroll_mouse(self, action: Action, screenshot: Screenshot) -> None:
+        steps = int(action.data.get("steps", 1))
+        self.runtime.input_adapter.scroll_mouse(
+            direction=str(action.data["direction"]),
+            steps=steps,
+            input_mode=(
+                str(action.data["input_mode"])
+                if "input_mode" in action.data
+                else None
+            ),
+        )
+        return None
+
     def _execute_start_continuous_input(
         self,
         action: Action,

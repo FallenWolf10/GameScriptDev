@@ -244,6 +244,45 @@ states:
 
             validate_profile(profile, profile_path.parent)
 
+    def test_accepts_manual_stop_is_dry_run_success_execution_flag(self) -> None:
+        profile_yaml = """
+version: 1
+name: Manual Stop Dry Run Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+execution:
+  max_retries: 1
+  manual_stop_is_dry_run_success: true
+initial_state: home_screen
+states:
+  home_screen:
+    actions:
+      - type: start_continuous_input
+        name: repeat_f_key
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+      - type: wait
+        seconds: 1
+    on_success: home_screen
+    on_failure: failed
+  failed:
+    terminal: true
+    result: failed_manual_stop
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
     def test_rejects_hold_click_without_duration(self) -> None:
         profile_yaml = """
 version: 1
@@ -400,6 +439,38 @@ states:
     actions:
       - type: hold_keys
         keys: [shift, w]
+        seconds: 0.5
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_accepts_explicit_left_shift_key(self) -> None:
+        profile_yaml = """
+version: 1
+name: Left Shift Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: hold_keys
+        keys: [left_shift, w]
         seconds: 0.5
     terminal: true
     result: success
@@ -690,6 +761,125 @@ states:
 
             validate_profile(profile, profile_path.parent)
 
+    def test_accepts_continuous_scroll_mouse(self) -> None:
+        profile_yaml = """
+version: 1
+name: Continuous Scroll Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: keep_scrolling
+        action: scroll_mouse
+        direction: down
+        steps: 2
+        repeat_every_seconds: 0.5
+        input_mode: foreground
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_accepts_continuous_sequence(self) -> None:
+        profile_yaml = """
+version: 1
+name: Continuous Sequence Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: combat_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+      - type: stop_continuous_input
+        name: combat_cycle
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_continuous_sequence_without_step_duration(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Continuous Sequence Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: combat_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
+
     def test_rejects_continuous_click_point_without_repeat_interval(self) -> None:
         profile_yaml = """
 version: 1
@@ -718,6 +908,41 @@ states:
         name: keep_clicking
         action: click_point
         region: start_button
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError):
+                validate_profile(profile, profile_path.parent)
+
+    def test_rejects_continuous_scroll_mouse_without_repeat_interval(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Continuous Scroll Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: start_continuous_input
+        name: keep_scrolling
+        action: scroll_mouse
+        direction: down
+        input_mode: foreground
     terminal: true
     result: success
 """
@@ -1080,6 +1305,77 @@ states:
                 validate_profile(profile, profile_path.parent)
 
             self.assertIn("unsupported mouse button", str(captured.exception))
+
+    def test_accepts_scroll_mouse_action(self) -> None:
+        profile_yaml = """
+version: 1
+name: Scroll Mouse Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: scroll_mouse
+        direction: down
+        steps: 2
+        input_mode: foreground
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_scroll_mouse_background_override(self) -> None:
+        profile_yaml = """
+version: 1
+name: Broken Scroll Mouse Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    required_anchors:
+      - name: home_title
+        type: text
+        text: Home
+    actions:
+      - type: scroll_mouse
+        direction: down
+        input_mode: background_window_messages
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError) as captured:
+                validate_profile(profile, profile_path.parent)
+
+            self.assertIn(
+                "input_mode must be foreground for mouse wheel actions",
+                str(captured.exception),
+            )
 
     def test_rejects_unknown_click_action_input_mode_override(self) -> None:
         profile_yaml = """

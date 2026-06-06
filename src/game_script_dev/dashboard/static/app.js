@@ -1,5 +1,6 @@
 const state = {
   profiles: [],
+  runs: [],
   selectedProfileId: null,
   selectedRunId: null,
   pollTimer: null,
@@ -136,24 +137,29 @@ async function refreshTargetPreview() {
   const image = $("target-preview-image");
   const empty = $("target-preview-empty");
   const meta = $("target-preview-meta");
+  const frame = $("target-preview-frame");
   if (!state.selectedProfileId) {
     image.hidden = true;
     empty.hidden = false;
     meta.textContent = "No profile selected";
+    frame.style.removeProperty("--target-preview-ratio");
     return;
   }
   try {
     const preview = await api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/target-preview`);
+    const previewRatio = preview.height > 0 ? preview.width / preview.height : 16 / 9;
+    frame.style.setProperty("--target-preview-ratio", String(Math.max(previewRatio, 16 / 9)));
     image.src = preview.data_url;
     image.hidden = false;
     empty.hidden = true;
-    meta.textContent = `${preview.title} · ${preview.process_name || "unknown process"} · ${preview.width}x${preview.height}`;
+    meta.textContent = `${preview.title} · ${preview.process_name || "unknown process"} · client ${preview.width}x${preview.height}`;
   } catch (error) {
     image.hidden = true;
     image.removeAttribute("src");
     empty.hidden = false;
     empty.textContent = "Target preview unavailable";
     meta.textContent = error.message;
+    frame.style.removeProperty("--target-preview-ratio");
   }
 }
 
@@ -236,8 +242,10 @@ async function startRun(mode, confirmation = null, options = {}) {
 }
 
 async function stopSelectedRun() {
-  if (!state.selectedRunId) return;
-  await api(`/api/runs/${encodeURIComponent(state.selectedRunId)}/stop`, {
+  const run = getActiveStoppableRun();
+  if (!run) return;
+  state.selectedRunId = run.id;
+  await api(`/api/runs/${encodeURIComponent(run.id)}/stop`, {
     method: "POST",
   });
   await refreshRuns();
@@ -254,6 +262,7 @@ async function relaunchDashboardAsAdmin() {
 async function refreshRuns() {
   const payload = await api("/api/runs");
   const runs = payload.runs || [];
+  state.runs = runs;
   $("run-count").textContent = `${runs.length} runs`;
   
   const container = $("runs");
@@ -270,7 +279,7 @@ async function refreshRuns() {
         <small>${escapeHtml(run.started_at)} · ${escapeHtml(run.status)}</small>
       </span>
       <span class="badge ${run.status === "completed" ? "good" : run.status === "failed" ? "bad" : ""}">
-        ${escapeHtml(run.final_result || run.status)}
+        ${escapeHtml(displayResultLabel(run.final_result || run.status))}
       </span>
     `;
     button.addEventListener("click", async () => {
@@ -282,6 +291,7 @@ async function refreshRuns() {
   }
   
   container.scrollTop = scrollTop;
+  updateStopButton();
   
   if (state.selectedRunId) {
     await refreshRunDetail();
@@ -293,7 +303,7 @@ async function refreshRunDetail() {
   const run = await api(`/api/runs/${encodeURIComponent(state.selectedRunId)}`);
   $("selected-run").textContent = run.id;
   $("current-state").textContent = run.current_state || "idle";
-  $("final-result").textContent = run.final_result || run.status;
+  $("final-result").textContent = displayResultLabel(run.final_result || run.status);
   const logText = await fetch(`/api/runs/${encodeURIComponent(run.id)}/log`).then((r) => r.text());
   $("log-output").textContent = logText;
   const artifacts = await api(`/api/runs/${encodeURIComponent(run.id)}/artifacts`);
@@ -377,6 +387,40 @@ function renderRunReview(timeline) {
     empty.textContent = "No review events";
     target.appendChild(empty);
   }
+}
+
+function displayResultLabel(result) {
+  if (result === "operator_stopped") {
+    return "interrupt";
+  }
+  return result;
+}
+
+function getActiveStoppableRun() {
+  const selectedRun = state.runs.find((run) => run.id === state.selectedRunId);
+  if (isRunActive(selectedRun)) {
+    return selectedRun;
+  }
+
+  const selectedProfileRun = state.runs.find((run) => (
+    run.profile_id === state.selectedProfileId && isRunActive(run)
+  ));
+  if (selectedProfileRun) {
+    return selectedProfileRun;
+  }
+
+  return state.runs.find((run) => isRunActive(run)) || null;
+}
+
+function isRunActive(run) {
+  return Boolean(run) && (run.status === "queued" || run.status === "running");
+}
+
+function updateStopButton() {
+  const button = $("stop-run-button");
+  const run = getActiveStoppableRun();
+  button.disabled = !run;
+  button.textContent = run ? `Stop ${run.mode}` : "Stop";
 }
 
 function escapeHtml(value) {

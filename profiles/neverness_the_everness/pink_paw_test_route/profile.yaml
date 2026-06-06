@@ -39,11 +39,6 @@ execution:
   max_retries: 1
 
 regions:
-  npc_join_option:
-    x: 872
-    y: 318
-    width: 360
-    height: 52
   event_enter_button:
     x: 784
     y: 650
@@ -140,6 +135,7 @@ states:
         asset: assets/return_npc_prompt.png
     terminal: true
     result: success
+
   failed_route:
     terminal: true
     result: failed_pink_paw_test_route

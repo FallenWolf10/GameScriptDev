@@ -108,8 +108,12 @@ class RunRegistry:
     def stop_run(self, run_id: str) -> RunRecord:
         with self._lock:
             record = self._records[run_id]
+            if record.status in {"completed", "failed"}:
+                return record
             record.stop_requested = True
-            self._stop_events[run_id].set()
+            stop_event = self._stop_events.get(run_id)
+            if stop_event is not None:
+                stop_event.set()
             return record
 
     def read_log(self, run_id: str) -> str:
@@ -191,7 +195,13 @@ class RunRegistry:
                 record.id,
                 {"event": "run_completed", "result": result, "at": _now_iso()},
             )
-            if record.mode == "dry-run" and result == "success":
+            if record.mode == "dry-run" and (
+                result == "success"
+                or (
+                    result == "operator_stopped"
+                    and profile.manual_stop_is_dry_run_success
+                )
+            ):
                 with self._lock:
                     self._last_dry_run_success[record.profile_id] = True
         except Exception as error:

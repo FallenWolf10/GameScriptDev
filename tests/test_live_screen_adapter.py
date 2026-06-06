@@ -39,6 +39,34 @@ class LiveScreenAdapterTests(unittest.TestCase):
             assert screenshot.path is not None
             self.assertTrue(screenshot.path.exists())
 
+    def test_capture_uses_client_bbox_when_available(self) -> None:
+        captured_bboxes: list[tuple[int, int, int, int]] = []
+
+        def fake_grabber(bbox: tuple[int, int, int, int]) -> Image.Image:
+            captured_bboxes.append(bbox)
+            return Image.new("RGB", (20, 10), "blue")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = LiveScreenAdapter(Path(temp_dir), grabber=fake_grabber)
+
+            adapter.capture(
+                TargetWindow(
+                    title="Demo",
+                    process_name="demo.exe",
+                    left=100,
+                    top=200,
+                    width=36,
+                    height=49,
+                    handle=123,
+                    client_left=108,
+                    client_top=231,
+                    client_width=20,
+                    client_height=10,
+                )
+            )
+
+            self.assertEqual(captured_bboxes, [(108, 231, 128, 241)])
+
     def test_repeated_context_captures_include_sequence_numbers(self) -> None:
         def fake_grabber(bbox: tuple[int, int, int, int]) -> Image.Image:
             return Image.new("RGB", (20, 10), "blue")
@@ -158,10 +186,14 @@ class LiveScreenAdapterTests(unittest.TestCase):
                     width=20,
                     height=10,
                     handle=123,
+                    client_left=108,
+                    client_top=231,
+                    client_width=20,
+                    client_height=10,
                 )
             )
 
-            self.assertEqual(captured_bboxes, [(100, 200, 120, 210)])
+            self.assertEqual(captured_bboxes, [(108, 231, 128, 241)])
             assert screenshot.path is not None
             self.assertTrue(screenshot.path.exists())
 

@@ -10,6 +10,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from game_script_dev.adapters.base import TargetWindow
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
 from game_script_dev.dashboard.run_registry import RunRegistry
@@ -100,6 +101,41 @@ states:
     result: success
 """
 
+MANUAL_STOP_PROFILE_YAML = """
+version: 1
+name: Dashboard Manual Stop
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+execution:
+  max_retries: 1
+  manual_stop_is_dry_run_success: true
+initial_state: start_repeat
+states:
+  start_repeat:
+    actions:
+      - type: start_continuous_input
+        name: repeat_f_key
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+    on_success: keep_alive
+    on_failure: failed
+  keep_alive:
+    actions:
+      - type: wait
+        seconds: 30
+    on_success: keep_alive
+    on_failure: failed
+  failed:
+    terminal: true
+    result: failed_manual_stop
+"""
+
 
 class DashboardTests(unittest.TestCase):
     def test_profile_catalog_discovers_and_validates_profiles(self) -> None:
@@ -125,6 +161,39 @@ class DashboardTests(unittest.TestCase):
 
             self.assertFalse(report.live_available)
             self.assertIn("successful dry-run", " ".join(report.blockers))
+
+    def test_readiness_mentions_operator_stop_for_manual_stop_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = _write_profile(Path(temp_dir), MANUAL_STOP_PROFILE_YAML)
+
+            report = evaluate_readiness(
+                "demo",
+                profile_path,
+                last_dry_run_success=False,
+                check_target=False,
+            )
+
+            self.assertFalse(report.live_available)
+            self.assertIn("stopped by the operator", " ".join(report.blockers))
+
+    def test_readiness_uses_client_resolution_when_window_has_decorations(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = _write_profile(Path(temp_dir))
+
+            report = evaluate_readiness(
+                "demo",
+                profile_path,
+                last_dry_run_success=True,
+                window_adapter=DecoratedWindowAdapter(),
+            )
+
+            self.assertFalse(report.live_available)
+            self.assertIn(
+                "OCR adapter is optional and not configured by default",
+                report.blockers,
+            )
+            self.assertEqual(report.target_status, "matched")
+            self.assertEqual(report.resolution_status, "passed")
 
     def test_readiness_blocks_live_for_incomplete_profile_pack_checklist(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -190,6 +259,39 @@ class DashboardTests(unittest.TestCase):
                 self.assertEqual(record.status, "completed")
                 self.assertEqual(record.final_result, "operator_stopped")
                 self.assertTrue(record.stop_requested)
+                self.assertFalse(registry.last_dry_run_success("demo"))
+
+    def test_run_registry_accepts_operator_stopped_manual_stop_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root, MANUAL_STOP_PROFILE_YAML)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_status(registry, record.id, "running")
+            stopped = registry.stop_run(record.id)
+            _wait_for_run(registry, record.id)
+            record = registry.get_run(record.id)
+
+            self.assertTrue(stopped.stop_requested)
+            self.assertEqual(record.status, "completed")
+            self.assertEqual(record.final_result, "operator_stopped")
+            self.assertTrue(registry.last_dry_run_success("demo"))
+
+    def test_run_registry_stop_is_noop_after_run_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, record.id)
+
+            stopped = registry.stop_run(record.id)
+
+            self.assertEqual(stopped.status, "completed")
+            self.assertEqual(stopped.final_result, "success")
+            self.assertFalse(stopped.stop_requested)
 
     def test_server_exposes_profiles_and_starts_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -389,6 +491,33 @@ class DashboardTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_server_stop_is_noop_for_completed_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                response = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                _wait_for_server_run(base_url, response["id"])
+
+                stopped = _post_json(
+                    f"{base_url}/api/runs/{response['id']}/stop",
+                    {},
+                )
+
+                self.assertEqual(stopped["status"], "completed")
+                self.assertEqual(stopped["final_result"], "success")
+                self.assertFalse(stopped["stop_requested"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
     def test_server_exposes_target_preview_for_selected_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -463,6 +592,12 @@ class DashboardTests(unittest.TestCase):
         html = Path("src/game_script_dev/dashboard/static/index.html").read_text(
             encoding="utf-8"
         )
+        styles = Path("src/game_script_dev/dashboard/static/styles.css").read_text(
+            encoding="utf-8"
+        )
+        app_js = Path("src/game_script_dev/dashboard/static/app.js").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn('id="live-verification-checklist"', html)
         self.assertIn('id="selected-run-readiness"', html)
@@ -475,6 +610,16 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('id="runtime-status"', html)
         self.assertIn('id="stop-run-button"', html)
         self.assertNotIn('id="live-dialog"', html)
+        self.assertIn("aspect-ratio: var(--target-preview-ratio, 16 / 9);", styles)
+        self.assertIn("min-height: 220px;", styles)
+        self.assertIn(
+            'frame.style.setProperty("--target-preview-ratio", String(Math.max(previewRatio, 16 / 9)));',
+            app_js,
+        )
+        self.assertIn('function displayResultLabel(result)', app_js)
+        self.assertIn('return "interrupt";', app_js)
+        self.assertIn("function getActiveStoppableRun()", app_js)
+        self.assertIn('button.textContent = run ? `Stop ${run.mode}` : "Stop";', app_js)
 
     def test_dashboard_can_relaunch_as_admin(self) -> None:
         with patch(
@@ -560,6 +705,24 @@ class FakeTargetPreviewService:
             width=320,
             height=180,
             data_url="data:image/png;base64,ZmFrZQ==",
+        )
+
+
+class DecoratedWindowAdapter:
+    def find_target(self, profile: object) -> TargetWindow:
+        return TargetWindow(
+            title="Decorated Demo",
+            process_name="demo.exe",
+            left=100,
+            top=200,
+            width=1296,
+            height=759,
+            handle=100,
+            process_id=200,
+            client_left=108,
+            client_top=231,
+            client_width=1280,
+            client_height=720,
         )
 
 

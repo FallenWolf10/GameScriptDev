@@ -17,6 +17,26 @@ class TargetWindow:
     height: int
     handle: int | None = None
     process_id: int | None = None
+    client_left: int | None = None
+    client_top: int | None = None
+    client_width: int | None = None
+    client_height: int | None = None
+
+    @property
+    def content_left(self) -> int:
+        return self.client_left if self.client_left is not None else self.left
+
+    @property
+    def content_top(self) -> int:
+        return self.client_top if self.client_top is not None else self.top
+
+    @property
+    def content_width(self) -> int:
+        return self.client_width if self.client_width is not None else self.width
+
+    @property
+    def content_height(self) -> int:
+        return self.client_height if self.client_height is not None else self.height
 
 
 @dataclass(frozen=True)
@@ -133,6 +153,14 @@ class InputAdapter(Protocol):
         input_mode: str | None = None,
     ) -> None:
         """Hold a mouse button while applying a relative mouse movement."""
+
+    def scroll_mouse(
+        self,
+        direction: str,
+        steps: int = 1,
+        input_mode: str | None = None,
+    ) -> None:
+        """Scroll the mouse wheel in a direction for a number of steps."""
 
     def start_continuous_input(
         self,

@@ -25,7 +25,6 @@ target:
   process_name: HTGame.exe
   window_title_contains: NTE
   input_mode: background_window_messages
-  use_qwerty_physical_keys: true
 
 window:
   resolution:
@@ -45,9 +44,9 @@ states:
       - type: log
         message: Applying one foreground mouse movement to test in-game camera input.
       - type: move_mouse
-        dx: 120
+        dx: 4115
         dy: 0
-        seconds: 0.2
+        seconds: 0.1
         input_mode: foreground
       - type: wait
         seconds: 0.5

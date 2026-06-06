@@ -69,6 +69,8 @@ class Engine:
 
         if hasattr(runtime.input_adapter, "sleeper"):
             setattr(runtime.input_adapter, "sleeper", self.sleeper)
+        if hasattr(runtime.input_adapter, "sleep_is_interruptible"):
+            setattr(runtime.input_adapter, "sleep_is_interruptible", True)
 
         actions = ActionRunner(runtime=runtime, logger=self.logger)
 
@@ -78,10 +80,10 @@ class Engine:
         interruption_attempts: dict[str, int] = {}
         try:
             for _ in range(max_steps):
-                self._check_stop_requested()
                 state = self.profile.states[current_state]
-                self._emit("state_started", state=state.name)
                 try:
+                    self._check_stop_requested()
+                    self._emit("state_started", state=state.name)
                     self._handle_interruptions(runtime, actions, interruption_attempts)
                     screenshot = self._capture_for_state_if_needed(runtime, state)
 
@@ -477,6 +479,11 @@ class Engine:
             )
             if "seconds" in action_data:
                 summary += f" {action_data['seconds']}s"
+            return summary
+        if action_type == "scroll_mouse":
+            summary = f"scroll_mouse {action_data['direction']}"
+            if "steps" in action_data:
+                summary += f" steps={action_data['steps']}"
             return summary
         if action_type == "start_continuous_input":
             summary = (

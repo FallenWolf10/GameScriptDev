@@ -75,6 +75,11 @@ execution:
   max_retries: 3
   # Optional. Per-state retry count before on_failure or graceful termination.
 
+  manual_stop_is_dry_run_success: false
+  # Optional. Set true only for intentionally infinite or operator-driven
+  # dry-run workflows where the dashboard should treat an operator-stopped
+  # dry run as valid live-readiness evidence.
+
 profile_pack:
   game: Example Game
   # Optional but expected for profile packs. Product/game name.
@@ -213,6 +218,22 @@ states:
         tap_duration_seconds: 0.1
       # Holds one key while tapping another key on a repeating interval.
 
+      - type: move_mouse
+        dx: 120
+        dy: -40
+        seconds: 0.3
+        input_mode: foreground
+      # Moves the mouse by a relative delta. Mouse-look style actions require
+      # foreground input mode.
+
+      - type: hold_mouse_button_and_move
+        button: right
+        dx: 200
+        dy: 0
+        seconds: 0.4
+        input_mode: foreground
+      # Holds a mouse button while applying a relative mouse movement.
+
       - type: start_continuous_input
         name: forward_motion
         action: hold_key
@@ -272,6 +293,34 @@ states:
       - type: stop_continuous_input
         name: forward_motion
       # Stops a previously-started continuous keyboard action.
+
+      - type: start_continuous_input
+        name: combat_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "3"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "4"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+      # Continuous sequence variant. Each step runs by itself for its own
+      # run_for_seconds window, then the next step starts. The whole sequence
+      # loops until stopped or until outer stop_after_seconds expires.
 
       - type: wait_for_state
         state: mission_screen
@@ -392,17 +441,27 @@ Anchors can appear in:
 - `hold_key_while_repeating_key`
   - Fields: `hold_key`, `hold_seconds`, `tap_key`, `tap_every_seconds`,
     optional `tap_duration_seconds`
+- `move_mouse`
+  - Fields: `dx`, `dy`, optional `seconds`, optional `input_mode`
+  - Must use `foreground` input mode
+- `hold_mouse_button_and_move`
+  - Fields: `button`, `dx`, `dy`, optional `seconds`, optional `input_mode`
+  - Must use `foreground` input mode
 - `start_continuous_input`
   - Fields: `name`, `action`, optional `stop_after_seconds`
   - Supported `action` values:
     `click_point`, `hold_click`, `press_key`, `press_keys`, `hold_key`,
-    `hold_keys`, `repeat_key`, `hold_key_while_repeating_key`
+    `hold_keys`, `repeat_key`, `hold_key_while_repeating_key`, `sequence`
   - `click_point` requires `region` and `repeat_every_seconds`
   - `hold_click` requires `region`
   - `press_key` and `press_keys` also require `repeat_every_seconds`
   - `repeat_key` requires `key` and `repeat_every_seconds`
   - `hold_key_while_repeating_key` requires `hold_key`, `tap_key`,
     `tap_every_seconds`, optional `tap_duration_seconds`
+  - `sequence` requires `sequence`, a non-empty list of timed sub-actions
+  - Each `sequence` step must include `action` and `run_for_seconds`
+  - Sequence steps can use the same continuous sub-actions except nested
+    `sequence`
   - Recorded-workflow reference:
     prefer `repeat_every_seconds: 0.2` for repeated press/click continuous
     input unless the target proves it needs a slower interval
@@ -425,7 +484,8 @@ The current schema accepts these keys:
 - digits: `0` through `9`
 - control/navigation keys:
   `alt`, `backspace`, `control`, `ctrl`, `down`, `enter`, `esc`, `escape`,
-  `f1`, `left`, `right`, `shift`, `space`, `tab`, `up`
+  `f1`, `left`, `left_shift`, `right`, `right_shift`, `shift`, `space`,
+  `tab`, `up`
 
 ### State Graph Rules
 
@@ -445,6 +505,14 @@ The current schema accepts these keys:
 - For chained continuous inputs from recording reconstruction, start with
   `repeat_every_seconds: 0.2`, then place a `wait` after each start. A strong
   default is `wait = previous stop_after_seconds - 0.5`.
+- When tuning live timing, optimize for the lowest stable value instead of the
+  shortest possible tap. A target can accept the Windows input call and still
+  miss a too-short press during its own sampling window, especially under lag
+  or load. Start with `press_key` around `0.1s` and the repeated
+  press/click cadence above, then adjust only after repeated live runs.
+- Prefer to win efficiency by replacing blind waits with `wait_for_state`
+  rather than by shrinking tap dwell too aggressively. Adapter-level success
+  means the input was sent, not necessarily that the target consumed it.
 - Keep `known_limitations` honest. They are part of the readiness contract, not
   just a comment bucket.
 - Start with dry-run and validation before attempting live mode.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from game_script_dev.adapters.base import Screenshot, TargetWindow
 from game_script_dev.schema import Anchor, Profile, Resolution
@@ -87,9 +88,32 @@ class DryRunVisionAdapter:
 
 
 class DryRunInputAdapter:
-    def __init__(self, logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        logger: logging.Logger,
+        *,
+        interactive_timing: bool = False,
+    ) -> None:
         self.logger = logger
-        self.active_continuous_inputs: set[str] = set()
+        self.active_continuous_inputs: dict[str, float | None] = {}
+        self.current_time_seconds = 0.0
+        self.interactive_timing = interactive_timing
+        self.sleeper: Callable[[float], None] = lambda seconds: None
+
+    def _expire_completed_continuous_inputs(self) -> None:
+        expired = [
+            name
+            for name, expires_at in self.active_continuous_inputs.items()
+            if expires_at is not None and expires_at <= self.current_time_seconds
+        ]
+        for name in expired:
+            self.active_continuous_inputs.pop(name, None)
+
+    def _advance_time(self, seconds: float) -> None:
+        if self.interactive_timing and seconds > 0:
+            self.sleeper(seconds)
+        self.current_time_seconds += seconds
+        self._expire_completed_continuous_inputs()
 
     def click_template(self, asset: str, screenshot: Screenshot) -> None:
         self.logger.info("Dry-run click_template: %s on %s", asset, screenshot.source)
@@ -117,6 +141,7 @@ class DryRunInputAdapter:
         seconds: float,
         input_mode: str | None = None,
     ) -> None:
+        self._advance_time(seconds)
         if input_mode is None:
             self.logger.info(
                 "Dry-run hold_click region: %s for %s seconds", region_name, seconds
@@ -133,6 +158,7 @@ class DryRunInputAdapter:
         if seconds is None:
             self.logger.info("Dry-run press_key: %s", key)
             return
+        self._advance_time(seconds)
         self.logger.info("Dry-run press_key: %s for %s seconds", key, seconds)
 
     def press_keys(self, keys: list[str], seconds: float | None = None) -> None:
@@ -140,12 +166,15 @@ class DryRunInputAdapter:
         if seconds is None:
             self.logger.info("Dry-run press_keys: %s", joined)
             return
+        self._advance_time(seconds)
         self.logger.info("Dry-run press_keys: %s for %s seconds", joined, seconds)
 
     def hold_key(self, key: str, seconds: float) -> None:
+        self._advance_time(seconds)
         self.logger.info("Dry-run hold_key: %s for %s seconds", key, seconds)
 
     def hold_keys(self, keys: list[str], seconds: float) -> None:
+        self._advance_time(seconds)
         self.logger.info(
             "Dry-run hold_keys: %s for %s seconds",
             " + ".join(keys),
@@ -159,6 +188,7 @@ class DryRunInputAdapter:
         repeat_every_seconds: float,
         tap_duration_seconds: float | None = None,
     ) -> None:
+        self._advance_time(repeat_for_seconds)
         if tap_duration_seconds is None:
             self.logger.info(
                 "Dry-run repeat_key: %s every %s seconds for %s seconds",
@@ -183,6 +213,7 @@ class DryRunInputAdapter:
         tap_every_seconds: float,
         tap_duration_seconds: float | None = None,
     ) -> None:
+        self._advance_time(hold_seconds)
         if tap_duration_seconds is None:
             self.logger.info(
                 "Dry-run hold_key_while_repeating_key: hold %s for %s seconds while tapping %s every %s seconds",
@@ -214,6 +245,7 @@ class DryRunInputAdapter:
         if seconds is None:
             self.logger.info("Dry-run move_mouse: dx=%s dy=%s%s", dx, dy, suffix)
             return
+        self._advance_time(seconds)
         self.logger.info(
             "Dry-run move_mouse: dx=%s dy=%s for %s seconds%s",
             dx,
@@ -242,6 +274,7 @@ class DryRunInputAdapter:
                 suffix,
             )
             return
+        self._advance_time(seconds)
         self.logger.info(
             "Dry-run hold_mouse_button_and_move: %s dx=%s dy=%s for %s seconds%s",
             button,
@@ -251,15 +284,42 @@ class DryRunInputAdapter:
             suffix,
         )
 
+    def scroll_mouse(
+        self,
+        direction: str,
+        steps: int = 1,
+        input_mode: str | None = None,
+    ) -> None:
+        suffix = ""
+        if input_mode is not None:
+            suffix = f" using input_mode={input_mode}"
+        self.logger.info(
+            "Dry-run scroll_mouse: direction=%s steps=%s%s",
+            direction,
+            steps,
+            suffix,
+        )
+
     def start_continuous_input(
         self,
         name: str,
         action_type: str,
         data: dict[str, object],
     ) -> None:
+        self._expire_completed_continuous_inputs()
         if name in self.active_continuous_inputs:
             raise ValueError(f"continuous input '{name}' is already active")
-        self.active_continuous_inputs.add(name)
+        stop_after_seconds = (
+            float(data["stop_after_seconds"])
+            if "stop_after_seconds" in data
+            else None
+        )
+        expires_at = (
+            self.current_time_seconds + stop_after_seconds
+            if stop_after_seconds is not None
+            else None
+        )
+        self.active_continuous_inputs[name] = expires_at
         detail = ", ".join(f"{key}={value}" for key, value in sorted(data.items()))
         if detail:
             self.logger.info(
@@ -276,12 +336,14 @@ class DryRunInputAdapter:
         )
 
     def stop_continuous_input(self, name: str) -> None:
+        self._expire_completed_continuous_inputs()
         if name not in self.active_continuous_inputs:
             raise ValueError(f"continuous input '{name}' is not active")
-        self.active_continuous_inputs.remove(name)
+        self.active_continuous_inputs.pop(name, None)
         self.logger.info("Dry-run stop_continuous_input: %s", name)
 
     def stop_all_continuous_inputs(self) -> None:
+        self._expire_completed_continuous_inputs()
         if not self.active_continuous_inputs:
             return
         for name in sorted(self.active_continuous_inputs):
@@ -289,4 +351,5 @@ class DryRunInputAdapter:
         self.active_continuous_inputs.clear()
 
     def wait(self, seconds: float) -> None:
+        self._advance_time(seconds)
         self.logger.info("Dry-run bounded wait: %s seconds", seconds)

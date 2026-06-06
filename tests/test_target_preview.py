@@ -56,6 +56,24 @@ class TargetPreviewTests(unittest.TestCase):
             self.assertTrue(preview.data_url.startswith("data:image/png;base64,"))
             self.assertEqual(capture.windows, [adapter.window])
 
+    def test_capture_reports_client_dimensions_for_decorated_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(PROFILE_YAML, encoding="utf-8")
+            adapter = FakeDecoratedWindowAdapter()
+            capture = FakeWindowCapture()
+            service = TargetPreviewService(
+                logging.getLogger("tests.preview"),
+                window_adapter=adapter,  # type: ignore[arg-type]
+                window_capture=capture,  # type: ignore[arg-type]
+            )
+
+            preview = service.capture(profile_path)
+
+            self.assertEqual(preview.width, 1280)
+            self.assertEqual(preview.height, 720)
+            self.assertEqual(capture.windows, [adapter.window])
+
 
 class FakeWindowAdapter:
     def __init__(self) -> None:
@@ -84,6 +102,30 @@ class FakeWindowCapture:
     def capture_client(self, window: TargetWindow) -> Image.Image:
         self.windows.append(window)
         return Image.new("RGB", (16, 9), "green")
+
+
+class FakeDecoratedWindowAdapter:
+    def __init__(self) -> None:
+        self.window = TargetWindow(
+            title="Preview Window",
+            process_name="python.exe",
+            left=10,
+            top=20,
+            width=1296,
+            height=759,
+            handle=123,
+            process_id=456,
+            client_left=18,
+            client_top=51,
+            client_width=1280,
+            client_height=720,
+        )
+
+    def find_target(self, profile: object) -> TargetWindow:
+        return self.window
+
+    def verify_window(self, window: TargetWindow, profile: object) -> TargetWindow:
+        return window
 
 
 if __name__ == "__main__":
