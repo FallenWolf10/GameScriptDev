@@ -1,0 +1,73 @@
+version: 1
+name: NevernessTheEverness Pink Button Paste Loop
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Pink Button Paste Loop
+  detection_strategy: template_matching
+  known_limitations:
+    - This pack does not use screen anchors; it assumes the target UI is already open on the post dialog shown in the provided screenshot.
+    - The pink confirm button region is estimated from the provided 1280x720 screenshot and may need adjustment if the UI layout, scale, or window size changes.
+    - Background window messages are used by default for both the Ctrl+V combo and the click; switch to foreground input only if operator testing shows the client rejects background delivery.
+    - This pack is an intentionally infinite local input loop and must be stopped manually by the operator.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: foreground
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  default_timeout_seconds: 30
+  max_retries: 1
+  allow_infinite_run: true
+  manual_stop_is_dry_run_success: true
+
+regions:
+  pink_confirm_button:
+    x: 1088
+    y: 625
+    width: 159
+    height: 35
+
+initial_state: paste_and_confirm_loop
+
+states:
+  paste_and_confirm_loop:
+    actions:
+      - type: log
+        message: Starting Ctrl+V plus pink confirm button loop.
+      - type: click_point
+        region: pink_confirm_button
+      - type: wait
+        seconds: 0.5
+      - type: press_keys
+        keys: [ctrl, v]
+        seconds: 0.1
+      - type: wait
+        seconds: 0.5
+      - type: click_point
+        region: pink_confirm_button
+      - type: wait
+        seconds: 13
+    on_success: paste_and_confirm_loop
+    on_failure: failed
+
+  failed:
+    terminal: true
+    result: failed_pink_button_paste_loop

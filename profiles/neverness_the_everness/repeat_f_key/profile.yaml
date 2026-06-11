@@ -35,6 +35,7 @@ window:
 execution:
   default_timeout_seconds: 30
   max_retries: 1
+  allow_infinite_run: true
   manual_stop_is_dry_run_success: true
 
 initial_state: start_repeat_f
@@ -56,7 +57,7 @@ states:
   keep_alive:
     actions:
       - type: wait
-        seconds: 0.1
+        seconds: 60
     on_success: keep_alive
     on_failure: failed
 

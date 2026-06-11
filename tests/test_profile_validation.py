@@ -283,6 +283,35 @@ states:
 
             validate_profile(profile, profile_path.parent)
 
+    def test_accepts_allow_infinite_run_execution_flag_without_terminal_state(self) -> None:
+        profile_yaml = """
+version: 1
+name: Infinite Keep Alive Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+execution:
+  max_retries: 1
+  allow_infinite_run: true
+initial_state: keep_alive
+states:
+  keep_alive:
+    actions:
+      - type: wait
+        seconds: 1
+    on_success: keep_alive
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
     def test_rejects_hold_click_without_duration(self) -> None:
         profile_yaml = """
 version: 1

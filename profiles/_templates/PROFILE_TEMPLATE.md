@@ -75,6 +75,11 @@ execution:
   max_retries: 3
   # Optional. Per-state retry count before on_failure or graceful termination.
 
+  allow_infinite_run: false
+  # Optional. Set true only for workflows that intentionally loop until the
+  # operator stops the run. This disables the runner's normal workflow step cap
+  # and also allows a graph with no reachable terminal state.
+
   manual_stop_is_dry_run_success: false
   # Optional. Set true only for intentionally infinite or operator-driven
   # dry-run workflows where the dashboard should treat an operator-stopped
@@ -490,10 +495,14 @@ The current schema accepts these keys:
 ### State Graph Rules
 
 - Every referenced state must exist.
-- The graph must have a reachable terminal state.
+- The graph must have a reachable terminal state unless
+  `execution.allow_infinite_run: true`.
 - Unreachable declared states fail validation.
 - `on_failure` defaults to `graceful_termination` when omitted.
 - Terminal states use `terminal: true` and usually define `result`.
+- Infinite-run profiles should normally also set
+  `execution.manual_stop_is_dry_run_success: true` when they need dashboard
+  dry-run success evidence from an operator-stopped run.
 
 ### Practical Authoring Tips
 

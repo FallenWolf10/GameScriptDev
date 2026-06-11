@@ -1,0 +1,212 @@
+version: 1
+name: NevernessTheEverness Sprint Run Gap Probe
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Sprint Run Gap Probe
+  detection_strategy: template_matching
+  known_limitations:
+    - This pack assumes the client is already on a safe in-world screen with the character fully stopped before the run begins.
+    - This pack does not include visual anchors, so live success means the timed input sequence completed without adapter failure, not that sprint onset was visually confirmed by the profile itself.
+    - The tested variable in this pack is the delay from `Shift` down to `W` down while `Shift` remains held through the forward burst.
+    - The pack does not automatically reset the character to the exact same start point between trials, so the operator must review the run log together with live observation.
+    - Foreground input is used intentionally for movement-sensitive timing experiments and requires the NTE window to stay focusable.
+    - This pack is limited to local operator-approved input timing experiments and does not automate progression, farming, or evasive behavior.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  window_title_contains: NTE
+  input_mode: foreground
+  foreground_key_method: sendinput_vk
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  default_timeout_seconds: 20
+  max_retries: 1
+
+initial_state: baseline_walk
+
+states:
+  baseline_walk:
+    actions:
+      - type: log
+        message: "Baseline walk: hold W for 0.80s without Shift."
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_000
+    on_failure: failed_probe
+
+  gap_000:
+    actions:
+      - type: log
+        message: "Trial gap 0.00s: hold Shift for 0.80s total, then press W immediately for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_000
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.8
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_003
+    on_failure: failed_probe
+
+  gap_003:
+    actions:
+      - type: log
+        message: "Trial gap 0.03s: hold Shift for 0.83s total, wait 0.03s, then hold W for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_003
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.83
+      - type: wait
+        seconds: 0.03
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_005
+    on_failure: failed_probe
+
+  gap_005:
+    actions:
+      - type: log
+        message: "Trial gap 0.05s: hold Shift for 0.85s total, wait 0.05s, then hold W for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_005
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.85
+      - type: wait
+        seconds: 0.05
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_008
+    on_failure: failed_probe
+
+  gap_008:
+    actions:
+      - type: log
+        message: "Trial gap 0.08s: hold Shift for 0.88s total, wait 0.08s, then hold W for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_008
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.88
+      - type: wait
+        seconds: 0.08
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_010
+    on_failure: failed_probe
+
+  gap_010:
+    actions:
+      - type: log
+        message: "Trial gap 0.10s: hold Shift for 0.90s total, wait 0.10s, then hold W for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_010
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.9
+      - type: wait
+        seconds: 0.1
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_012
+    on_failure: failed_probe
+
+  gap_012:
+    actions:
+      - type: log
+        message: "Trial gap 0.12s: hold Shift for 0.92s total, wait 0.12s, then hold W for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_012
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.92
+      - type: wait
+        seconds: 0.12
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_015
+    on_failure: failed_probe
+
+  gap_015:
+    actions:
+      - type: log
+        message: "Trial gap 0.15s: hold Shift for 0.95s total, wait 0.15s, then hold W for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_015
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.95
+      - type: wait
+        seconds: 0.15
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: gap_018
+    on_failure: failed_probe
+
+  gap_018:
+    actions:
+      - type: log
+        message: "Trial gap 0.18s: hold Shift for 0.98s total, wait 0.18s, then hold W for 0.80s."
+      - type: start_continuous_input
+        name: sprint_hold_gap_018
+        action: hold_key
+        key: shift
+        stop_after_seconds: 0.98
+      - type: wait
+        seconds: 0.18
+      - type: hold_key
+        key: w
+        seconds: 0.8
+      - type: wait
+        seconds: 1.0
+    on_success: completed_probe
+    on_failure: failed_probe
+
+  completed_probe:
+    terminal: true
+    result: success
+
+  failed_probe:
+    terminal: true
+    result: failed_sprint_run_gap_probe

@@ -184,6 +184,7 @@ class Profile:
     interruptions: list[Interruption] = field(default_factory=list)
     default_timeout_seconds: float = 30.0
     max_retries: int = 3
+    allow_infinite_run: bool = False
     manual_stop_is_dry_run_success: bool = False
     profile_pack: ProfilePack | None = None
 
@@ -256,6 +257,11 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
             "max_retries",
             "execution.max_retries",
             default=3,
+        ),
+        allow_infinite_run=_boolean(
+            execution_raw,
+            "allow_infinite_run",
+            default=False,
         ),
         manual_stop_is_dry_run_success=_boolean(
             execution_raw,
@@ -399,7 +405,10 @@ def _validate_state_graph(profile: Profile, errors: list[str]) -> None:
     for state_name in sorted(set(profile.states) - reachable):
         errors.append(f"state '{state_name}' is unreachable from initial_state")
 
-    if not any(profile.states[state_name].terminal for state_name in reachable):
+    if (
+        not profile.allow_infinite_run
+        and not any(profile.states[state_name].terminal for state_name in reachable)
+    ):
         errors.append("state graph must include a reachable terminal state")
 
     _validate_failure_transition_loops(profile, errors)

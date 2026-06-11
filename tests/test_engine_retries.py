@@ -161,6 +161,36 @@ def logger() -> logging.Logger:
 
 
 class EngineRetryTests(unittest.TestCase):
+    def test_infinite_run_profiles_continue_until_operator_stop(self) -> None:
+        runtime = runtime_with_anchors(set())
+        profile = Profile(
+            version=1,
+            name="Infinite Profile",
+            target=Target(process_name="test.exe"),
+            resolution=Resolution(width=1280, height=720),
+            initial_state="keep_alive",
+            max_retries=1,
+            allow_infinite_run=True,
+            states={
+                "keep_alive": State(
+                    name="keep_alive",
+                    actions=[Action(type="wait", data={"seconds": 0.1})],
+                    on_success="keep_alive",
+                )
+            },
+        )
+
+        result = Engine(
+            profile=profile,
+            mode="test",
+            logger=logger(),
+            runtime_factory=runtime_factory_with_runtime(runtime),
+            stop_requested=lambda: runtime.input_adapter.wait_count >= 3,
+        ).run()
+
+        self.assertEqual(result, "operator_stopped")
+        self.assertEqual(runtime.input_adapter.wait_count, 3)
+
     def test_gracefully_terminates_after_state_retry_limit(self) -> None:
         profile = Profile(
             version=1,

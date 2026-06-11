@@ -75,11 +75,15 @@ class Engine:
         actions = ActionRunner(runtime=runtime, logger=self.logger)
 
         current_state = self.profile.initial_state
-        max_steps = max(1, len(self.profile.states) * (self.profile.max_retries + 2))
+        max_steps = None
+        if not self.profile.allow_infinite_run:
+            max_steps = max(1, len(self.profile.states) * (self.profile.max_retries + 2))
         failures_by_state: dict[str, int] = {}
         interruption_attempts: dict[str, int] = {}
         try:
-            for _ in range(max_steps):
+            steps_taken = 0
+            while max_steps is None or steps_taken < max_steps:
+                steps_taken += 1
                 state = self.profile.states[current_state]
                 try:
                     self._check_stop_requested()
@@ -181,13 +185,15 @@ class Engine:
                         raise LiveModeUnavailable(str(error)) from error
                     raise
 
-            self.logger.error("Exceeded maximum dry-run steps: %s", max_steps)
-            self._emit(
-                "finished",
-                result="failed_max_steps",
-                failure_reason="exceeded maximum workflow steps",
-            )
-            return "failed_max_steps"
+            if max_steps is not None:
+                self.logger.error("Exceeded maximum dry-run steps: %s", max_steps)
+                self._emit(
+                    "finished",
+                    result="failed_max_steps",
+                    failure_reason="exceeded maximum workflow steps",
+                )
+                return "failed_max_steps"
+            raise RuntimeError("infinite run exited without terminal state or stop signal")
         finally:
             runtime.input_adapter.stop_all_continuous_inputs()
 

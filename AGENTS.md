@@ -8,6 +8,9 @@
 - When a workflow doc and code disagree, inspect the current code and profile
   artifacts, then update the workflow doc if needed instead of silently
   ignoring it.
+- When a section of work, action, routine, or code/document change appears
+  complete and no further edits are expected, ask the user whether they want
+  to commit and push the repository before moving on.
 
 ## Recording-To-Profile Tasks
 

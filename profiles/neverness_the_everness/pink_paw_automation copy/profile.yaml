@@ -1,0 +1,157 @@
+version: 1
+name: NevernessTheEverness Pink Paw Automation COPY
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Pink Paw Automation 
+  detection_strategy: template_matching
+  known_limitations:
+    - This pack now covers only the opening route slice from the Pink Paw NPC prompt through the second gold entry seen in the 2026-06-02 recordings.
+    - The route still uses timed movement segments between anchors, so camera drift, combat variance, or missed pathing can prevent the later anchor states from appearing.
+    - The first gold gate is opened by repeated `F` presses after anchor confirmation. The second gold entry is confirmed visually and then crossed immediately.
+    - This pack is limited to the reviewed 1280x720 capture layout and may require new anchor crops if the scene composition changes.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: ignore
+
+execution:
+  default_timeout_seconds: 20
+  max_retries: 1
+
+regions:
+  event_enter_button:
+    x: 784
+    y: 650
+    width: 410
+    height: 46
+  exit_confirm_button:
+    x: 654
+    y: 470
+    width: 236
+    height: 46
+
+initial_state: lg1
+
+states:
+
+  lg1:
+    actions:
+      - type: start_continuous_input
+        name: hold_w
+        action: hold_key
+        key: w
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: start_continuous_input
+        name: character_loop_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "3"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+          - action: press_key
+            key: "4"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 0.8
+      - type: wait
+        seconds: 4.5
+      - type: stop_continuous_input
+        name: hold_w
+      - type: start_continuous_input
+        name: hold_a
+        action: hold_key
+        key: a
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: wait
+        seconds: 4.0
+      - type: stop_continuous_input
+        name: hold_a
+      - type: stop_continuous_input
+        name: character_loop_cycle
+      - type: stop_continuous_input
+        name: press_left_shift
+    on_success: exit
+    on_failure: failed_route
+
+  exit:
+      required_anchors:
+        - name: exit
+          type: template
+          asset: assets/first_gold_entry.png
+      actions:
+        - type: log
+          message: Exited the elavator, completing the route.
+        - type: wait
+          seconds: 3.0
+      on_success: completed
+      on_failure: failed_route
+
+  completed:
+    terminal: true
+    result: success
+
+  failed_route:
+    # actions:
+      # - type: start_continuous_input
+      #   name: press_esc
+      #   action: press_key
+      #   key: esc
+      #   repeat_every_seconds: 0.2
+      #   seconds: 0.1
+      #   stop_after_seconds: 1.0
+      # - type: wait
+      #   seconds: 0.5
+      # - type: start_continuous_input
+      #   name: keep_clicking
+      #   action: click_point
+      #   region: exit_confirm_button
+      #   input_mode: foreground
+      #   repeat_every_seconds: 0.2
+      #   stop_after_seconds: 1.0
+    on_success: exit_confirm
+  
+  exit_confirm:
+    terminal: true
+    result: failure
+
+
+

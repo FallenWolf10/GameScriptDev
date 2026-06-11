@@ -141,7 +141,9 @@ checklist contract. The dashboard blocks live mode for profile packs until their
 compatibility checklist is complete and a successful dashboard dry run has been
 recorded. Intentionally infinite manual-stop profiles can opt into treating an
 operator-stopped dashboard dry run as that evidence with
-`execution.manual_stop_is_dry_run_success: true`.
+`execution.manual_stop_is_dry_run_success: true`. If the workflow itself should
+loop until the operator stops it, also set `execution.allow_infinite_run: true`
+so the engine does not fail the run after the normal dry-run step cap.
 
 For a full annotated authoring example, see
 [docs/PROFILE_TEMPLATE.md](docs/PROFILE_TEMPLATE.md).
