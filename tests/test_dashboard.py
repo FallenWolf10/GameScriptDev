@@ -148,6 +148,34 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(entries[0].path, profile_path)
             self.assertTrue(entries[0].valid)
 
+    def test_profile_catalog_get_profile_path_uses_cached_id_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            catalog = ProfileCatalog(root / "profiles")
+
+            resolved = catalog.get_profile_path("demo")
+            catalog._cached_entries = []  # type: ignore[assignment]
+
+            self.assertEqual(resolved, profile_path)
+            self.assertEqual(catalog.get_profile_path("demo"), profile_path)
+
+    def test_profile_catalog_validate_profile_updates_cached_entry_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            catalog = ProfileCatalog(root / "profiles")
+
+            initial_entries = catalog.list_profiles()
+            self.assertTrue(initial_entries[0].valid)
+
+            profile_path.write_text("version: [\n", encoding="utf-8")
+            updated = catalog.validate_profile("demo")
+
+            self.assertFalse(updated.valid)
+            self.assertIsNotNone(catalog._cached_entries)
+            self.assertFalse(catalog._cached_entries[0].valid)  # type: ignore[index]
+
     def test_readiness_blocks_live_until_dashboard_dry_run_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             profile_path = _write_profile(Path(temp_dir))
@@ -240,9 +268,165 @@ class DashboardTests(unittest.TestCase):
 
             review = registry.review(record.id)
             self.assertEqual(review["run"]["id"], record.id)
+            self.assertNotIn("timeline", review["run"])
             self.assertTrue(review["timeline"])
             self.assertEqual(review["timeline"][0]["event"], "run_started")
             self.assertEqual(review["timeline"][-1]["event"], "run_completed")
+
+    def test_run_registry_list_runs_can_limit_recent_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            first = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, first.id)
+            time.sleep(1.1)
+            second = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, second.id)
+
+            runs = registry.list_runs(limit=1)
+
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0].id, second.id)
+            self.assertEqual(registry.run_count(), 2)
+
+    def test_run_registry_preserves_newest_first_run_order_without_sorting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            first = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, first.id)
+            second = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, second.id)
+            third = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, third.id)
+
+            runs = registry.list_runs()
+
+            self.assertEqual([run.id for run in runs[:3]], [third.id, second.id, first.id])
+
+    def test_run_registry_lists_newest_artifact_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, record.id)
+            record = registry.get_run(record.id)
+
+            assert record.run_paths is not None
+            older = record.run_paths.artifact_dir / "older.txt"
+            newer = record.run_paths.artifact_dir / "newer.txt"
+            older.write_text("older", encoding="utf-8")
+            time.sleep(1.1)
+            newer.write_text("newer", encoding="utf-8")
+
+            artifacts = registry.list_artifacts(record.id)
+
+            self.assertEqual([artifact["name"] for artifact in artifacts[:2]], ["newer.txt", "older.txt"])
+            self.assertIn("modified_at", artifacts[0])
+
+    def test_run_registry_log_tail_returns_incremental_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, record.id)
+            record = registry.get_run(record.id)
+
+            assert record.run_paths is not None
+            record.run_paths.run_log.write_text("line1\nline2\n", encoding="utf-8")
+
+            first = registry.read_log_tail(record.id, offset=0)
+            line2_offset = str(first["text"]).index("line2")
+            second = registry.read_log_tail(record.id, offset=line2_offset)
+
+            self.assertEqual(str(first["text"]).splitlines(), ["line1", "line2"])
+            self.assertEqual(str(second["text"]).splitlines(), ["line2"])
+            self.assertEqual(second["offset"], line2_offset)
+            self.assertEqual(second["next_offset"], len(str(first["text"]).encode("utf-8")))
+
+    def test_run_registry_summary_and_review_delta(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, record.id)
+            record = registry.get_run(record.id)
+
+            summary = registry.run_summary(record.id)
+            review = registry.review(record.id, after_index=1, limit=1)
+
+            self.assertEqual(summary["id"], record.id)
+            self.assertIn("log_size", summary)
+            self.assertIn("timeline_count", summary)
+            self.assertIn("artifact_stamp", summary)
+            self.assertEqual(len(review["timeline"]), 1)
+            self.assertEqual(review["next_index"], 2)
+            self.assertEqual(review["total_count"], len(record.timeline))
+
+    def test_run_registry_review_can_skip_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, record.id)
+
+            review = registry.review(record.id, include_artifacts=False)
+
+            self.assertIn("timeline", review)
+            self.assertNotIn("artifacts", review)
+
+    def test_run_registry_artifact_limit_returns_recent_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, record.id)
+            record = registry.get_run(record.id)
+
+            assert record.run_paths is not None
+            (record.run_paths.artifact_dir / "one.txt").write_text("1", encoding="utf-8")
+            time.sleep(1.1)
+            (record.run_paths.artifact_dir / "two.txt").write_text("2", encoding="utf-8")
+
+            artifacts = registry.list_artifacts(record.id, limit=1)
+
+            self.assertEqual(len(artifacts), 1)
+            self.assertEqual(artifacts[0]["name"], "two.txt")
+
+    def test_run_registry_artifact_snapshot_returns_count_and_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+
+            record = registry.start_run("demo", profile_path, "dry-run")
+            _wait_for_run(registry, record.id)
+            record = registry.get_run(record.id)
+
+            assert record.run_paths is not None
+            (record.run_paths.artifact_dir / "one.txt").write_text("1", encoding="utf-8")
+            time.sleep(1.1)
+            (record.run_paths.artifact_dir / "two.txt").write_text("2", encoding="utf-8")
+
+            snapshot = registry.artifact_snapshot(record.id, limit=1)
+
+            self.assertEqual(snapshot["total_count"], 2)
+            self.assertEqual(len(snapshot["artifacts"]), 1)
+            self.assertEqual(snapshot["latest_artifact"]["name"], "two.txt")
 
     def test_run_registry_can_stop_running_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -315,6 +499,58 @@ class DashboardTests(unittest.TestCase):
                 )
                 response = json.loads(urlopen(request, timeout=5).read())
                 self.assertEqual(response["profile_id"], "demo")
+
+                runs = _get_json(f"{base_url}/api/runs")
+                self.assertNotIn("timeline", runs["runs"][0])
+                self.assertIn("total_count", runs)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_limits_run_list_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                first = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                _wait_for_server_run(base_url, first["id"])
+                time.sleep(1.1)
+                second = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                _wait_for_server_run(base_url, second["id"])
+
+                runs = _get_json(f"{base_url}/api/runs?limit=1")
+
+                self.assertEqual(len(runs["runs"]), 1)
+                self.assertEqual(runs["runs"][0]["id"], second["id"])
+                self.assertEqual(runs["total_count"], 2)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_json_responses_are_compact(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                raw = urlopen(f"{base_url}/api/profiles", timeout=5).read().decode("utf-8")
+
+                self.assertNotIn("\n", raw)
+                self.assertTrue(raw.startswith("{"))
+                self.assertIn('"profiles":[', raw)
             finally:
                 server.shutdown()
                 server.server_close()
@@ -344,6 +580,95 @@ class DashboardTests(unittest.TestCase):
                 self.assertIn("target_status", readiness)
                 self.assertIn("resolution_status", readiness)
                 self.assertIn("compatibility_status", readiness)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_exposes_run_summary_log_tail_and_review_delta(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                response = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                _wait_for_server_run(base_url, response["id"])
+
+                summary = _get_json(f"{base_url}/api/runs/{response['id']}/summary")
+                log_tail_response = urlopen(
+                    f"{base_url}/api/runs/{response['id']}/log-tail?offset=0",
+                    timeout=5,
+                )
+                log_tail_text = log_tail_response.read().decode("utf-8")
+                review = _get_json(f"{base_url}/api/runs/{response['id']}/review?after=1&limit=1")
+
+                self.assertEqual(summary["id"], response["id"])
+                self.assertIn("log_size", summary)
+                self.assertIn("timeline_count", summary)
+                self.assertIn("artifact_stamp", summary)
+                self.assertIsInstance(log_tail_text, str)
+                self.assertIsNotNone(log_tail_response.headers.get("X-Log-Next-Offset"))
+                self.assertIn(log_tail_response.headers.get("X-Log-Reset"), {"0", "1"})
+                self.assertEqual(len(review["timeline"]), 1)
+                self.assertIn("next_index", review)
+                self.assertIn("total_count", review)
+                self.assertIn("artifacts", review)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_review_can_skip_artifacts_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                response = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                _wait_for_server_run(base_url, response["id"])
+
+                review = _get_json(
+                    f"{base_url}/api/runs/{response['id']}/review?include_artifacts=0"
+                )
+
+                self.assertIn("timeline", review)
+                self.assertNotIn("artifacts", review)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_caches_profile_readiness_briefly(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                fake_report = type(
+                    "Readiness",
+                    (),
+                    {"to_dict": lambda self: {"live_available": True}},
+                )()
+                with patch(
+                    "game_script_dev.dashboard.server.evaluate_readiness",
+                    return_value=fake_report,
+                ) as mocked:
+                    _get_json(f"{base_url}/api/profiles/demo/readiness")
+                    _get_json(f"{base_url}/api/profiles/demo/readiness")
+
+                self.assertEqual(mocked.call_count, 1)
             finally:
                 server.shutdown()
                 server.server_close()
@@ -400,6 +725,7 @@ class DashboardTests(unittest.TestCase):
                 review = _get_json(f"{base_url}/api/runs/{response['id']}/review")
 
                 self.assertEqual(review["run"]["id"], response["id"])
+                self.assertNotIn("timeline", review["run"])
                 self.assertTrue(review["timeline"])
                 self.assertIn("artifacts", review)
             finally:
@@ -620,6 +946,61 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('return "interrupt";', app_js)
         self.assertIn("function getActiveStoppableRun()", app_js)
         self.assertIn('button.textContent = run ? `Stop ${run.mode}` : "Stop";', app_js)
+        self.assertIn("state.selectedRunId = runs.length ? runs[0].id : null;", app_js)
+        self.assertIn("const latestArtifact = artifacts[0] || null;", app_js)
+        self.assertIn("link.textContent = `Latest artifact: ${latestArtifact.name}`;", app_js)
+        self.assertIn("async function refreshSelectedRunData({ force = false } = {})", app_js)
+        self.assertIn("async function fetchLogTail(runId, offset)", app_js)
+        self.assertIn('response.headers.get("X-Log-Next-Offset")', app_js)
+        self.assertIn("artifacts?limit=", app_js)
+        self.assertIn("const MAX_VISIBLE_RUNS = 100;", app_js)
+        self.assertIn('api(`/api/runs?limit=${MAX_VISIBLE_RUNS}`)', app_js)
+        self.assertIn("function scheduleNextPoll()", app_js)
+        self.assertIn("window.setTimeout(async () => {", app_js)
+        self.assertIn("const IDLE_READINESS_EVERY_POLLS = 2;", app_js)
+        self.assertIn("hasActiveRun: false,", app_js)
+        self.assertIn("state.hasActiveRun = runs.some((run) => isRunActive(run));", app_js)
+        self.assertIn("const interval = state.hasActiveRun ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;", app_js)
+        self.assertIn("if (state.hasActiveRun || state.pollCount % IDLE_READINESS_EVERY_POLLS === 0) {", app_js)
+        self.assertIn("include_artifacts=0", app_js)
+        self.assertIn("function renderRunsList()", app_js)
+        self.assertIn("function renderRunCount()", app_js)
+        self.assertIn("function upsertRunEntry(runEntry)", app_js)
+        self.assertIn("function normalizeRunListEntry(runEntry)", app_js)
+        self.assertIn("renderRunsList();", app_js)
+        self.assertIn('button.dataset.profileId = profile.id;', app_js)
+        self.assertIn('button.dataset.runId = run.id;', app_js)
+        self.assertIn('$("profiles").addEventListener("click", async (event) => {', app_js)
+        self.assertIn('$("runs").addEventListener("click", async (event) => {', app_js)
+        self.assertIn("const shouldRefreshSelectedRunDetail = (", app_js)
+        self.assertIn("|| state.hasActiveRun", app_js)
+        self.assertIn("|| previousHasActiveRun !== state.hasActiveRun", app_js)
+        self.assertIn("function syncSelectedRunListState()", app_js)
+        self.assertIn("async function selectProfile(profileId, { autoDryRun = false, skipInitialReadiness = false } = {})", app_js)
+        self.assertIn("function upsertProfileEntry(profileEntry)", app_js)
+        self.assertIn("skipInitialReadiness: true", app_js)
+        self.assertIn("const validatedProfile = await validateSelectedProfile();", app_js)
+        self.assertIn("previous.artifact_stamp !== summary.artifact_stamp", app_js)
+        self.assertIn('runLogLineCounts: {}', app_js)
+        self.assertIn("state.runLogLineCounts[summary.id] = countLines(target.textContent);", app_js)
+        self.assertIn("state.runLogLineCounts[runId] = countLines(text);", app_js)
+        self.assertIn("scrollLogToLatest(target);", app_js)
+        self.assertIn("function scrollLogToLatest(target)", app_js)
+        self.assertIn("target.scrollTop = target.scrollHeight;", app_js)
+        self.assertIn("function countLines(text)", app_js)
+        self.assertIn('lastProfilesSignature: ""', app_js)
+        self.assertIn('lastProfileSelectSignature: ""', app_js)
+        self.assertIn('lastPackDetailSignature: ""', app_js)
+        self.assertIn('lastRuntimeSignature: ""', app_js)
+        self.assertIn('lastReadinessSignature: ""', app_js)
+        self.assertIn('lastRunReadinessSignature: ""', app_js)
+        self.assertIn("if (signature === state.lastProfilesSignature) {", app_js)
+        self.assertIn("if (signature === state.lastProfileSelectSignature) {", app_js)
+        self.assertIn("if (signature === state.lastPackDetailSignature) {", app_js)
+        self.assertIn("if (signature === state.lastRuntimeSignature) {", app_js)
+        self.assertIn("if (signature !== state.lastReadinessSignature) {", app_js)
+        self.assertIn("if (signature === state.lastRunReadinessSignature) {", app_js)
+        self.assertIn("state.lastMessageSignatures[id] === signature", app_js)
 
     def test_dashboard_can_relaunch_as_admin(self) -> None:
         with patch(

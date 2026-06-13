@@ -8,7 +8,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
@@ -18,6 +18,7 @@ from game_script_dev.dashboard.target_preview import (
     TargetPreviewService,
 )
 from game_script_dev.operator_package import run_startup_checks
+from game_script_dev.retention import apply_workspace_retention
 from game_script_dev.windows_elevation import (
     WindowsElevationError,
     is_running_as_admin,
@@ -38,16 +39,22 @@ class DashboardState:
         self.port = port
         self.workspace_root = workspace_root
         self.log_root = log_root
+        apply_workspace_retention(workspace_root, log_root=log_root)
         self.catalog = ProfileCatalog(workspace_root / "profiles")
         self.runs = RunRegistry(log_root)
         self.target_preview = target_preview or TargetPreviewService()
+        self._readiness_cache: dict[
+            tuple[str, bool], tuple[float, object]
+        ] = {}
 
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
     server_version = "GameScriptDevDashboard/0.1"
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
         if path == "/api/profiles":
             self._send_json(
                 {
@@ -77,8 +84,13 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(preview.to_dict())
             return
         if path == "/api/runs":
+            limit = _query_int(query, "limit", None)
+            runs = self.state.runs.list_runs(limit=limit)
             self._send_json(
-                {"runs": [run.to_dict() for run in self.state.runs.list_runs()]}
+                {
+                    "runs": [run.to_list_dict() for run in runs],
+                    "total_count": self.state.runs.run_count(),
+                }
             )
             return
         if path == "/api/startup-checks":
@@ -95,7 +107,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self._runtime_status())
             return
         if path.startswith("/api/runs/"):
-            self._handle_run_get(path)
+            self._handle_run_get(path, query)
             return
         self._serve_static(path)
 
@@ -128,7 +140,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         return
 
-    def _handle_run_get(self, path: str) -> None:
+    def _handle_run_get(self, path: str, query: dict[str, list[str]]) -> None:
         parts = [part for part in path.split("/") if part]
         if len(parts) < 3:
             self._send_error(HTTPStatus.NOT_FOUND, "missing run id")
@@ -138,6 +150,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if len(parts) == 3:
                 self._send_json(self.state.runs.get_run(run_id).to_dict())
                 return
+            if parts[3] == "summary" and len(parts) == 4:
+                self._send_json(self.state.runs.run_summary(run_id))
+                return
             if parts[3] == "readiness" and len(parts) == 4:
                 run = self.state.runs.get_run(run_id)
                 report = self._readiness(run.profile_id).to_dict()
@@ -145,13 +160,37 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(report)
                 return
             if parts[3] == "review" and len(parts) == 4:
-                self._send_json(self.state.runs.review(run_id))
+                after_index = _query_int(query, "after", 0)
+                limit = _query_int(query, "limit", None)
+                include_artifacts = _query_bool(query, "include_artifacts", True)
+                self._send_json(
+                    self.state.runs.review(
+                        run_id,
+                        after_index=after_index,
+                        limit=limit,
+                        include_artifacts=include_artifacts,
+                    )
+                )
                 return
             if parts[3] == "log":
                 self._send_text(self.state.runs.read_log(run_id), "text/plain")
                 return
+            if parts[3] == "log-tail" and len(parts) == 4:
+                offset = _query_int(query, "offset", 0)
+                payload = self.state.runs.read_log_tail(run_id, offset=offset)
+                self._send_text(
+                    str(payload["text"]),
+                    "text/plain",
+                    headers={
+                        "X-Log-Offset": str(payload["offset"]),
+                        "X-Log-Next-Offset": str(payload["next_offset"]),
+                        "X-Log-Reset": "1" if payload["reset"] else "0",
+                    },
+                )
+                return
             if parts[3] == "artifacts" and len(parts) == 4:
-                self._send_json({"artifacts": self.state.runs.list_artifacts(run_id)})
+                limit = _query_int(query, "limit", None)
+                self._send_json(self.state.runs.artifact_snapshot(run_id, limit=limit))
                 return
             if parts[3] == "artifacts" and len(parts) > 4:
                 relative_path = unquote("/".join(parts[4:]))
@@ -207,13 +246,29 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self._send_json(record.to_dict(), status=HTTPStatus.ACCEPTED)
 
     def _readiness(self, profile_id: str):
+        cache_key = (
+            profile_id,
+            self.state.runs.last_dry_run_success(profile_id),
+        )
+        cached = self.state._readiness_cache.get(cache_key)
+        now = time.monotonic()
+        if cached is not None and now - cached[0] <= 2.0:
+            return cached[1]
         profile_path = self.state.catalog.get_profile_path(profile_id)
-        return evaluate_readiness(
+        report = evaluate_readiness(
             profile_id,
             profile_path,
             last_dry_run_success=self.state.runs.last_dry_run_success(profile_id),
             check_target=True,
         )
+        self.state._readiness_cache[cache_key] = (now, report)
+        stale_keys = [
+            key for key in self.state._readiness_cache
+            if key[0] == profile_id and key != cache_key
+        ]
+        for key in stale_keys:
+            self.state._readiness_cache.pop(key, None)
+        return report
 
     def _runtime_status(self) -> dict[str, object]:
         return {
@@ -297,18 +352,26 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         payload: dict[str, object],
         status: HTTPStatus = HTTPStatus.OK,
     ) -> None:
-        data = json.dumps(payload, indent=2).encode("utf-8")
+        data = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
-    def _send_text(self, text: str, content_type: str) -> None:
+    def _send_text(
+        self,
+        text: str,
+        content_type: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         data = text.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(data)
 
@@ -349,6 +412,36 @@ def create_server(
         target_preview,
     )
     return server
+
+
+def _query_int(
+    query: dict[str, list[str]],
+    key: str,
+    default: int | None,
+) -> int | None:
+    values = query.get(key)
+    if not values:
+        return default
+    try:
+        return int(values[0])
+    except ValueError:
+        return default
+
+
+def _query_bool(
+    query: dict[str, list[str]],
+    key: str,
+    default: bool,
+) -> bool:
+    values = query.get(key)
+    if not values:
+        return default
+    value = values[0].strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _dashboard_launch_args(

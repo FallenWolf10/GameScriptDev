@@ -34,22 +34,50 @@ class ProfileEntry:
 class ProfileCatalog:
     def __init__(self, profiles_root: Path) -> None:
         self.profiles_root = profiles_root
+        self._cached_entries: list[ProfileEntry] | None = None
+        self._cached_signature: tuple[tuple[str, str], ...] | None = None
+        self._cached_paths_by_id: dict[str, Path] | None = None
 
     def list_profiles(self) -> list[ProfileEntry]:
+        signature = self._profile_signature()
+        if self._cached_entries is not None and self._cached_signature == signature:
+            return list(self._cached_entries)
         entries = [
             self._entry_for_path(path)
             for path in sorted(self.profiles_root.glob("**/profile.yaml"))
         ]
-        return entries
+        self._cached_entries = entries
+        self._cached_signature = signature
+        self._cached_paths_by_id = {entry.id: entry.path for entry in entries}
+        return list(entries)
 
     def get_profile_path(self, profile_id: str) -> Path:
-        for entry in self.list_profiles():
-            if entry.id == profile_id:
-                return entry.path
+        self.list_profiles()
+        if self._cached_paths_by_id is not None and profile_id in self._cached_paths_by_id:
+            return self._cached_paths_by_id[profile_id]
         raise KeyError(f"unknown profile id: {profile_id}")
 
     def validate_profile(self, profile_id: str) -> ProfileEntry:
-        return self._entry_for_path(self.get_profile_path(profile_id))
+        entry = self._entry_for_path(self.get_profile_path(profile_id))
+        if self._cached_entries is not None:
+            updated = False
+            next_entries: list[ProfileEntry] = []
+            for cached_entry in self._cached_entries:
+                if cached_entry.id == profile_id:
+                    next_entries.append(entry)
+                    updated = True
+                else:
+                    next_entries.append(cached_entry)
+            if updated:
+                self._cached_entries = next_entries
+                if self._cached_paths_by_id is not None:
+                    self._cached_paths_by_id[profile_id] = entry.path
+                self._cached_signature = self._profile_signature()
+                return entry
+        self._cached_entries = None
+        self._cached_signature = None
+        self._cached_paths_by_id = None
+        return entry
 
     def _entry_for_path(self, path: Path) -> ProfileEntry:
         profile_id = self._id_for_path(path)
@@ -99,6 +127,17 @@ class ProfileCatalog:
         if str(relative_parent) == ".":
             return path.parent.name
         return "__".join(relative_parent.parts)
+
+    def _profile_signature(self) -> tuple[tuple[str, str], ...]:
+        signature: list[tuple[str, str]] = []
+        for path in sorted(self.profiles_root.glob("**/profile.yaml")):
+            stat = path.stat()
+            signature.append((str(path), str(stat.st_mtime_ns)))
+            notes_path = path.parent / "notes.md"
+            if notes_path.is_file():
+                notes_stat = notes_path.stat()
+                signature.append((str(notes_path), str(notes_stat.st_mtime_ns)))
+        return tuple(signature)
 
 
 def _read_notes(profile_dir: Path) -> str | None:

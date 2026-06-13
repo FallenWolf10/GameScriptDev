@@ -1,0 +1,158 @@
+version: 1
+name: NevernessTheEverness Dark Racing Realm AFK Loop
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Dark Racing Realm AFK Loop
+  detection_strategy: template_matching
+  known_limitations:
+    - Reconstructed from the paired 2026-06-11 recordings; the two capture timelines differ by several seconds and were aligned by visible screen state.
+    - The loop assumes the player begins in the recorded in-world location with the standard activity shortcut visible.
+    - Menu clicks are fixed regions reviewed only at 1280x720 with the recorded Chinese UI layout.
+    - The race phase intentionally sends no movement input. Any event rule change that requires movement will make this profile obsolete.
+    - The recorded return path uses Esc to reopen the activity menu after leaving the result screen.
+    - Incidental left-click attacks during setup and the race countdown were omitted because they do not advance the workflow.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: verify_only
+
+execution:
+  default_timeout_seconds: 30
+  max_retries: 1
+  allow_infinite_run: true
+  manual_stop_is_dry_run_success: true
+
+regions:
+  dark_racing_realm_tab:
+    x: 25
+    y: 392
+    width: 180
+    height: 65
+  start_race_button:
+    x: 1025
+    y: 648
+    width: 205
+    height: 55
+  leave_results_button:
+    x: 980
+    y: 648
+    width: 225
+    height: 55
+
+initial_state: world_ready
+
+states:
+  world_ready:
+    required_anchors:
+      - name: world_location_marker
+        type: template
+        asset: assets/enter_icon.png
+    actions:
+      - type: log
+        message: Opening Activities from the recorded in-world start.
+      - type: press_key
+        key: f4
+        seconds: 0.1
+      - type: wait_for_state
+        state: activity_list_open
+        timeout_seconds: 15
+        poll_interval_seconds: 0.5
+    on_success: activity_list_open
+    on_failure: failed_loop
+
+  activity_list_open: 
+    required_anchors:
+      - name: activity_list_marker
+        type: template
+        asset: assets/activity_list_icon.png
+    actions:
+      - type: log
+        message: Selecting Dark Racing Realm.
+      - type: hold_click
+        region: dark_racing_realm_tab
+        input_mode: foreground
+        seconds: 1.0
+      - type: click_point
+        region: dark_racing_realm_tab
+        input_mode: foreground
+    on_success: activity_selected
+    on_failure: world_ready
+
+  activity_selected:
+    actions:
+      - type: log
+        message: Staring the race.
+      - type: wait
+        seconds: 1.0
+      - type: click_point
+        region: start_race_button
+        input_mode: foreground
+      - type: wait_for_state
+        state: race_started
+        timeout_seconds: 60
+        poll_interval_seconds: 0.5
+    on_success: race_started
+    on_failure: activity_list_open
+
+  race_started:
+    required_anchors:
+      - name: race_started_marker
+        type: template
+        asset: assets/enter_icon.png
+    actions:
+      - type: log
+        message: Race entered. Remaining idle until the result screen appears.
+      - type: start_continuous_input
+        name: hold_w
+        action: hold_key
+        key: w
+      - type: wait_for_state
+        state: race_results
+        timeout_seconds: 600
+        poll_interval_seconds: 1.0
+    on_success: race_results
+    on_failure: activity_list_open
+
+  race_results:
+    required_anchors:
+      - name: race_results_title
+        type: template
+        asset: assets/race_results_title.png
+    actions:
+      - type: log
+        message: Result screen detected. Waiting before leaving as shown in the recording.
+      - type: stop_continuous_input
+        name: hold_w
+      - type: wait
+        seconds: 1.0
+      - type: click_point
+        region: leave_results_button
+        input_mode: foreground
+      - type: wait_for_state
+        state: world_ready
+        timeout_seconds: 45
+        poll_interval_seconds: 0.5
+    on_success: world_ready
+    on_failure: failed_loop
+
+  failed_loop:
+    terminal: true
+    result: failed_dark_racing_realm_afk_loop

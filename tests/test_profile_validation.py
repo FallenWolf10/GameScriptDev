@@ -233,6 +233,9 @@ states:
       - type: hold_key
         key: f1
         seconds: 0.1
+      - type: press_key
+        key: f4
+        seconds: 0.1
     terminal: true
     result: success
 """

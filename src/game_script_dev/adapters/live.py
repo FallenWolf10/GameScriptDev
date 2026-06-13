@@ -60,6 +60,7 @@ TOKEN_QUERY = 0x0008
 TOKEN_INTEGRITY_LEVEL = 25
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 DEFAULT_PRESS_KEY_SECONDS = 0.1
+DEFAULT_MOUSE_CLICK_SECONDS = 0.1
 MOUSE_MOVE_STEP_SECONDS = 0.01
 
 KEY_CODES: dict[str, int] = {
@@ -69,6 +70,7 @@ KEY_CODES: dict[str, int] = {
     "tab": 0x09,
     "enter": 0x0D,
     "f1": 0x70,
+    "f4": 0x73,
     "shift": 0x10,
     "left_shift": 0xA0,
     "right_shift": 0xA1,
@@ -569,6 +571,7 @@ class LiveInputAdapter:
         background_key_method: str = "post_message_simple",
         use_qwerty_physical_keys: bool = False,
         press_key_duration: float = DEFAULT_PRESS_KEY_SECONDS,
+        mouse_click_duration: float = DEFAULT_MOUSE_CLICK_SECONDS,
     ) -> None:
         self.target_window = target_window
         self.profile = profile
@@ -587,6 +590,7 @@ class LiveInputAdapter:
         self.background_key_method = background_key_method
         self.use_qwerty_physical_keys = use_qwerty_physical_keys
         self.press_key_duration = press_key_duration
+        self.mouse_click_duration = mouse_click_duration
         self.key_mapper: QwertyPhysicalKeyMapper | None = None
         self._continuous_inputs: dict[str, _ContinuousInputTask] = {}
         self._continuous_inputs_lock = threading.Lock()
@@ -624,14 +628,15 @@ class LiveInputAdapter:
     ) -> None:
         mode = self.input_mode if input_mode is None else input_mode
         window = self._verify_live_target(mode)
-        if mode == "background_window_messages":
-            sender = self._background_mouse_sender()
-            sender.click(window, int(x), int(y))
-            return
-        absolute_x = window.content_left + int(x)
-        absolute_y = window.content_top + int(y)
-        sender = self._mouse_sender()
-        sender.click(absolute_x, absolute_y)
+        self._tap_mouse(
+            window=window,
+            mode=mode,
+            x=int(x),
+            y=int(y),
+            stop_event=None,
+            deadline=None,
+            duration=self.mouse_click_duration,
+        )
 
     def hold_click(
         self,
@@ -1629,12 +1634,15 @@ class LiveInputAdapter:
         x: int,
         y: int,
     ) -> None:
-        if mode == "background_window_messages":
-            sender = self._background_mouse_sender()
-            sender.click(window, x, y)
-            return
-        sender = self._mouse_sender()
-        sender.click(window.left + x, window.top + y)
+        self._tap_mouse(
+            window=window,
+            mode=mode,
+            x=x,
+            y=y,
+            stop_event=None,
+            deadline=None,
+            duration=self.mouse_click_duration,
+        )
 
     def _move_mouse_relative(
         self,
@@ -1715,6 +1723,47 @@ class LiveInputAdapter:
             )
         finally:
             sender.key_up(virtual_key)
+
+    def _tap_mouse(
+        self,
+        window: TargetWindow,
+        mode: str,
+        x: int,
+        y: int,
+        stop_event: threading.Event | None,
+        deadline: float | None,
+        duration: float,
+    ) -> None:
+        self._validate_duration(duration, "live mouse click")
+        if mode == "background_window_messages":
+            sender = self._background_mouse_sender()
+            sender.button_down(window, x, y)
+            try:
+                if stop_event is None:
+                    self._sleep_for(duration)
+                else:
+                    self._wait_for_stop_event(
+                        stop_event,
+                        self._limit_wait(duration, deadline),
+                    )
+            finally:
+                sender.button_up(window, x, y)
+            return
+
+        sender = self._mouse_sender()
+        absolute_x = window.content_left + x
+        absolute_y = window.content_top + y
+        sender.button_down(absolute_x, absolute_y)
+        try:
+            if stop_event is None:
+                self._sleep_for(duration)
+            else:
+                self._wait_for_stop_event(
+                    stop_event,
+                    self._limit_wait(duration, deadline),
+                )
+        finally:
+            sender.button_up(absolute_x, absolute_y)
 
     def _continuous_deadline(self, stop_after: float | None) -> float | None:
         if stop_after is None:

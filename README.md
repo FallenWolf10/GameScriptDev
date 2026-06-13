@@ -37,6 +37,7 @@ This repository currently contains the v1 skeleton:
 - capped global interruption recovery attempts
 - terminal states
 - daily log folders
+- automatic 24-hour retention for logs and generated artifacts
 - validation example profiles
 - demo profile
 
@@ -96,6 +97,8 @@ logs/YYYY-MM-DD/
 ```
 
 Each run gets its own folder under the daily log folder with `run.log` and an `artifacts/` directory.
+Records older than 24 hours are automatically pruned from `logs/` and the
+workspace `artifacts/` folder when a run starts or the dashboard launches.
 
 ## Local Dashboard
 

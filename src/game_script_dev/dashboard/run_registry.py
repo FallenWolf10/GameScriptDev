@@ -33,8 +33,8 @@ class RunRecord:
     timeline: list[dict[str, object]] = field(default_factory=list)
     stop_requested: bool = False
 
-    def to_dict(self) -> dict[str, object]:
-        return {
+    def to_dict(self, *, include_timeline: bool = True) -> dict[str, object]:
+        payload = {
             "id": self.id,
             "profile_id": self.profile_id,
             "profile_path": str(self.profile_path),
@@ -49,7 +49,23 @@ class RunRecord:
             "artifact_dir": str(self.run_paths.artifact_dir)
             if self.run_paths
             else None,
-            "timeline": self.timeline,
+            "stop_requested": self.stop_requested,
+        }
+        if include_timeline:
+            payload["timeline"] = self.timeline
+        return payload
+
+    def to_list_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "profile_id": self.profile_id,
+            "mode": self.mode,
+            "status": self.status,
+            "current_state": self.current_state,
+            "final_result": self.final_result,
+            "failure_reason": self.failure_reason,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
             "stop_requested": self.stop_requested,
         }
 
@@ -59,20 +75,28 @@ class RunRegistry:
         self.log_root = log_root
         self._lock = threading.Lock()
         self._records: dict[str, RunRecord] = {}
+        self._run_order: list[str] = []
         self._last_dry_run_success: dict[str, bool] = {}
         self._stop_events: dict[str, threading.Event] = {}
+        self._artifact_cache: dict[
+            str, tuple[tuple[str, int] | None, list[dict[str, object]]]
+        ] = {}
 
     def last_dry_run_success(self, profile_id: str) -> bool:
         with self._lock:
             return self._last_dry_run_success.get(profile_id, False)
 
-    def list_runs(self) -> list[RunRecord]:
+    def list_runs(self, *, limit: int | None = None) -> list[RunRecord]:
         with self._lock:
-            return sorted(
-                self._records.values(),
-                key=lambda record: record.started_at,
-                reverse=True,
-            )
+            run_ids = list(self._run_order)
+            runs = [self._records[run_id] for run_id in run_ids]
+        if limit is None:
+            return runs
+        return runs[: max(0, limit)]
+
+    def run_count(self) -> int:
+        with self._lock:
+            return len(self._records)
 
     def get_run(self, run_id: str) -> RunRecord:
         with self._lock:
@@ -94,6 +118,7 @@ class RunRegistry:
         stop_event = threading.Event()
         with self._lock:
             self._records[run_id] = record
+            self._run_order.insert(0, run_id)
             self._stop_events[run_id] = stop_event
 
         thread = threading.Thread(
@@ -122,31 +147,158 @@ class RunRegistry:
             return ""
         return record.run_paths.run_log.read_text(encoding="utf-8")
 
-    def list_artifacts(self, run_id: str) -> list[dict[str, object]]:
+    def read_log_tail(
+        self,
+        run_id: str,
+        *,
+        offset: int = 0,
+    ) -> dict[str, object]:
         record = self.get_run(run_id)
+        if record.run_paths is None or not record.run_paths.run_log.exists():
+            return {"text": "", "offset": 0, "next_offset": 0, "reset": False}
+
+        path = record.run_paths.run_log
+        size = path.stat().st_size
+        safe_offset = max(0, int(offset))
+        reset = False
+        if safe_offset > size:
+            safe_offset = 0
+            reset = True
+
+        with path.open("rb") as handle:
+            handle.seek(safe_offset)
+            chunk = handle.read()
+        return {
+            "text": chunk.decode("utf-8"),
+            "offset": safe_offset,
+            "next_offset": size,
+            "reset": reset,
+        }
+
+    def list_artifacts(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        record = self.get_run(run_id)
+        artifacts = self._artifact_entries(record)
+        if limit is None:
+            return list(artifacts)
+        return list(artifacts[: max(0, limit)])
+
+    def artifact_snapshot(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+    ) -> dict[str, object]:
+        record = self.get_run(run_id)
+        artifacts = self._artifact_entries(record)
+        visible = (
+            artifacts
+            if limit is None
+            else artifacts[: max(0, limit)]
+        )
+        return {
+            "artifacts": list(visible),
+            "total_count": len(artifacts),
+            "latest_artifact": artifacts[0] if artifacts else None,
+        }
+
+    def run_summary(self, run_id: str) -> dict[str, object]:
+        record = self.get_run(run_id)
+        log_size = 0
+        if record.run_paths is not None and record.run_paths.run_log.exists():
+            log_size = record.run_paths.run_log.stat().st_size
+        return {
+            "id": record.id,
+            "profile_id": record.profile_id,
+            "mode": record.mode,
+            "status": record.status,
+            "current_state": record.current_state,
+            "final_result": record.final_result,
+            "failure_reason": record.failure_reason,
+            "started_at": record.started_at,
+            "finished_at": record.finished_at,
+            "stop_requested": record.stop_requested,
+            "log_size": log_size,
+            "timeline_count": len(record.timeline),
+            "artifact_stamp": self._artifact_stamp(record),
+        }
+
+    def review(
+        self,
+        run_id: str,
+        *,
+        after_index: int = 0,
+        limit: int | None = None,
+        include_artifacts: bool = True,
+    ) -> dict[str, object]:
+        record = self.get_run(run_id)
+        start_index = max(0, int(after_index))
+        timeline = record.timeline[start_index:]
+        if limit is not None:
+            timeline = timeline[: max(0, limit)]
+        next_index = start_index + len(timeline)
+        payload = {
+            "run": record.to_dict(include_timeline=False),
+            "timeline": timeline,
+            "next_index": next_index,
+            "total_count": len(record.timeline),
+        }
+        if include_artifacts:
+            payload["artifacts"] = self.list_artifacts(run_id)
+        return payload
+
+    def _artifact_entries(self, record: RunRecord) -> list[dict[str, object]]:
         if record.run_paths is None or not record.run_paths.artifact_dir.exists():
             return []
-        artifacts = []
-        for path in sorted(record.run_paths.artifact_dir.rglob("*")):
+        signature = self._artifact_signature(record.run_paths.artifact_dir)
+        cached = self._artifact_cache.get(record.id)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+
+        artifacts: list[dict[str, object]] = []
+        for path in record.run_paths.artifact_dir.rglob("*"):
             if path.is_file():
+                stat = path.stat()
                 artifacts.append(
                     {
                         "name": path.name,
                         "relative_path": path.relative_to(
                             record.run_paths.artifact_dir
                         ).as_posix(),
-                        "size": path.stat().st_size,
+                        "size": stat.st_size,
+                        "modified_at": datetime.fromtimestamp(
+                            stat.st_mtime
+                        ).isoformat(timespec="seconds"),
                     }
                 )
+        artifacts.sort(
+            key=lambda artifact: (
+                str(artifact["modified_at"]),
+                str(artifact["relative_path"]),
+            ),
+            reverse=True,
+        )
+        self._artifact_cache[record.id] = (signature, artifacts)
         return artifacts
 
-    def review(self, run_id: str) -> dict[str, object]:
-        record = self.get_run(run_id)
-        return {
-            "run": record.to_dict(),
-            "timeline": record.timeline,
-            "artifacts": self.list_artifacts(run_id),
-        }
+    def _artifact_stamp(self, record: RunRecord) -> str | None:
+        if record.run_paths is None or not record.run_paths.artifact_dir.exists():
+            return None
+        signature = self._artifact_signature(record.run_paths.artifact_dir)
+        if signature is None:
+            return None
+        modified_at, child_count = signature
+        return f"{modified_at}:{child_count}"
+
+    def _artifact_signature(self, artifact_dir: Path) -> tuple[str, int] | None:
+        if not artifact_dir.exists():
+            return None
+        stat = artifact_dir.stat()
+        return (str(stat.st_mtime_ns), stat.st_nlink)
 
     def artifact_path(self, run_id: str, relative_path: str) -> Path:
         record = self.get_run(run_id)

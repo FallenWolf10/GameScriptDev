@@ -173,7 +173,8 @@ states:
         region: start_button
         # Optional. Override the profile target input mode for this click only.
         # input_mode: foreground
-      # Clicks the center of a named region.
+      # Clicks the center of a named region using the runner's default click
+      # dwell, currently 0.1 seconds.
 
       - type: hold_click
         region: start_button
@@ -513,7 +514,7 @@ The current schema accepts these keys:
 - digits: `0` through `9`
 - control/navigation keys:
   `alt`, `backspace`, `control`, `ctrl`, `down`, `enter`, `esc`, `escape`,
-  `f1`, `left`, `left_shift`, `right`, `right_shift`, `shift`, `space`,
+  `f1`, `f4`, `left`, `left_shift`, `right`, `right_shift`, `shift`, `space`,
   `tab`, `up`
 
 ### State Graph Rules

@@ -41,6 +41,7 @@ SUPPORTED_KEY_NAMES = {
     "esc",
     "escape",
     "f1",
+    "f4",
     "left",
     "left_shift",
     "right",

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from game_script_dev.retention import apply_workspace_retention
+
 
 @dataclass(frozen=True)
 class RunPaths:
@@ -20,6 +22,9 @@ def create_run_logger(
     profile_name: str,
     mode: str = "run",
 ) -> tuple[logging.Logger, RunPaths]:
+    workspace_root = log_root.parent
+    apply_workspace_retention(workspace_root, log_root=log_root)
+
     now = datetime.now()
     day_dir = log_root / now.strftime("%Y-%m-%d")
     day_dir.mkdir(parents=True, exist_ok=True)
