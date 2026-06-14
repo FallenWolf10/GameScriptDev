@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import socket
 import threading
 import time
 from http import HTTPStatus
@@ -71,6 +72,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             except KeyError as error:
                 self._send_error(HTTPStatus.NOT_FOUND, str(error))
             return
+        if path.startswith("/api/profiles/") and path.endswith("/target-preview-meta"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+                preview = self.state.target_preview.inspect(profile_path)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            except TargetPreviewError as error:
+                self._send_error(HTTPStatus.CONFLICT, str(error))
+            else:
+                self._send_json(preview.to_dict())
+            return
         if path.startswith("/api/profiles/") and path.endswith("/target-preview"):
             profile_id = unquote(path.split("/")[3])
             try:
@@ -82,6 +95,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(HTTPStatus.CONFLICT, str(error))
             else:
                 self._send_json(preview.to_dict())
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/target-preview-stream"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+                return
+            self._stream_target_preview(profile_path, query)
             return
         if path == "/api/runs":
             limit = _query_int(query, "limit", None)
@@ -252,7 +274,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         )
         cached = self.state._readiness_cache.get(cache_key)
         now = time.monotonic()
-        if cached is not None and now - cached[0] <= 2.0:
+        if cached is not None and now - cached[0] <= 1.0:
             return cached[1]
         profile_path = self.state.catalog.get_profile_path(profile_id)
         report = evaluate_readiness(
@@ -278,6 +300,73 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             "workspace": str(self.state.workspace_root),
             "logs": str(self.state.log_root),
         }
+
+    def _stream_target_preview(
+        self,
+        profile_path: Path,
+        query: dict[str, list[str]],
+    ) -> None:
+        fps = min(max(_query_int(query, "fps", 5) or 5, 1), 12)
+        max_width = min(max(_query_int(query, "max_width", 960) or 960, 160), 1920)
+        quality = min(max(_query_int(query, "quality", 70) or 70, 30), 95)
+        boundary = "game-script-dev-preview"
+        interval_seconds = 1.0 / fps
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header(
+            "Content-Type",
+            f"multipart/x-mixed-replace; boundary={boundary}",
+        )
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        while True:
+            frame_started_at = time.monotonic()
+            try:
+                metadata, jpeg_bytes = self.state.target_preview.capture_jpeg(
+                    profile_path,
+                    max_width=max_width,
+                    quality=quality,
+                )
+                part_header = (
+                    f"--{boundary}\r\n"
+                    "Content-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(jpeg_bytes)}\r\n"
+                    f"X-Preview-Title: {_header_value(metadata.title)}\r\n"
+                    f"X-Preview-Process: {_header_value(metadata.process_name or '')}\r\n"
+                    f"X-Preview-Width: {metadata.width}\r\n"
+                    f"X-Preview-Height: {metadata.height}\r\n"
+                    "\r\n"
+                ).encode("utf-8")
+                self.wfile.write(part_header)
+                self.wfile.write(jpeg_bytes)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+            except TargetPreviewError as error:
+                self._write_preview_error_part(boundary, str(error))
+                break
+            except (BrokenPipeError, ConnectionResetError, socket.timeout):
+                break
+
+            remaining = interval_seconds - (time.monotonic() - frame_started_at)
+            if remaining > 0:
+                time.sleep(remaining)
+
+    def _write_preview_error_part(self, boundary: str, message: str) -> None:
+        try:
+            message_bytes = message.encode("utf-8")
+            payload = (
+                f"--{boundary}\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                f"Content-Length: {len(message_bytes)}\r\n"
+                "\r\n"
+            ).encode("utf-8") + message_bytes + b"\r\n"
+            self.wfile.write(payload)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            return
 
     def _relaunch_admin(self) -> None:
         if is_running_as_admin():
@@ -442,6 +531,10 @@ def _query_bool(
     if value in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _header_value(value: str) -> str:
+    return value.replace("\r", " ").replace("\n", " ")
 
 
 def _dashboard_launch_args(

@@ -26,12 +26,11 @@ class TargetPreviewError(Exception):
 
 
 @dataclass(frozen=True)
-class TargetPreview:
+class TargetPreviewMetadata:
     title: str
     process_name: str | None
     width: int
     height: int
-    data_url: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -39,8 +38,15 @@ class TargetPreview:
             "process_name": self.process_name,
             "width": self.width,
             "height": self.height,
-            "data_url": self.data_url,
         }
+
+
+@dataclass(frozen=True)
+class TargetPreview(TargetPreviewMetadata):
+    data_url: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {**super().to_dict(), "data_url": self.data_url}
 
 
 class TargetPreviewService:
@@ -49,7 +55,7 @@ class TargetPreviewService:
         logger: logging.Logger | None = None,
         window_adapter: WindowsWindowAdapter | None = None,
         window_capture: Win32WindowCapture | None = None,
-        cache_ttl_seconds: float = 15.0,
+        cache_ttl_seconds: float = 1.0,
     ) -> None:
         self.logger = logger or logging.getLogger(__name__)
         self.window_adapter = window_adapter
@@ -57,18 +63,70 @@ class TargetPreviewService:
         self.cache_ttl_seconds = max(0.0, cache_ttl_seconds)
         self._cache: dict[Path, tuple[float, TargetPreview]] = {}
 
+    def inspect(self, profile_path: Path) -> TargetPreviewMetadata:
+        target = self._resolve_target(profile_path)
+        return TargetPreviewMetadata(
+            title=target.title,
+            process_name=target.process_name,
+            width=target.content_width,
+            height=target.content_height,
+        )
+
     def capture(self, profile_path: Path) -> TargetPreview:
         now = time.monotonic()
         cached = self._cache.get(profile_path)
         if cached is not None and now - cached[0] <= self.cache_ttl_seconds:
             return cached[1]
 
-        try:
-            profile = load_profile(profile_path)
-            validate_profile(profile, profile_path.parent)
-        except (ProfileLoadError, ProfileValidationError) as error:
-            raise TargetPreviewError(str(error)) from error
+        metadata, image = self.capture_image(profile_path)
 
+        preview = TargetPreview(
+            title=metadata.title,
+            process_name=metadata.process_name,
+            width=metadata.width,
+            height=metadata.height,
+            data_url=_image_data_url(image),
+        )
+        self._cache[profile_path] = (now, preview)
+        return preview
+
+    def capture_jpeg(
+        self,
+        profile_path: Path,
+        *,
+        max_width: int | None = None,
+        quality: int = 75,
+    ) -> tuple[TargetPreviewMetadata, bytes]:
+        metadata, image = self.capture_image(profile_path)
+        if max_width is not None and max_width > 0 and image.width > max_width:
+            scale = max_width / image.width
+            height = max(1, round(image.height * scale))
+            image = image.resize((max_width, height))
+        buffer = io.BytesIO()
+        image.convert("RGB").save(
+            buffer,
+            format="JPEG",
+            quality=max(30, min(quality, 95)),
+            optimize=True,
+        )
+        return metadata, buffer.getvalue()
+
+    def capture_image(
+        self,
+        profile_path: Path,
+    ) -> tuple[TargetPreviewMetadata, Image.Image]:
+        target = self._resolve_target(profile_path)
+        image = self._capture_window(target)
+        metadata = TargetPreviewMetadata(
+            title=target.title,
+            process_name=target.process_name,
+            width=target.content_width,
+            height=target.content_height,
+        )
+        return metadata, image
+
+    def _resolve_target(self, profile_path: Path) -> TargetWindow:
+        profile = self._load_profile(profile_path)
         adapter = self.window_adapter or WindowsWindowAdapter(
             self.logger,
             require_foreground=False,
@@ -76,22 +134,18 @@ class TargetPreviewService:
         target = adapter.find_target(profile)
         if target is None:
             raise TargetPreviewError("target window is not running")
-
         try:
-            adapter.verify_window(target, profile)
-            image = self._capture_window(target)
+            return adapter.verify_window(target, profile)
         except (LiveAdaptersUnavailable, TargetWindowNotReady, OSError) as error:
             raise TargetPreviewError(str(error)) from error
 
-        preview = TargetPreview(
-            title=target.title,
-            process_name=target.process_name,
-            width=target.content_width,
-            height=target.content_height,
-            data_url=_image_data_url(image),
-        )
-        self._cache[profile_path] = (now, preview)
-        return preview
+    def _load_profile(self, profile_path: Path):
+        try:
+            profile = load_profile(profile_path)
+            validate_profile(profile, profile_path.parent)
+        except (ProfileLoadError, ProfileValidationError) as error:
+            raise TargetPreviewError(str(error)) from error
+        return profile
 
     def _capture_window(self, target: TargetWindow) -> Image.Image:
         if target.handle is not None:

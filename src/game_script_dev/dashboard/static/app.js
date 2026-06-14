@@ -9,6 +9,7 @@ const state = {
   runtime: null,
   autoDryRunStartedByProfileId: {},
   lastPreviewRefreshAt: 0,
+  previewStreamProfileId: null,
   runLogOffsets: {},
   runLogLineCounts: {},
   runTimelineIndexes: {},
@@ -29,10 +30,12 @@ const MAX_LOG_LINES = 1500;
 const MAX_VISIBLE_ARTIFACTS = 60;
 const MAX_VISIBLE_TIMELINE_EVENTS = 200;
 const MAX_VISIBLE_RUNS = 100;
-const PREVIEW_REFRESH_INTERVAL_MS = 15000;
-const ACTIVE_POLL_INTERVAL_MS = 1500;
-const IDLE_POLL_INTERVAL_MS = 6000;
-const IDLE_READINESS_EVERY_POLLS = 2;
+const PREVIEW_REFRESH_INTERVAL_MS = 1000;
+const PREVIEW_META_REFRESH_INTERVAL_MS = 5000;
+const PREVIEW_STREAM_FPS = 6;
+const PREVIEW_STREAM_MAX_WIDTH = 960;
+const ACTIVE_POLL_INTERVAL_MS = 1000;
+const IDLE_POLL_INTERVAL_MS = 1000;
 const RUNTIME_REFRESH_EVERY_POLLS = 5;
 
 const $ = (id) => document.getElementById(id);
@@ -241,21 +244,24 @@ async function refreshTargetPreview({ force = false } = {}) {
   const meta = $("target-preview-meta");
   const frame = $("target-preview-frame");
   if (!state.selectedProfileId) {
+    stopTargetPreviewStream();
     image.hidden = true;
+    image.removeAttribute("src");
     empty.hidden = false;
+    empty.textContent = "No target preview";
     meta.textContent = "No profile selected";
     frame.style.removeProperty("--target-preview-ratio");
     return;
   }
+  startTargetPreviewStream();
   const now = Date.now();
-  if (!force && now - state.lastPreviewRefreshAt < PREVIEW_REFRESH_INTERVAL_MS) {
+  if (!force && now - state.lastPreviewRefreshAt < PREVIEW_META_REFRESH_INTERVAL_MS) {
     return;
   }
   try {
-    const preview = await api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/target-preview`);
+    const preview = await api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/target-preview-meta`);
     const previewRatio = preview.height > 0 ? preview.width / preview.height : 16 / 9;
     frame.style.setProperty("--target-preview-ratio", String(Math.max(previewRatio, 16 / 9)));
-    image.src = preview.data_url;
     image.hidden = false;
     empty.hidden = true;
     meta.textContent = `${preview.title} · ${preview.process_name || "unknown process"} · client ${preview.width}x${preview.height}`;
@@ -268,6 +274,29 @@ async function refreshTargetPreview({ force = false } = {}) {
     meta.textContent = error.message;
     frame.style.removeProperty("--target-preview-ratio");
   }
+}
+
+function startTargetPreviewStream() {
+  const image = $("target-preview-image");
+  const empty = $("target-preview-empty");
+  if (!state.selectedProfileId) {
+    return;
+  }
+  if (state.previewStreamProfileId === state.selectedProfileId && image.getAttribute("src")) {
+    return;
+  }
+  const streamUrl = `/api/profiles/${encodeURIComponent(state.selectedProfileId)}/target-preview-stream?fps=${PREVIEW_STREAM_FPS}&max_width=${PREVIEW_STREAM_MAX_WIDTH}`;
+  state.previewStreamProfileId = state.selectedProfileId;
+  image.src = streamUrl;
+  image.hidden = false;
+  empty.hidden = false;
+  empty.textContent = "Connecting to live preview...";
+}
+
+function stopTargetPreviewStream() {
+  const image = $("target-preview-image");
+  state.previewStreamProfileId = null;
+  image.removeAttribute("src");
 }
 
 function renderProfilePackDetail() {
@@ -783,9 +812,7 @@ function scheduleNextPoll() {
     state.pollCount += 1;
     try {
       await refreshRuns();
-      if (state.hasActiveRun || state.pollCount % IDLE_READINESS_EVERY_POLLS === 0) {
-        await refreshReadiness();
-      }
+      await refreshReadiness({ includePreview: true });
       if (state.pollCount % RUNTIME_REFRESH_EVERY_POLLS === 0) {
         await refreshRuntimeStatus();
       }
@@ -850,6 +877,21 @@ $("runtime-admin-button").addEventListener("click", async () => {
 });
 $("profile-select").addEventListener("change", async (event) => {
   await selectProfile(event.target.value, { autoDryRun: true });
+});
+
+$("target-preview-image").addEventListener("load", () => {
+  const image = $("target-preview-image");
+  const empty = $("target-preview-empty");
+  image.hidden = false;
+  empty.hidden = true;
+});
+
+$("target-preview-image").addEventListener("error", () => {
+  const image = $("target-preview-image");
+  const empty = $("target-preview-empty");
+  empty.hidden = false;
+  empty.textContent = "Target preview unavailable";
+  image.hidden = true;
 });
 
 refreshProfiles().then(async () => {

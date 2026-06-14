@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import tempfile
 import unittest
@@ -73,6 +74,50 @@ class TargetPreviewTests(unittest.TestCase):
             self.assertEqual(preview.width, 1280)
             self.assertEqual(preview.height, 720)
             self.assertEqual(capture.windows, [adapter.window])
+
+    def test_inspect_returns_target_metadata_without_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(PROFILE_YAML, encoding="utf-8")
+            adapter = FakeWindowAdapter()
+            capture = FakeWindowCapture()
+            service = TargetPreviewService(
+                logging.getLogger("tests.preview"),
+                window_adapter=adapter,  # type: ignore[arg-type]
+                window_capture=capture,  # type: ignore[arg-type]
+            )
+
+            preview = service.inspect(profile_path)
+
+            self.assertEqual(preview.title, "Preview Window")
+            self.assertEqual(preview.process_name, "python.exe")
+            self.assertEqual(preview.width, 320)
+            self.assertEqual(preview.height, 180)
+            self.assertEqual(capture.windows, [])
+
+    def test_capture_jpeg_downscales_preview_frame(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(PROFILE_YAML, encoding="utf-8")
+            adapter = FakeWindowAdapter()
+            capture = FakeWindowCapture()
+            service = TargetPreviewService(
+                logging.getLogger("tests.preview"),
+                window_adapter=adapter,  # type: ignore[arg-type]
+                window_capture=capture,  # type: ignore[arg-type]
+            )
+
+            preview, jpeg_bytes = service.capture_jpeg(profile_path, max_width=8)
+
+            self.assertEqual(preview.width, 320)
+            self.assertEqual(preview.height, 180)
+            self.assertTrue(jpeg_bytes.startswith(b"\xff\xd8"))
+            with Image.open(io.BytesIO(jpeg_bytes)) as image:
+                self.assertEqual(image.size, (8, 4))
+                red, green, blue = image.getpixel((0, 0))
+                self.assertLess(red, 40)
+                self.assertGreater(green, 100)
+                self.assertLess(blue, 40)
 
 
 class FakeWindowAdapter:
