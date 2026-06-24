@@ -244,6 +244,38 @@ Acceptance checks:
 Status: implemented with safe Local Demo fixtures in `fixtures/local_demo` and
 fixture validation helpers in `game_script_dev.fixtures`.
 
+## Section 20: Build A Visual Profile Builder
+
+Goal: make profile-pack authoring easier by adding a visual builder to the
+existing local dashboard.
+
+Required behavior:
+
+- Open existing profile packs in a builder view.
+- Show the profile as a state graph, not only raw YAML.
+- Let authors inspect states, anchors, actions, transitions, pack metadata, and
+  generated YAML.
+- Add drag/reorder action editing for common actions before expanding to the
+  full action surface.
+- Use the existing Python schema and pack checks as the source of truth for
+  validation.
+- Save normal `profile.yaml` files that remain compatible with the CLI,
+  dashboard, dry-run, readiness, and live-mode controls.
+- Provide visual tools for named regions and template anchors after the basic
+  builder is stable.
+
+Acceptance checks:
+
+- Existing profiles can be opened and understood through the builder without
+  changing files.
+- A simple action-list edit can be saved, validated, and dry-run through the
+  existing dashboard workflow.
+- Generated YAML remains readable and reviewable.
+- Profile builder writes are constrained to the selected profile pack folder.
+
+Status: planned. See `docs/PROFILE_BUILDER_UI.md` for the proposed structure,
+user roles, backend shape, and phased implementation plan.
+
 ## Completed Sections
 
 1. Target-window focusing in live mode.
@@ -265,6 +297,7 @@ fixture validation helpers in `game_script_dev.fixtures`.
 17. Tighten real-target pack notes.
 18. Source-tree operator package and startup checks.
 19. Safe Local Demo regression fixtures.
+20. Visual Profile Builder planned.
 
 ## Source Coverage
 
@@ -273,6 +306,8 @@ This roadmap is grounded in:
 - `CONTEXT.md`: Local Demo Target, Live Verification Scenario, Profile-Pack Authoring Support, Live Run Review, Operator Package, Regression Fixture, profile vocabulary, live confirmation, runtime adapters, detection strategies, named regions, and graceful termination.
 - `README.md`: current runner status, dry-run usage, live-mode safety checks, logs, demo profile, OCR adapter boundary, pointer input, target-window control, and dashboard command.
 - `docs/PROFILE_PACKS.md`: profile-pack folder shape and compatibility checklist contract.
+- `docs/PROFILE_BUILDER_UI.md`: visual authoring UI concept, user roles,
+  dashboard integration plan, and implementation phases.
 - `docs/adr/0001-yaml-profiles-with-explicit-state-graphs.md`: game behavior stays in strict declarative YAML profiles with explicit state graphs.
 - `docs/adr/0002-python-runner-with-dry-run-first.md`: Python remains the runner platform and dry-run remains the default before live input is allowed.
 - `docs/adr/0003-split-live-runtime-adapters.md`: window, screen, vision, and input capabilities stay behind separate runtime adapters.

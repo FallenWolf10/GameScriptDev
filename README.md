@@ -151,6 +151,11 @@ so the engine does not fail the run after the normal dry-run step cap.
 For a full annotated authoring example, see
 [docs/PROFILE_TEMPLATE.md](docs/PROFILE_TEMPLATE.md).
 
+The planned visual authoring UI is documented in
+[docs/PROFILE_BUILDER_UI.md](docs/PROFILE_BUILDER_UI.md). It describes the
+dashboard-based Profile Builder concept, user roles, editor structure, backend
+shape, and phased implementation plan.
+
 Create and check a new pack shape:
 
 ```powershell
