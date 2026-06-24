@@ -209,6 +209,15 @@ h3 {
   transition: all 250ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.workspace-shell {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -262,6 +271,532 @@ h3 {
   flex: 1.8 1 0%;
   height: 100%;
   min-width: 0;
+}
+
+.workspace-tabs-panel {
+  padding: 12px 16px;
+  gap: 10px;
+}
+
+.workspace-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.workspace-tab {
+  min-height: 32px;
+  border-radius: 999px;
+  border-color: transparent;
+  background: transparent;
+  padding: 0 14px;
+}
+
+.workspace-tab.active {
+  border-color: rgba(96, 165, 250, 0.35);
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(30, 64, 175, 0.35));
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+}
+
+.workspace-view {
+  display: none;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-view.workspace-view-active {
+  display: flex;
+}
+
+#operate-view {
+  gap: 16px;
+  flex: 1;
+}
+
+.builder-panel {
+  flex: 1;
+  padding: 18px;
+}
+
+.builder-toolbar,
+.builder-state-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.builder-toolbar {
+  justify-content: flex-end;
+}
+
+.builder-status {
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.builder-status-good {
+  color: #6ee7b7;
+}
+
+.builder-status-warn {
+  color: #fcd34d;
+}
+
+.builder-status-bad {
+  color: #fda4af;
+}
+
+.builder-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.builder-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.builder-column-primary,
+.builder-column-secondary {
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.builder-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 40%),
+    rgba(255, 255, 255, 0.02);
+}
+
+.builder-card-heading {
+  align-items: flex-start;
+}
+
+.builder-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.builder-form-grid .builder-field {
+  border: 1px solid rgba(96, 165, 250, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(2, 6, 23, 0.65);
+}
+
+.builder-field-full {
+  grid-column: 1 / -1;
+}
+
+.builder-form-grid .builder-field textarea,
+.builder-form-grid .builder-field input,
+.builder-form-grid .builder-field select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.builder-form-grid .builder-field textarea {
+  min-height: 96px;
+  padding: 10px;
+  resize: vertical;
+  background: rgba(2, 6, 23, 0.9);
+  font: inherit;
+}
+
+.builder-form-grid .builder-field input,
+.builder-form-grid .builder-field select {
+  min-height: 36px;
+  padding: 0 10px;
+  background: rgba(2, 6, 23, 0.9);
+}
+
+.builder-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.builder-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(96, 165, 250, 0.12);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.builder-checkbox input {
+  margin-top: 2px;
+}
+
+.builder-checkbox code {
+  display: block;
+  font-size: 11px;
+}
+
+.builder-check-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.builder-pack-check {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(96, 165, 250, 0.12);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.65);
+}
+
+.builder-pack-check.good {
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.builder-pack-check.bad {
+  border-color: rgba(244, 63, 94, 0.35);
+}
+
+.builder-pack-check.warn {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.builder-pack-check h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-family: 'Fira Code', monospace;
+}
+
+.builder-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.builder-inline-actions input {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.9);
+  color: var(--text);
+}
+
+.builder-visual-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+  gap: 14px;
+}
+
+.builder-preview-shell {
+  display: grid;
+  gap: 8px;
+}
+
+.builder-preview-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 280px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #010409;
+}
+
+.builder-preview-stage img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.builder-preview-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.builder-preview-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  text-align: center;
+  background: rgba(2, 6, 23, 0.75);
+}
+
+.builder-overlay-region {
+  fill: rgba(59, 130, 246, 0.16);
+  stroke: rgba(96, 165, 250, 0.95);
+  stroke-width: 2;
+}
+
+.builder-overlay-region.is-selected {
+  fill: rgba(16, 185, 129, 0.2);
+  stroke: rgba(110, 231, 183, 1);
+}
+
+.builder-overlay-selection {
+  fill: rgba(245, 158, 11, 0.16);
+  stroke: rgba(251, 191, 36, 1);
+  stroke-width: 2;
+  stroke-dasharray: 8 4;
+}
+
+.builder-overlay-label {
+  fill: #e2e8f0;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.builder-visual-sidebar {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.builder-mini-thumb {
+  width: 100%;
+  max-width: 180px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #020617;
+}
+
+.builder-graph {
+  display: grid;
+  gap: 10px;
+}
+
+.builder-graph-node {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(2, 6, 23, 0.8);
+}
+
+.builder-graph-node.is-initial {
+  border-color: rgba(59, 130, 246, 0.75);
+  box-shadow: 0 0 18px rgba(59, 130, 246, 0.18);
+}
+
+.builder-graph-node.is-terminal {
+  border-color: rgba(16, 185, 129, 0.65);
+}
+
+.builder-graph-node.is-unreachable {
+  border-color: rgba(244, 63, 94, 0.65);
+  opacity: 0.72;
+}
+
+.builder-graph-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.builder-graph-node-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.builder-node-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.builder-node-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.builder-node-tag.success {
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.builder-node-tag.failure {
+  color: #fda4af;
+  border-color: rgba(244, 63, 94, 0.35);
+}
+
+.builder-node-tag.result {
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.builder-state-select {
+  min-width: 160px;
+}
+
+.builder-state-toolbar select {
+  min-width: 140px;
+}
+
+.builder-state-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.builder-detail-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.builder-detail-section {
+  border: 1px solid rgba(96, 165, 250, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(2, 6, 23, 0.65);
+}
+
+.builder-detail-section h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-family: 'Fira Code', monospace;
+  color: #cbd5e1;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.builder-detail-list,
+.builder-action-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.builder-detail-list li,
+.builder-action-list li {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.builder-action-meta,
+.builder-anchor-meta {
+  margin-top: 6px;
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.builder-action-card {
+  cursor: grab;
+}
+
+.builder-action-card:active {
+  cursor: grabbing;
+}
+
+.builder-action-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.builder-action-controls {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.builder-action-controls button {
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.builder-action-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(96, 165, 250, 0.14);
+}
+
+.builder-field {
+  display: grid;
+  gap: 6px;
+}
+
+.builder-field span {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'Fira Code', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.builder-field input,
+.builder-field select {
+  min-height: 34px;
+  padding: 0 10px;
+  background: rgba(2, 6, 23, 0.9);
+}
+
+.builder-action-warning {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.08);
+  color: #fcd34d;
+  font-size: 12px;
+}
+
+.builder-yaml-preview {
+  margin: 0;
+  min-height: 280px;
+  max-height: 720px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #020617;
+  color: #e2e8f0;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.builder-validation-list {
+  margin-top: 0;
 }
 
 .panel-heading {
@@ -681,22 +1216,48 @@ dialog {
     width: 100% !important;
   }
 
+  #operate-view,
+  .builder-layout {
+    flex-direction: column;
+    display: flex;
+  }
+
   .readiness-panel,
-  .log-panel {
+  .log-panel,
+  .builder-panel {
     height: auto;
+  }
+
+  .builder-toolbar,
+  .builder-state-toolbar,
+  .builder-action-card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .builder-visual-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .profile-list,
   .runs,
   .readiness-content,
   .log-details-section,
-  #log-output {
+  #log-output,
+  .builder-column-primary,
+  .builder-column-secondary,
+  .builder-yaml-preview {
     max-height: 400px;
   }
 
   .target-preview-frame {
     min-height: 180px;
     max-height: 320px;
+  }
+
+  .builder-form-grid,
+  .builder-checkbox-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

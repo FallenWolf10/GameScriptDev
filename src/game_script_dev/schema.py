@@ -83,6 +83,146 @@ REQUIRED_COMPATIBILITY_CHECKS = {
     "successful_validation_or_dry_run",
 }
 
+ACTION_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "click_point": {
+        "label": "Click Point",
+        "fields": [
+            {"name": "region", "kind": "region", "required": True},
+            {"name": "input_mode", "kind": "input_mode", "required": False},
+        ],
+    },
+    "click_template": {
+        "label": "Click Template",
+        "fields": [
+            {"name": "target", "kind": "asset_path", "required": True},
+        ],
+    },
+    "hold_click": {
+        "label": "Hold Click",
+        "fields": [
+            {"name": "region", "kind": "region", "required": True},
+            {"name": "seconds", "kind": "duration", "required": True},
+            {"name": "input_mode", "kind": "input_mode", "required": False},
+        ],
+    },
+    "hold_key": {
+        "label": "Hold Key",
+        "fields": [
+            {"name": "key", "kind": "key", "required": True},
+            {"name": "seconds", "kind": "duration", "required": False},
+        ],
+    },
+    "hold_keys": {
+        "label": "Hold Keys",
+        "fields": [
+            {"name": "keys", "kind": "key_list", "required": True},
+            {"name": "seconds", "kind": "duration", "required": False},
+        ],
+    },
+    "hold_key_while_repeating_key": {
+        "label": "Hold Key While Repeating Key",
+        "fields": [
+            {"name": "hold_key", "kind": "key", "required": True},
+            {"name": "tap_key", "kind": "key", "required": True},
+            {"name": "hold_seconds", "kind": "duration", "required": True},
+            {"name": "tap_every_seconds", "kind": "duration", "required": True},
+            {"name": "tap_duration_seconds", "kind": "duration", "required": False},
+        ],
+    },
+    "hold_mouse_button_and_move": {
+        "label": "Hold Mouse Button And Move",
+        "fields": [
+            {"name": "button", "kind": "mouse_button", "required": True},
+            {"name": "dx", "kind": "number", "required": True},
+            {"name": "dy", "kind": "number", "required": True},
+            {"name": "seconds", "kind": "duration", "required": False},
+            {"name": "input_mode", "kind": "input_mode", "required": False},
+        ],
+    },
+    "log": {
+        "label": "Log",
+        "fields": [
+            {"name": "message", "kind": "string", "required": True},
+        ],
+    },
+    "move_mouse": {
+        "label": "Move Mouse",
+        "fields": [
+            {"name": "dx", "kind": "number", "required": True},
+            {"name": "dy", "kind": "number", "required": True},
+            {"name": "seconds", "kind": "duration", "required": False},
+            {"name": "input_mode", "kind": "input_mode", "required": False},
+        ],
+    },
+    "press_key": {
+        "label": "Press Key",
+        "fields": [
+            {"name": "key", "kind": "key", "required": True},
+            {"name": "seconds", "kind": "duration", "required": False},
+        ],
+    },
+    "press_keys": {
+        "label": "Press Keys",
+        "fields": [
+            {"name": "keys", "kind": "key_list", "required": True},
+            {"name": "seconds", "kind": "duration", "required": False},
+        ],
+    },
+    "repeat_key": {
+        "label": "Repeat Key",
+        "fields": [
+            {"name": "key", "kind": "key", "required": True},
+            {"name": "repeat_for_seconds", "kind": "duration", "required": True},
+            {"name": "repeat_every_seconds", "kind": "duration", "required": True},
+            {"name": "tap_duration_seconds", "kind": "duration", "required": False},
+        ],
+    },
+    "scroll_mouse": {
+        "label": "Scroll Mouse",
+        "fields": [
+            {"name": "direction", "kind": "scroll_direction", "required": True},
+            {"name": "steps", "kind": "integer", "required": False},
+            {"name": "input_mode", "kind": "input_mode", "required": False},
+        ],
+    },
+    "start_continuous_input": {
+        "label": "Start Continuous Input",
+        "fields": [
+            {"name": "name", "kind": "string", "required": True},
+            {"name": "action", "kind": "continuous_action", "required": True},
+            {"name": "stop_after_seconds", "kind": "duration", "required": False},
+            {"name": "sequence", "kind": "continuous_sequence", "required": False},
+        ],
+    },
+    "stop": {
+        "label": "Stop",
+        "fields": [
+            {"name": "result", "kind": "string", "required": False},
+            {"name": "reason", "kind": "string", "required": False},
+        ],
+    },
+    "stop_continuous_input": {
+        "label": "Stop Continuous Input",
+        "fields": [
+            {"name": "name", "kind": "string", "required": True},
+        ],
+    },
+    "wait": {
+        "label": "Wait",
+        "fields": [
+            {"name": "seconds", "kind": "duration", "required": True},
+        ],
+    },
+    "wait_for_state": {
+        "label": "Wait For State",
+        "fields": [
+            {"name": "state", "kind": "state_name", "required": True},
+            {"name": "timeout_seconds", "kind": "duration", "required": False},
+            {"name": "poll_interval_seconds", "kind": "duration", "required": False},
+        ],
+    },
+}
+
 
 class ProfileValidationError(Exception):
     """Raised when a profile does not satisfy the strict schema."""
@@ -274,6 +414,12 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
 
 
 def validate_profile(profile: Profile, profile_dir: Path) -> None:
+    errors = collect_validation_errors(profile, profile_dir)
+    if errors:
+        raise ProfileValidationError("; ".join(errors))
+
+
+def collect_validation_errors(profile: Profile, profile_dir: Path) -> list[str]:
     errors: list[str] = []
 
     if not profile.target.process_name and not profile.target.window_title_contains:
@@ -385,9 +531,7 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
         )
 
     _validate_state_graph(profile, errors)
-
-    if errors:
-        raise ProfileValidationError("; ".join(errors))
+    return errors
 
 
 def _validate_state_graph(profile: Profile, errors: list[str]) -> None:

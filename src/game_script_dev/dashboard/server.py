@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import re
 import socket
 import threading
 import time
@@ -11,6 +12,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from game_script_dev.authoring import check_profile_pack, scaffold_profile_pack
+from game_script_dev.dashboard.builder import (
+    build_profile_draft,
+    profile_schema_payload,
+    preview_profile_draft,
+    save_profile_draft,
+)
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
 from game_script_dev.dashboard.run_registry import RunRegistry
@@ -65,6 +73,33 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 }
             )
             return
+        if path == "/api/profile-schema":
+            self._send_json(profile_schema_payload())
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/source"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            else:
+                self._send_json(
+                    {
+                        "profile_id": profile_id,
+                        "path": str(profile_path),
+                        "source": profile_path.read_text(encoding="utf-8"),
+                    }
+                )
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/draft"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            else:
+                self._send_json(build_profile_draft(profile_id, profile_path))
+            return
         if path.startswith("/api/profiles/") and path.endswith("/readiness"):
             profile_id = unquote(path.split("/")[3])
             try:
@@ -105,6 +140,39 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             self._stream_target_preview(profile_path, query)
             return
+        if path.startswith("/api/profiles/") and path.endswith("/assets"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+                return
+            self._send_json(
+                {
+                    "profile_id": profile_id,
+                    "assets": _list_profile_assets(profile_path.parent / "assets"),
+                }
+            )
+            return
+        if path.startswith("/api/profiles/") and "/assets/" in path:
+            parts = path.split("/")
+            if len(parts) >= 6:
+                profile_id = unquote(parts[3])
+                relative_asset_path = unquote("/".join(parts[5:]))
+                try:
+                    profile_path = self.state.catalog.get_profile_path(profile_id)
+                    asset_path = _resolve_profile_asset_path(
+                        profile_path.parent / "assets",
+                        relative_asset_path,
+                    )
+                except (KeyError, ValueError) as error:
+                    self._send_error(HTTPStatus.NOT_FOUND, str(error))
+                    return
+                if not asset_path.is_file():
+                    self._send_error(HTTPStatus.NOT_FOUND, "asset not found")
+                    return
+                self._send_file(asset_path)
+                return
         if path == "/api/runs":
             limit = _query_int(query, "limit", None)
             runs = self.state.runs.list_runs(limit=limit)
@@ -135,6 +203,46 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/api/profiles/") and path.endswith("/draft"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+                return
+            body = self._read_json_body()
+            try:
+                profile_payload = _profile_draft_payload(body)
+            except ValueError as error:
+                self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+                return
+            draft_payload = preview_profile_draft(
+                profile_id,
+                profile_path,
+                profile_payload,
+            )
+            self._send_json(draft_payload)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/save"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+                return
+            body = self._read_json_body()
+            try:
+                profile_payload = _profile_draft_payload(body)
+            except ValueError as error:
+                self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+                return
+            draft_payload = save_profile_draft(
+                profile_id,
+                profile_path,
+                profile_payload,
+            )
+            self._send_json(draft_payload)
+            return
         if path.startswith("/api/profiles/") and path.endswith("/validate"):
             profile_id = unquote(path.split("/")[3])
             try:
@@ -143,6 +251,85 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(HTTPStatus.NOT_FOUND, str(error))
                 return
             self._send_json(entry.to_dict())
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/check-pack"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+                return
+            result = check_profile_pack(profile_path.parent)
+            self._send_json(
+                {
+                    "profile_id": profile_id,
+                    "ok": result.ok,
+                    "errors": result.errors,
+                    "warnings": result.warnings,
+                }
+            )
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/assets/template-crop"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                profile_path = self.state.catalog.get_profile_path(profile_id)
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+                return
+            body = self._read_json_body()
+            try:
+                asset_path, crop_report = self._save_template_crop(profile_path, body)
+            except TargetPreviewError as error:
+                self._send_error(HTTPStatus.CONFLICT, str(error))
+                return
+            except ValueError as error:
+                self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+                return
+            relative_asset_path = str(
+                asset_path.relative_to(profile_path.parent / "assets")
+            ).replace("\\", "/")
+            self._send_json(
+                {
+                    "profile_id": profile_id,
+                    "asset": {
+                        "path": relative_asset_path,
+                        "size": asset_path.stat().st_size,
+                        "url": f"/api/profiles/{profile_id}/assets/{relative_asset_path}",
+                    },
+                    "crop": crop_report,
+                },
+                status=HTTPStatus.CREATED,
+            )
+            return
+        if path == "/api/scaffold-pack":
+            body = self._read_json_body()
+            try:
+                game = _required_string(body, "game")
+                mode = _required_string(body, "mode")
+                game_slug = _safe_path_segment(_required_string(body, "game_slug"))
+                pack_slug = _safe_path_segment(_required_string(body, "pack_slug"))
+            except ValueError as error:
+                self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+                return
+            pack_dir = self.state.catalog.profiles_root / game_slug / pack_slug
+            if pack_dir.exists():
+                self._send_error(
+                    HTTPStatus.CONFLICT,
+                    f"profile pack already exists: {game_slug}/{pack_slug}",
+                )
+                return
+            created = scaffold_profile_pack(pack_dir, game=game, mode=mode)
+            profile_path = pack_dir / "profile.yaml"
+            profile_id = self.state.catalog._id_for_path(profile_path)
+            self.state.catalog.list_profiles()
+            self._send_json(
+                {
+                    "profile_id": profile_id,
+                    "path": str(profile_path),
+                    "created": [str(path) for path in created],
+                },
+                status=HTTPStatus.CREATED,
+            )
             return
         if path == "/api/runs":
             self._start_run()
@@ -411,6 +598,32 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         time.sleep(0.5)
         self.server.shutdown()
 
+    def _save_template_crop(
+        self,
+        profile_path: Path,
+        payload: dict[str, object],
+    ) -> tuple[Path, dict[str, object]]:
+        asset_relative_path = _required_string(payload, "asset_path")
+        x = _required_non_negative_int(payload, "x")
+        y = _required_non_negative_int(payload, "y")
+        width = _required_positive_int(payload, "width")
+        height = _required_positive_int(payload, "height")
+        assets_root = profile_path.parent / "assets"
+        asset_path = _resolve_profile_asset_path(assets_root, asset_relative_path)
+        metadata, image = self.state.target_preview.capture_image(profile_path)
+        if x + width > metadata.width or y + height > metadata.height:
+            raise ValueError("crop rectangle exceeds the captured target preview")
+        asset_path.parent.mkdir(parents=True, exist_ok=True)
+        image.crop((x, y, x + width, y + height)).save(asset_path, format="PNG")
+        return asset_path, {
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+            "source_width": metadata.width,
+            "source_height": metadata.height,
+        }
+
     def _serve_static(self, path: str) -> None:
         static_root = Path(__file__).parent / "static"
         if path == "/":
@@ -535,6 +748,84 @@ def _query_bool(
 
 def _header_value(value: str) -> str:
     return value.replace("\r", " ").replace("\n", " ")
+
+
+def _required_string(payload: object, key: str) -> str:
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} must be a non-empty string")
+    return value.strip()
+
+
+def _profile_draft_payload(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    profile = payload.get("profile")
+    if not isinstance(profile, dict):
+        raise ValueError("profile must be an object")
+    merged = dict(profile)
+    if "notes" in payload:
+        merged["notes"] = payload.get("notes")
+    return merged
+
+
+def _safe_path_segment(value: str) -> str:
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?", value):
+        raise ValueError(
+            "path segments must use lowercase letters, numbers, underscores, or hyphens"
+        )
+    return value
+
+
+def _required_non_negative_int(payload: object, key: str) -> int:
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    value = payload.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{key} must be a non-negative integer")
+    return value
+
+
+def _required_positive_int(payload: object, key: str) -> int:
+    value = _required_non_negative_int(payload, key)
+    if value <= 0:
+        raise ValueError(f"{key} must be a positive integer")
+    return value
+
+
+def _resolve_profile_asset_path(assets_root: Path, relative_path: str) -> Path:
+    cleaned = relative_path.replace("\\", "/").strip("/")
+    if not cleaned:
+        raise ValueError("asset_path must not be empty")
+    if not cleaned.lower().endswith(".png"):
+        raise ValueError("asset_path must end with .png")
+    target = (assets_root / cleaned).resolve()
+    if assets_root.resolve() != target and assets_root.resolve() not in target.parents:
+        raise ValueError("asset path must stay inside the profile assets directory")
+    return target
+
+
+def _list_profile_assets(assets_root: Path) -> list[dict[str, object]]:
+    if not assets_root.is_dir():
+        return []
+    assets: list[dict[str, object]] = []
+    for path in sorted(
+        item
+        for item in assets_root.rglob("*")
+        if item.is_file() and not any(part.startswith(".") for part in item.relative_to(assets_root).parts)
+    ):
+        relative_path = str(path.relative_to(assets_root)).replace("\\", "/")
+        assets.append(
+            {
+                "path": relative_path,
+                "size": path.stat().st_size,
+                "content_type": mimetypes.guess_type(path.name)[0]
+                or "application/octet-stream",
+            }
+        )
+    return assets
 
 
 def _dashboard_launch_args(

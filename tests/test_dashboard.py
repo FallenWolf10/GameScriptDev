@@ -10,6 +10,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from PIL import Image
+
 from game_script_dev.adapters.base import TargetWindow
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
@@ -489,6 +491,19 @@ class DashboardTests(unittest.TestCase):
                 profiles = _get_json(f"{base_url}/api/profiles")
                 self.assertEqual(profiles["profiles"][0]["id"], "demo")
 
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                self.assertEqual(source["profile_id"], "demo")
+                self.assertIn("name: Dashboard Demo", source["source"])
+
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertTrue(draft["valid"])
+                self.assertEqual(draft["profile"]["initial_state"], "done")
+                self.assertEqual(draft["graph"]["terminal_states"], ["done"])
+
+                schema_payload = _get_json(f"{base_url}/api/profile-schema")
+                self.assertIn("press_key", schema_payload["actions"])
+                self.assertIn("supported_input_modes", schema_payload)
+
                 request = Request(
                     f"{base_url}/api/runs",
                     data=json.dumps({"profile_id": "demo", "mode": "dry-run"}).encode(
@@ -503,6 +518,299 @@ class DashboardTests(unittest.TestCase):
                 runs = _get_json(f"{base_url}/api/runs")
                 self.assertNotIn("timeline", runs["runs"][0])
                 self.assertIn("total_count", runs)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_previews_and_saves_builder_action_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                profile = draft["profile"]
+                home_state = next(
+                    state for state in profile["states"] if state["name"] == "home"
+                )
+                home_state["actions"].append(
+                    {
+                        "type": "log",
+                        "label": "Log",
+                        "editable": True,
+                        "data": {"message": "builder saved"},
+                    }
+                )
+
+                preview = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {"profile": profile},
+                )
+                self.assertTrue(preview["valid"])
+                self.assertIn("builder saved", preview["source"])
+
+                saved = _post_json(
+                    f"{base_url}/api/profiles/demo/save",
+                    {"profile": profile},
+                )
+                self.assertTrue(saved["valid"])
+
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                self.assertIn("message: builder saved", source["source"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_previews_and_saves_builder_state_graph_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                profile = draft["profile"]
+                profile["initial_state"] = "setup"
+                profile["states"][0]["name"] = "setup"
+                profile["states"][0]["on_success"] = "done"
+                profile["states"].append(
+                    {
+                        "name": "done",
+                        "required_anchors": [],
+                        "optional_anchors": [],
+                        "forbidden_anchors": [],
+                        "actions": [],
+                        "on_success": None,
+                        "on_failure": "graceful_termination",
+                        "terminal": True,
+                        "result": "success",
+                    }
+                )
+
+                preview = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {"profile": profile},
+                )
+                self.assertTrue(preview["valid"])
+                self.assertEqual(preview["profile"]["initial_state"], "setup")
+                self.assertIn("done", preview["graph"]["terminal_states"])
+
+                saved = _post_json(
+                    f"{base_url}/api/profiles/demo/save",
+                    {"profile": profile},
+                )
+                self.assertTrue(saved["valid"])
+
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                self.assertIn("initial_state: setup", source["source"])
+                self.assertIn("on_success: done", source["source"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_previews_and_saves_advanced_action_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, MANUAL_STOP_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                schema_payload = _get_json(f"{base_url}/api/profile-schema")
+                self.assertIn("start_continuous_input", schema_payload["editable_action_types"])
+                self.assertIn("continuous_actions", schema_payload)
+
+                profile = draft["profile"]
+                start_state = next(
+                    state for state in profile["states"] if state["name"] == "start_repeat"
+                )
+                start_state["actions"][0] = {
+                    "type": "start_continuous_input",
+                    "label": "Start Continuous Input",
+                    "editable": True,
+                    "data": {
+                        "name": "combo_loop",
+                        "action": "sequence",
+                        "sequence": [
+                            {
+                                "action": "press_keys",
+                                "keys": ["1", "2"],
+                                "repeat_every_seconds": 0.2,
+                                "seconds": 0.1,
+                                "run_for_seconds": 1.0,
+                            },
+                            {
+                                "action": "scroll_mouse",
+                                "direction": "down",
+                                "steps": 1,
+                                "input_mode": "foreground",
+                                "repeat_every_seconds": 0.2,
+                                "run_for_seconds": 0.5,
+                            },
+                        ],
+                    },
+                }
+
+                preview = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {"profile": profile},
+                )
+                self.assertTrue(preview["valid"])
+                self.assertIn("action: sequence", preview["source"])
+                self.assertIn("- action: press_keys", preview["source"])
+
+                saved = _post_json(
+                    f"{base_url}/api/profiles/demo/save",
+                    {"profile": profile},
+                )
+                self.assertTrue(saved["valid"])
+
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                self.assertIn("keys:", source["source"])
+                self.assertIn("direction: down", source["source"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_saves_builder_metadata_notes_and_pack_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, PROFILE_PACK_YAML)
+            profile_dir = root / "profiles" / "demo"
+            (profile_dir / "assets").mkdir(exist_ok=True)
+            (profile_dir / "validation_examples" / "valid").mkdir(parents=True)
+            (profile_dir / "validation_examples" / "invalid").mkdir(parents=True)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertIn("pack_check", draft)
+                self.assertTrue(draft["pack_check"]["ok"])
+                self.assertIn(
+                    "profile_pack compatibility incomplete",
+                    " ".join(draft["pack_check"]["warnings"]),
+                )
+
+                profile = draft["profile"]
+                profile["name"] = "Updated Pack Demo"
+                profile["profile_pack"]["compatibility"][
+                    "successful_validation_or_dry_run"
+                ] = True
+                notes = "# Updated Notes\n\n- Builder metadata edit"
+
+                saved = _post_json(
+                    f"{base_url}/api/profiles/demo/save",
+                    {"profile": profile, "notes": notes},
+                )
+                self.assertTrue(saved["valid"])
+                self.assertEqual(saved["profile"]["name"], "Updated Pack Demo")
+                self.assertEqual(saved["notes"], notes)
+
+                profile_path = root / "profiles" / "demo" / "profile.yaml"
+                self.assertIn("name: Updated Pack Demo", profile_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    notes,
+                    (root / "profiles" / "demo" / "notes.md").read_text(
+                        encoding="utf-8"
+                    ),
+                )
+
+                pack_check = _post_json(f"{base_url}/api/profiles/demo/check-pack", {})
+                self.assertTrue(pack_check["ok"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_scaffolds_new_profile_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                created = _post_json(
+                    f"{base_url}/api/scaffold-pack",
+                    {
+                        "game": "Example Game",
+                        "mode": "Daily Task",
+                        "game_slug": "example_game",
+                        "pack_slug": "daily_task",
+                    },
+                )
+
+                self.assertEqual(created["profile_id"], "example_game__daily_task")
+                self.assertTrue(
+                    (root / "profiles" / "example_game" / "daily_task" / "profile.yaml").is_file()
+                )
+                self.assertTrue(
+                    (root / "profiles" / "example_game" / "daily_task" / "notes.md").is_file()
+                )
+
+                profiles = _get_json(f"{base_url}/api/profiles")
+                self.assertEqual(
+                    [profile["id"] for profile in profiles["profiles"]],
+                    ["example_game__daily_task"],
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_lists_and_crops_profile_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_dir = root / "profiles" / "demo"
+            _write_profile(root, PROFILE_PACK_YAML)
+            (profile_dir / "assets").mkdir(exist_ok=True)
+            (profile_dir / "assets" / "existing.png").write_bytes(b"fake")
+            server = create_server(
+                "127.0.0.1",
+                0,
+                root,
+                root / "logs",
+                target_preview=FakeCropTargetPreviewService(),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                assets = _get_json(f"{base_url}/api/profiles/demo/assets")
+                self.assertEqual(assets["assets"][0]["path"], "existing.png")
+
+                cropped = _post_json(
+                    f"{base_url}/api/profiles/demo/assets/template-crop",
+                    {
+                        "asset_path": "cropped/home_title.png",
+                        "x": 10,
+                        "y": 20,
+                        "width": 50,
+                        "height": 30,
+                    },
+                )
+                self.assertEqual(cropped["asset"]["path"], "cropped/home_title.png")
+                saved_asset = profile_dir / "assets" / "cropped" / "home_title.png"
+                self.assertTrue(saved_asset.is_file())
+
+                asset_bytes = urlopen(
+                    f"{base_url}/api/profiles/demo/assets/cropped/home_title.png",
+                    timeout=5,
+                ).read()
+                self.assertTrue(asset_bytes.startswith(b"\x89PNG"))
             finally:
                 server.shutdown()
                 server.server_close()
@@ -935,74 +1243,91 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('id="runtime-admin-button"', html)
         self.assertIn('id="runtime-status"', html)
         self.assertIn('id="stop-run-button"', html)
+        self.assertIn('id="operate-tab"', html)
+        self.assertIn('id="builder-tab"', html)
+        self.assertIn('id="builder-view"', html)
+        self.assertIn('id="builder-save-button"', html)
+        self.assertIn('id="builder-revert-button"', html)
+        self.assertIn('id="builder-validate-button"', html)
+        self.assertIn('id="builder-check-pack-button"', html)
+        self.assertIn('id="builder-scaffold-form"', html)
+        self.assertIn('id="builder-scaffold-status"', html)
+        self.assertIn('id="builder-preview-refresh-button"', html)
+        self.assertIn('id="builder-preview-stage"', html)
+        self.assertIn('id="builder-preview-overlay"', html)
+        self.assertIn('id="builder-region-save-button"', html)
+        self.assertIn('id="builder-anchor-crop-button"', html)
+        self.assertIn('id="builder-asset-list"', html)
+        self.assertIn('id="builder-add-state-button"', html)
+        self.assertIn('id="builder-set-initial-button"', html)
+        self.assertIn('id="builder-delete-state-button"', html)
+        self.assertIn('id="builder-state-editor"', html)
+        self.assertIn('id="builder-add-action-select"', html)
+        self.assertIn('id="builder-add-action-button"', html)
+        self.assertIn('id="builder-graph"', html)
+        self.assertIn('id="builder-validation-list"', html)
+        self.assertIn('id="builder-state-detail"', html)
+        self.assertIn('id="builder-yaml-preview"', html)
+        self.assertIn('id="builder-pack-check"', html)
         self.assertNotIn('id="live-dialog"', html)
         self.assertIn("aspect-ratio: var(--target-preview-ratio, 16 / 9);", styles)
         self.assertIn("min-height: 220px;", styles)
-        self.assertIn(
-            'frame.style.setProperty("--target-preview-ratio", String(Math.max(previewRatio, 16 / 9)));',
-            app_js,
-        )
-        self.assertIn('function displayResultLabel(result)', app_js)
-        self.assertIn('return "interrupt";', app_js)
-        self.assertIn("function getActiveStoppableRun()", app_js)
+        self.assertIn(".workspace-tabs {", styles)
+        self.assertIn(".builder-layout {", styles)
+        self.assertIn(".builder-graph-node {", styles)
+        self.assertIn(".builder-toolbar", styles)
+        self.assertIn(".builder-form-grid", styles)
+        self.assertIn(".builder-checkbox-grid", styles)
+        self.assertIn(".builder-visual-layout", styles)
+        self.assertIn(".builder-preview-stage", styles)
+        self.assertIn(".builder-preview-overlay", styles)
+        self.assertIn(".builder-action-form", styles)
+        self.assertIn(".builder-action-controls", styles)
+        self.assertIn(".builder-yaml-preview {", styles)
+        self.assertIn('async function refreshBuilderDraft({ force = false } = {})', app_js)
+        self.assertIn('async function refreshBuilderSchema()', app_js)
+        self.assertIn('function renderBuilder()', app_js)
+        self.assertIn('function renderBuilderToolbar()', app_js)
+        self.assertIn('function renderBuilderScaffold()', app_js)
+        self.assertIn('function renderBuilderVisualTools()', app_js)
+        self.assertIn('function renderBuilderStateEditor()', app_js)
+        self.assertIn('function renderContinuousInputFields(', app_js)
+        self.assertIn('function renderContinuousSequenceEditor(', app_js)
+        self.assertIn('async function previewBuilderDraft()', app_js)
+        self.assertIn('async function saveBuilderDraft()', app_js)
+        self.assertIn('async function runBuilderPackCheck()', app_js)
+        self.assertIn('async function scaffoldBuilderPack()', app_js)
+        self.assertIn('async function refreshBuilderPreviewSnapshot()', app_js)
+        self.assertIn('async function cropBuilderTemplateAnchor()', app_js)
+        self.assertIn('async function addBuilderState()', app_js)
+        self.assertIn('async function setBuilderInitialState()', app_js)
+        self.assertIn('async function deleteBuilderState()', app_js)
+        self.assertIn('async function handleSequenceCommand(', app_js)
+        self.assertIn('async function addBuilderAction()', app_js)
+        self.assertIn('function renderBuilderGraph()', app_js)
+        self.assertIn('function renderBuilderStateDetail()', app_js)
+        self.assertIn('function renderBuilderYamlPreview()', app_js)
+        self.assertIn('function setActiveView(view)', app_js)
+        self.assertIn('api("/api/profile-schema")', app_js)
+        self.assertIn('/api/profiles/${encodeURIComponent(state.selectedProfileId)}/draft', app_js)
+        self.assertIn('/api/profiles/${encodeURIComponent(state.selectedProfileId)}/save', app_js)
+        self.assertIn('/api/profiles/${encodeURIComponent(state.selectedProfileId)}/check-pack', app_js)
+        self.assertIn('/api/profiles/${encodeURIComponent(state.selectedProfileId)}/assets', app_js)
+        self.assertIn('/api/profiles/${encodeURIComponent(state.selectedProfileId)}/assets/template-crop', app_js)
+        self.assertIn('continuous_actions', app_js)
+        self.assertIn('api("/api/scaffold-pack"', app_js)
+        self.assertIn('state.selectedBuilderStateName = states[0]?.name || null;', app_js)
+        self.assertIn('$("builder-tab").addEventListener("click", async () => {', app_js)
+        self.assertIn('$("builder-save-button").addEventListener("click", async () => {', app_js)
+        self.assertIn('$("builder-add-state-button").addEventListener("click", async () => {', app_js)
+        self.assertIn('$("builder-check-pack-button").addEventListener("click", async () => {', app_js)
+        self.assertIn('$("builder-state-detail").addEventListener("drop", async (event) => {', app_js)
+        self.assertIn('$("builder-graph").addEventListener("click", (event) => {', app_js)
+        self.assertIn('node.dataset.stateName = item.name;', app_js)
+        self.assertIn('state.activeView === "builder"', app_js)
+        self.assertIn('const latestArtifact = artifacts[0] || null;', app_js)
         self.assertIn('button.textContent = run ? `Stop ${run.mode}` : "Stop";', app_js)
-        self.assertIn("state.selectedRunId = runs.length ? runs[0].id : null;", app_js)
-        self.assertIn("const latestArtifact = artifacts[0] || null;", app_js)
-        self.assertIn("link.textContent = `Latest artifact: ${latestArtifact.name}`;", app_js)
-        self.assertIn("async function refreshSelectedRunData({ force = false } = {})", app_js)
-        self.assertIn("async function fetchLogTail(runId, offset)", app_js)
-        self.assertIn('response.headers.get("X-Log-Next-Offset")', app_js)
-        self.assertIn("artifacts?limit=", app_js)
-        self.assertIn("const MAX_VISIBLE_RUNS = 100;", app_js)
-        self.assertIn('api(`/api/runs?limit=${MAX_VISIBLE_RUNS}`)', app_js)
-        self.assertIn("function scheduleNextPoll()", app_js)
-        self.assertIn("window.setTimeout(async () => {", app_js)
-        self.assertIn("const PREVIEW_REFRESH_INTERVAL_MS = 1000;", app_js)
-        self.assertIn("const ACTIVE_POLL_INTERVAL_MS = 1000;", app_js)
-        self.assertIn("const IDLE_POLL_INTERVAL_MS = 1000;", app_js)
-        self.assertIn("hasActiveRun: false,", app_js)
-        self.assertIn("state.hasActiveRun = runs.some((run) => isRunActive(run));", app_js)
-        self.assertIn("const interval = state.hasActiveRun ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;", app_js)
-        self.assertIn("await refreshReadiness({ includePreview: true });", app_js)
-        self.assertIn("include_artifacts=0", app_js)
-        self.assertIn("function renderRunsList()", app_js)
-        self.assertIn("function renderRunCount()", app_js)
-        self.assertIn("function upsertRunEntry(runEntry)", app_js)
-        self.assertIn("function normalizeRunListEntry(runEntry)", app_js)
-        self.assertIn("renderRunsList();", app_js)
-        self.assertIn('button.dataset.profileId = profile.id;', app_js)
-        self.assertIn('button.dataset.runId = run.id;', app_js)
-        self.assertIn('$("profiles").addEventListener("click", async (event) => {', app_js)
-        self.assertIn('$("runs").addEventListener("click", async (event) => {', app_js)
-        self.assertIn("const shouldRefreshSelectedRunDetail = (", app_js)
-        self.assertIn("|| state.hasActiveRun", app_js)
-        self.assertIn("|| previousHasActiveRun !== state.hasActiveRun", app_js)
-        self.assertIn("function syncSelectedRunListState()", app_js)
-        self.assertIn("async function selectProfile(profileId, { autoDryRun = false, skipInitialReadiness = false } = {})", app_js)
-        self.assertIn("function upsertProfileEntry(profileEntry)", app_js)
-        self.assertIn("skipInitialReadiness: true", app_js)
-        self.assertIn("const validatedProfile = await validateSelectedProfile();", app_js)
-        self.assertIn("previous.artifact_stamp !== summary.artifact_stamp", app_js)
-        self.assertIn('runLogLineCounts: {}', app_js)
-        self.assertIn("state.runLogLineCounts[summary.id] = countLines(target.textContent);", app_js)
-        self.assertIn("state.runLogLineCounts[runId] = countLines(text);", app_js)
-        self.assertIn("scrollLogToLatest(target);", app_js)
-        self.assertIn("function scrollLogToLatest(target)", app_js)
-        self.assertIn("target.scrollTop = target.scrollHeight;", app_js)
-        self.assertIn("function countLines(text)", app_js)
-        self.assertIn('lastProfilesSignature: ""', app_js)
-        self.assertIn('lastProfileSelectSignature: ""', app_js)
-        self.assertIn('lastPackDetailSignature: ""', app_js)
-        self.assertIn('lastRuntimeSignature: ""', app_js)
-        self.assertIn('lastReadinessSignature: ""', app_js)
-        self.assertIn('lastRunReadinessSignature: ""', app_js)
-        self.assertIn("if (signature === state.lastProfilesSignature) {", app_js)
-        self.assertIn("if (signature === state.lastProfileSelectSignature) {", app_js)
-        self.assertIn("if (signature === state.lastPackDetailSignature) {", app_js)
-        self.assertIn("if (signature === state.lastRuntimeSignature) {", app_js)
-        self.assertIn("if (signature !== state.lastReadinessSignature) {", app_js)
-        self.assertIn("if (signature === state.lastRunReadinessSignature) {", app_js)
-        self.assertIn("state.lastMessageSignatures[id] === signature", app_js)
+        self.assertIn('return "interrupt";', app_js)
 
     def test_dashboard_can_relaunch_as_admin(self) -> None:
         with patch(
@@ -1089,6 +1414,21 @@ class FakeTargetPreviewService:
             height=180,
             data_url="data:image/png;base64,ZmFrZQ==",
         )
+
+
+class FakeCropTargetPreviewService(FakeTargetPreviewService):
+    def capture_image(self, profile_path: Path):
+        metadata = type(
+            "PreviewMetadata",
+            (),
+            {
+                "title": "Demo Window",
+                "process_name": "python.exe",
+                "width": 320,
+                "height": 180,
+            },
+        )()
+        return metadata, Image.new("RGB", (320, 180), color=(20, 40, 60))
 
 
 class DecoratedWindowAdapter:

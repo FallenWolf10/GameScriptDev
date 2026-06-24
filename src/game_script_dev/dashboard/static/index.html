@@ -47,90 +47,260 @@
         </section>
       </div>
 
-      <section class="panel readiness-panel">
-        <div class="panel-heading">
-          <h2>Readiness</h2>
-          <span id="readiness-badge" class="badge">Unknown</span>
-        </div>
-        <div class="readiness-content">
-          <figure id="target-preview" class="target-preview">
-            <div id="target-preview-frame" class="target-preview-frame">
-              <span id="target-preview-empty" class="muted">No target preview</span>
-              <img id="target-preview-image" alt="Matched target window screenshot" hidden />
-            </div>
-            <figcaption id="target-preview-meta" class="muted">Refresh readiness to capture the matched target client area.</figcaption>
-          </figure>
-          <div id="runtime-status" class="runtime-status">
-            <div>
-              <strong id="runtime-status-title">Dashboard privilege unknown</strong>
-              <p id="runtime-status-message" class="muted">Checking local dashboard runtime.</p>
-            </div>
-            <button id="runtime-admin-button" type="button" hidden>Relaunch as Admin</button>
+      <div class="workspace-shell">
+        <section class="panel workspace-tabs-panel">
+          <div class="workspace-tabs" id="workspace-tabs">
+            <button id="operate-tab" class="workspace-tab active" type="button" data-view="operate">Operate</button>
+            <button id="builder-tab" class="workspace-tab" type="button" data-view="builder">Builder</button>
           </div>
-          <dl class="status-grid">
-            <div>
-              <dt>Target</dt>
-              <dd id="target-status">not_checked</dd>
-            </div>
-            <div>
-              <dt>Client Resolution</dt>
-              <dd id="resolution-status">not_checked</dd>
-            </div>
-            <div>
-              <dt>Compatibility</dt>
-              <dd id="compatibility-status">not_applicable</dd>
-            </div>
-            <div>
-              <dt>Current State</dt>
-              <dd id="current-state">idle</dd>
-            </div>
-            <div>
-              <dt>Final Result</dt>
-              <dd id="final-result">none</dd>
-            </div>
-          </dl>
-          <h3>Blockers</h3>
-          <ul id="blockers" class="message-list"></ul>
-          <h3>Warnings</h3>
-          <ul id="warnings" class="message-list"></ul>
-          <h3>Profile Pack</h3>
-          <div id="profile-pack-detail" class="pack-detail"></div>
-          <h3>Live Verification</h3>
-          <ol id="live-verification-checklist" class="checklist">
-            <li>Start the selected target window.</li>
-            <li>Run and confirm a successful dashboard dry run.</li>
-            <li>Refresh readiness and resolve every blocker.</li>
-            <li>Start live mode only when ready for real input.</li>
-            <li>Review the final result, log, and screenshot artifacts.</li>
-          </ol>
-        </div>
-      </section>
+          <p id="workspace-mode-caption" class="muted">Run profiles, inspect readiness, and review artifacts.</p>
+        </section>
 
-      <section class="panel log-panel">
-        <div class="panel-heading">
-          <h2>Log</h2>
-          <span id="selected-run" class="muted">No run selected</span>
+        <div id="operate-view" class="workspace-view workspace-view-active">
+          <section class="panel readiness-panel">
+            <div class="panel-heading">
+              <h2>Readiness</h2>
+              <span id="readiness-badge" class="badge">Unknown</span>
+            </div>
+            <div class="readiness-content">
+              <figure id="target-preview" class="target-preview">
+                <div id="target-preview-frame" class="target-preview-frame">
+                  <span id="target-preview-empty" class="muted">No target preview</span>
+                  <img id="target-preview-image" alt="Matched target window screenshot" hidden />
+                </div>
+                <figcaption id="target-preview-meta" class="muted">Refresh readiness to capture the matched target client area.</figcaption>
+              </figure>
+              <div id="runtime-status" class="runtime-status">
+                <div>
+                  <strong id="runtime-status-title">Dashboard privilege unknown</strong>
+                  <p id="runtime-status-message" class="muted">Checking local dashboard runtime.</p>
+                </div>
+                <button id="runtime-admin-button" type="button" hidden>Relaunch as Admin</button>
+              </div>
+              <dl class="status-grid">
+                <div>
+                  <dt>Target</dt>
+                  <dd id="target-status">not_checked</dd>
+                </div>
+                <div>
+                  <dt>Client Resolution</dt>
+                  <dd id="resolution-status">not_checked</dd>
+                </div>
+                <div>
+                  <dt>Compatibility</dt>
+                  <dd id="compatibility-status">not_applicable</dd>
+                </div>
+                <div>
+                  <dt>Current State</dt>
+                  <dd id="current-state">idle</dd>
+                </div>
+                <div>
+                  <dt>Final Result</dt>
+                  <dd id="final-result">none</dd>
+                </div>
+              </dl>
+              <h3>Blockers</h3>
+              <ul id="blockers" class="message-list"></ul>
+              <h3>Warnings</h3>
+              <ul id="warnings" class="message-list"></ul>
+              <h3>Profile Pack</h3>
+              <div id="profile-pack-detail" class="pack-detail"></div>
+              <h3>Live Verification</h3>
+              <ol id="live-verification-checklist" class="checklist">
+                <li>Start the selected target window.</li>
+                <li>Run and confirm a successful dashboard dry run.</li>
+                <li>Refresh readiness and resolve every blocker.</li>
+                <li>Start live mode only when ready for real input.</li>
+                <li>Review the final result, log, and screenshot artifacts.</li>
+              </ol>
+            </div>
+          </section>
+
+          <section class="panel log-panel">
+            <div class="panel-heading">
+              <h2>Log</h2>
+              <span id="selected-run" class="muted">No run selected</span>
+            </div>
+            <pre id="log-output"></pre>
+            <div class="log-details-section">
+              <div class="panel-heading artifact-heading">
+                <h2>Artifacts</h2>
+              </div>
+              <div id="primary-artifact" class="primary-artifact">
+                <span id="latest-screenshot-link" class="muted">Latest artifact: none</span>
+              </div>
+              <div id="artifacts" class="artifacts"></div>
+              <div class="panel-heading artifact-heading">
+                <h2>Run Review</h2>
+              </div>
+              <ol id="run-review-timeline" class="timeline"></ol>
+              <div id="selected-run-readiness" class="panel-heading artifact-heading">
+                <h2>Selected Run Readiness</h2>
+                <span id="run-readiness-badge" class="badge">Unknown</span>
+              </div>
+              <ul id="run-readiness-blockers" class="message-list"></ul>
+            </div>
+          </section>
         </div>
-        <pre id="log-output"></pre>
-        <div class="log-details-section">
-          <div class="panel-heading artifact-heading">
-            <h2>Artifacts</h2>
+
+        <section id="builder-view" class="panel builder-panel workspace-view">
+          <div class="panel-heading">
+            <div>
+              <h2>Profile Builder</h2>
+              <p id="builder-subtitle" class="muted">Profile pack authoring backed by the existing profile schema and YAML serializer.</p>
+            </div>
+            <div class="builder-toolbar">
+              <span id="builder-save-status" class="muted">No draft loaded</span>
+              <button id="builder-validate-button" type="button">Validate Draft</button>
+              <button id="builder-check-pack-button" type="button">Check Pack</button>
+              <button id="builder-revert-button" type="button">Revert</button>
+              <button id="builder-save-button" type="button">Save Profile</button>
+              <span id="builder-validity-badge" class="badge">Unknown</span>
+            </div>
           </div>
-          <div id="primary-artifact" class="primary-artifact">
-            <span id="latest-screenshot-link" class="muted">Latest artifact: none</span>
+
+          <div class="builder-layout">
+            <section class="builder-column builder-column-primary">
+              <div class="builder-card">
+                <div class="panel-heading builder-card-heading">
+                  <h3>Scaffold Pack</h3>
+                  <span id="builder-scaffold-status" class="muted">Create a new pack under profiles/</span>
+                </div>
+                <div id="builder-scaffold-form" class="builder-form-grid"></div>
+              </div>
+
+              <div class="builder-card">
+                <div class="panel-heading builder-card-heading">
+                  <h3>Profile Settings</h3>
+                  <span id="builder-profile-path" class="muted">No profile selected</span>
+                </div>
+                <div id="builder-settings-grid" class="builder-form-grid"></div>
+              </div>
+
+              <div class="builder-card">
+                <div class="panel-heading builder-card-heading">
+                  <div>
+                    <h3>State Graph</h3>
+                    <span id="builder-graph-summary" class="muted">Waiting for profile data</span>
+                  </div>
+                  <div class="builder-inline-actions">
+                    <input id="builder-new-state-name" type="text" placeholder="new_state" />
+                    <button id="builder-add-state-button" type="button">Add State</button>
+                  </div>
+                </div>
+                <div id="builder-graph" class="builder-graph"></div>
+              </div>
+
+              <div class="builder-card">
+                <div class="panel-heading builder-card-heading">
+                  <h3>Validation</h3>
+                  <span id="builder-validation-count" class="muted">0 issues</span>
+                </div>
+                <ul id="builder-validation-list" class="message-list builder-validation-list"></ul>
+                <div id="builder-pack-check" class="builder-pack-check muted">Pack checks will appear here for pack-shaped profiles.</div>
+              </div>
+            </section>
+
+            <section class="builder-column builder-column-secondary">
+              <div class="builder-card">
+                <div class="panel-heading builder-card-heading">
+                  <h3>Visual Tools</h3>
+                  <div class="builder-inline-actions">
+                    <span id="builder-preview-status" class="muted">Target preview not loaded</span>
+                    <button id="builder-preview-refresh-button" type="button">Refresh Preview</button>
+                  </div>
+                </div>
+                <div class="builder-visual-layout">
+                  <div class="builder-preview-shell">
+                    <div id="builder-preview-stage" class="builder-preview-stage">
+                      <img id="builder-preview-image" alt="Builder target preview" hidden />
+                      <svg id="builder-preview-overlay" class="builder-preview-overlay" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
+                      <div id="builder-preview-empty" class="muted">Preview unavailable</div>
+                    </div>
+                    <div id="builder-preview-meta" class="builder-anchor-meta">Draw a region or template crop on the latest target preview.</div>
+                  </div>
+                  <div class="builder-visual-sidebar">
+                    <div class="builder-detail-section">
+                      <h4>Regions</h4>
+                      <div class="builder-form-grid">
+                        <label class="builder-field">
+                          <span>Region Name</span>
+                          <input id="builder-region-name" type="text" placeholder="menu_button" />
+                        </label>
+                        <div class="builder-inline-actions builder-field-full">
+                          <button id="builder-region-save-button" type="button">Save Drawn Region</button>
+                          <button id="builder-region-remove-button" type="button">Remove Region</button>
+                        </div>
+                      </div>
+                      <ul id="builder-region-list" class="builder-detail-list"></ul>
+                    </div>
+                    <div class="builder-detail-section">
+                      <h4>Anchors</h4>
+                      <div class="builder-form-grid">
+                        <label class="builder-field">
+                          <span>Bucket</span>
+                          <select id="builder-anchor-bucket-select">
+                            <option value="required_anchors">Required</option>
+                            <option value="optional_anchors">Optional</option>
+                            <option value="forbidden_anchors">Forbidden</option>
+                          </select>
+                        </label>
+                        <label class="builder-field">
+                          <span>Anchor Type</span>
+                          <select id="builder-anchor-type-select">
+                            <option value="template">Template</option>
+                            <option value="text">Text</option>
+                          </select>
+                        </label>
+                        <label class="builder-field">
+                          <span>Anchor Name</span>
+                          <input id="builder-anchor-name" type="text" placeholder="home_title" />
+                        </label>
+                        <label class="builder-field">
+                          <span>Text / Asset Name</span>
+                          <input id="builder-anchor-text" type="text" placeholder="Home" />
+                        </label>
+                        <div class="builder-inline-actions builder-field-full">
+                          <button id="builder-anchor-save-button" type="button">Create Anchor</button>
+                          <button id="builder-anchor-crop-button" type="button">Crop Template Anchor</button>
+                        </div>
+                      </div>
+                      <ul id="builder-anchor-list" class="builder-detail-list"></ul>
+                    </div>
+                    <div class="builder-detail-section">
+                      <h4>Assets</h4>
+                      <ul id="builder-asset-list" class="builder-detail-list"></ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="builder-card">
+                <div class="panel-heading builder-card-heading">
+                  <h3>State Detail</h3>
+                  <div class="builder-state-toolbar">
+                    <select id="builder-state-select" aria-label="Builder state"></select>
+                    <button id="builder-set-initial-button" type="button">Set Initial</button>
+                    <button id="builder-delete-state-button" type="button">Delete State</button>
+                    <select id="builder-add-action-select" aria-label="Add action type"></select>
+                    <button id="builder-add-action-button" type="button">Add Action</button>
+                  </div>
+                </div>
+                <div id="builder-state-editor" class="builder-form-grid"></div>
+                <div id="builder-state-detail" class="builder-state-detail"></div>
+              </div>
+
+              <div class="builder-card">
+                <div class="panel-heading builder-card-heading">
+                  <h3>YAML Preview</h3>
+                  <span class="muted">Generated source of truth</span>
+                </div>
+                <pre id="builder-yaml-preview" class="builder-yaml-preview"></pre>
+              </div>
+            </section>
           </div>
-          <div id="artifacts" class="artifacts"></div>
-          <div class="panel-heading artifact-heading">
-            <h2>Run Review</h2>
-          </div>
-          <ol id="run-review-timeline" class="timeline"></ol>
-          <div id="selected-run-readiness" class="panel-heading artifact-heading">
-            <h2>Selected Run Readiness</h2>
-            <span id="run-readiness-badge" class="badge">Unknown</span>
-          </div>
-          <ul id="run-readiness-blockers" class="message-list"></ul>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
 
     <script src="/app.js"></script>
