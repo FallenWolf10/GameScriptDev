@@ -10,6 +10,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
 opencv = [
     "opencv-python>=4.10",
 ]

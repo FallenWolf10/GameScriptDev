@@ -48,6 +48,49 @@ The current adapter boundaries are:
 - `VisionAdapter`
 - `InputAdapter`
 
+## Environment Setup
+
+This repository is intended to run from a project-local virtual environment on
+Windows with Python 3.11. Using a local `.venv` avoids the "works on one
+computer but not another" problem caused by globally installed packages.
+
+Bootstrap a fresh machine with the repo-owned setup script:
+
+```powershell
+.\scripts\setup.ps1
+```
+
+That script will:
+
+- create `.venv/`
+- upgrade `pip`
+- install the project plus developer tools from `.[dev]`
+- optionally install OpenCV support when requested
+- run the built-in `doctor` check to catch missing runtime pieces early
+
+Optional flags:
+
+```powershell
+.\scripts\setup.ps1 -IncludeOptionalOpencv
+.\scripts\setup.ps1 -IncludeOptionalOcr
+```
+
+OCR requires both the Python package and the native Tesseract application to be
+installed on the machine. The Python package alone is not sufficient.
+
+If you prefer the manual path, the equivalent commands are:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .[dev]
+python -m game_script_dev doctor --workspace . --logs logs
+```
+
+The repo also includes `.python-version` with `3.11` so version managers such
+as `pyenv-win` can automatically select the expected interpreter.
+
 The first concrete vision implementation uses Pillow and NumPy for small, testable template matching. It can be replaced by OpenCV later if performance or matching tolerance needs increase.
 
 State execution failures retry the current state up to the profile `max_retries` value. After that, the runner follows `on_failure` when it names another state, or gracefully terminates when `on_failure` is `graceful_termination`.
@@ -128,6 +171,13 @@ $env:PYTHONPATH = "src"
 python -m game_script_dev doctor --workspace . --logs logs
 ```
 
+Run the automated test suite after setup:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m pytest
+```
+
 For manual live verification against the repo-owned target, see
 [docs/LOCAL_DEMO_TARGET.md](docs/LOCAL_DEMO_TARGET.md).
 
@@ -174,3 +224,21 @@ Live mode is explicit and requires confirmation before it can control the deskto
 ## Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the implementation roadmap and current checkpoint.
+
+## Reproducibility Guidance
+
+For this project, Docker is useful for linting, tests, or pure validation
+workflows, but it is not the best primary solution for live automation because
+the runner depends on the host Windows desktop, target windows, screenshots,
+and input APIs.
+
+The most reliable baseline is:
+
+- pin the Python version to 3.11
+- always work inside `.venv`
+- install from the repo manifest instead of ad hoc `pip install` commands
+- keep every required package declared in `pyproject.toml`
+- run `doctor` and `pytest` on each new machine
+
+If a machine needs a package that is not declared here, treat that as a repo
+issue and add it to the manifest instead of fixing only that one computer.
