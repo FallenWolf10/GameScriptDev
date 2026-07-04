@@ -498,8 +498,13 @@ Anchors can appear in:
   - Chained timing reference:
     after each `start_continuous_input`, add an explicit `wait`; a useful
     baseline is `wait = previous stop_after_seconds - 0.5`
+  - A continuous-input `name` cannot be started again along the success path
+    while it is still active. Profile validation blocks the run before it
+    starts when a duplicate start is reachable.
 - `stop_continuous_input`
   - Fields: `name`
+  - The named continuous input must be active at that point on the success
+    path. Stop it before reusing the same name.
 - `wait_for_state`
   - Fields: `state`, optional `timeout_seconds`, optional
     `poll_interval_seconds`

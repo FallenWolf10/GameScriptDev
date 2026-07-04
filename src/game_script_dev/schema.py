@@ -385,6 +385,7 @@ def validate_profile(profile: Profile, profile_dir: Path) -> None:
         )
 
     _validate_state_graph(profile, errors)
+    _validate_continuous_input_lifecycle(profile, errors)
 
     if errors:
         raise ProfileValidationError("; ".join(errors))
@@ -447,6 +448,132 @@ def _validate_failure_transition_loops(
                 break
             path.append(current)
             current = state.on_failure
+
+
+def _validate_continuous_input_lifecycle(
+    profile: Profile,
+    errors: list[str],
+) -> None:
+    if profile.initial_state not in profile.states:
+        return
+
+    pending: list[tuple[str, tuple[tuple[str, float | None], ...]]] = [
+        (profile.initial_state, ())
+    ]
+    visited: set[tuple[str, tuple[tuple[str, float | None], ...]]] = set()
+    reported: set[tuple[str, int, str]] = set()
+
+    while pending:
+        state_name, active_items = pending.pop()
+        visit_key = (state_name, active_items)
+        if visit_key in visited:
+            continue
+        visited.add(visit_key)
+
+        state = profile.states[state_name]
+        if state.terminal:
+            continue
+
+        active = dict(active_items)
+        for index, action in enumerate(state.actions):
+            _expire_continuous_inputs(active)
+            name = action.data.get("name")
+            if not isinstance(name, str) or not name.strip():
+                _advance_continuous_input_time(
+                    active,
+                    _action_duration_seconds(action),
+                )
+                continue
+            name = name.strip()
+            issue_key = (state_name, index, name)
+            action_context = f"state '{state_name}' actions[{index}]"
+
+            if action.type == "start_continuous_input":
+                if name in active and issue_key not in reported:
+                    reported.add(issue_key)
+                    errors.append(
+                        f"continuous input '{name}' is already active before "
+                        f"{action_context}; stop it before starting it again"
+                    )
+                else:
+                    stop_after = action.data.get("stop_after_seconds")
+                    active[name] = (
+                        float(stop_after)
+                        if isinstance(stop_after, (int, float))
+                        and not isinstance(stop_after, bool)
+                        else None
+                    )
+            elif action.type == "stop_continuous_input":
+                if name not in active and issue_key not in reported:
+                    reported.add(issue_key)
+                    errors.append(
+                        f"continuous input '{name}' is not active before "
+                        f"{action_context}; remove the stop or start it first"
+                    )
+                active.pop(name, None)
+
+            _advance_continuous_input_time(
+                active,
+                _action_duration_seconds(action),
+            )
+
+        if state.on_success in profile.states:
+            normalized_active = tuple(
+                sorted(
+                    (
+                        name,
+                        round(remaining, 9)
+                        if remaining is not None
+                        else None,
+                    )
+                    for name, remaining in active.items()
+                )
+            )
+            pending.append((state.on_success, normalized_active))
+
+
+def _expire_continuous_inputs(
+    active: dict[str, float | None],
+) -> None:
+    for name in [
+        name
+        for name, remaining in active.items()
+        if remaining is not None and remaining <= 0
+    ]:
+        active.pop(name, None)
+
+
+def _advance_continuous_input_time(
+    active: dict[str, float | None],
+    seconds: float,
+) -> None:
+    if seconds <= 0:
+        return
+    for name, remaining in list(active.items()):
+        if remaining is not None:
+            active[name] = remaining - seconds
+    _expire_continuous_inputs(active)
+
+
+def _action_duration_seconds(action: Action) -> float:
+    duration_field = {
+        "hold_click": "seconds",
+        "press_key": "seconds",
+        "press_keys": "seconds",
+        "hold_key": "seconds",
+        "hold_keys": "seconds",
+        "repeat_key": "repeat_for_seconds",
+        "hold_key_while_repeating_key": "hold_seconds",
+        "move_mouse": "seconds",
+        "hold_mouse_button_and_move": "seconds",
+        "wait": "seconds",
+    }.get(action.type)
+    if duration_field is None:
+        return 0.0
+    value = action.data.get(duration_field, 0.0)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return max(0.0, float(value))
+    return 0.0
 
 
 def _state_from_mapping(name: str, raw: Any) -> State:

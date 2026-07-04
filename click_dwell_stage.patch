@@ -1,0 +1,243 @@
+diff --git a/src/game_script_dev/adapters/live.py b/src/game_script_dev/adapters/live.py
+--- a/src/game_script_dev/adapters/live.py
++++ b/src/game_script_dev/adapters/live.py
+@@ -60,6 +60,7 @@
+ TOKEN_QUERY = 0x0008
+ TOKEN_INTEGRITY_LEVEL = 25
+ PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+ DEFAULT_PRESS_KEY_SECONDS = 0.1
++DEFAULT_MOUSE_CLICK_SECONDS = 0.1
+ MOUSE_MOVE_STEP_SECONDS = 0.01
+ 
+ KEY_CODES: dict[str, int] = {
+@@ -569,6 +570,7 @@
+         background_key_method: str = "post_message_simple",
+         use_qwerty_physical_keys: bool = False,
+         press_key_duration: float = DEFAULT_PRESS_KEY_SECONDS,
++        mouse_click_duration: float = DEFAULT_MOUSE_CLICK_SECONDS,
+     ) -> None:
+         self.target_window = target_window
+         self.profile = profile
+@@ -587,6 +589,7 @@
+         self.background_key_method = background_key_method
+         self.use_qwerty_physical_keys = use_qwerty_physical_keys
+         self.press_key_duration = press_key_duration
++        self.mouse_click_duration = mouse_click_duration
+         self.key_mapper: QwertyPhysicalKeyMapper | None = None
+         self._continuous_inputs: dict[str, _ContinuousInputTask] = {}
+         self._continuous_inputs_lock = threading.Lock()
+@@ -624,14 +627,15 @@
+     ) -> None:
+         mode = self.input_mode if input_mode is None else input_mode
+         window = self._verify_live_target(mode)
+-        if mode == "background_window_messages":
+-            sender = self._background_mouse_sender()
+-            sender.click(window, int(x), int(y))
+-            return
+-        absolute_x = window.content_left + int(x)
+-        absolute_y = window.content_top + int(y)
+-        sender = self._mouse_sender()
+-        sender.click(absolute_x, absolute_y)
++        self._tap_mouse(
++            window=window,
++            mode=mode,
++            x=int(x),
++            y=int(y),
++            stop_event=None,
++            deadline=None,
++            duration=self.mouse_click_duration,
++        )
+@@ -1629,12 +1633,15 @@
+         x: int,
+         y: int,
+     ) -> None:
+-        if mode == "background_window_messages":
+-            sender = self._background_mouse_sender()
+-            sender.click(window, x, y)
+-            return
+-        sender = self._mouse_sender()
+-        sender.click(window.left + x, window.top + y)
++        self._tap_mouse(
++            window=window,
++            mode=mode,
++            x=x,
++            y=y,
++            stop_event=None,
++            deadline=None,
++            duration=self.mouse_click_duration,
++        )
+@@ -1716,6 +1723,47 @@
+         finally:
+             sender.key_up(virtual_key)
+ 
++    def _tap_mouse(
++        self,
++        window: TargetWindow,
++        mode: str,
++        x: int,
++        y: int,
++        stop_event: threading.Event | None,
++        deadline: float | None,
++        duration: float,
++    ) -> None:
++        self._validate_duration(duration, "live mouse click")
++        if mode == "background_window_messages":
++            sender = self._background_mouse_sender()
++            sender.button_down(window, x, y)
++            try:
++                if stop_event is None:
++                    self._sleep_for(duration)
++                else:
++                    self._wait_for_stop_event(
++                        stop_event,
++                        self._limit_wait(duration, deadline),
++                    )
++            finally:
++                sender.button_up(window, x, y)
++            return
++
++        sender = self._mouse_sender()
++        absolute_x = window.content_left + x
++        absolute_y = window.content_top + y
++        sender.button_down(absolute_x, absolute_y)
++        try:
++            if stop_event is None:
++                self._sleep_for(duration)
++            else:
++                self._wait_for_stop_event(
++                    stop_event,
++                    self._limit_wait(duration, deadline),
++                )
++        finally:
++            sender.button_up(absolute_x, absolute_y)
++
+     def _continuous_deadline(self, stop_after: float | None) -> float | None:
+         if stop_after is None:
+             return None
+diff --git a/tests/test_live_input_adapter.py b/tests/test_live_input_adapter.py
+--- a/tests/test_live_input_adapter.py
++++ b/tests/test_live_input_adapter.py
+@@ -715,6 +715,7 @@
+             focus_verifier=FakeFocusVerifier(is_foreground=False),
+             regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
+             input_mode="background_window_messages",
++            mouse_click_duration=0.005,
+         )
+ 
+         adapter.start_continuous_input(
+@@ -728,8 +729,10 @@
+         time.sleep(0.04)
+         adapter.stop_continuous_input("keep_clicking")
+ 
+-        click_events = [event for event in sender.events if event == ("click", 100, 25, 40)]
+-        self.assertGreaterEqual(len(click_events), 2)
++        down_events = [event for event in sender.events if event == ("down", 100, 25, 40)]
++        up_events = [event for event in sender.events if event == ("up", 100, 25, 40)]
++        self.assertGreaterEqual(len(down_events), 2)
++        self.assertEqual(len(down_events), len(up_events))
+@@ -872,33 +875,60 @@
+     def test_background_mode_clicks_region_without_foreground_check(self) -> None:
+         sender = FakeBackgroundMouseSender()
+         focus = FakeFocusVerifier(is_foreground=False)
++        slept: list[float] = []
+         adapter = LiveInputAdapter(
+             target_window=TARGET_WINDOW,
+             background_mouse_sender=sender,
+             focus_verifier=focus,
+             regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
+             input_mode="background_window_messages",
++            sleeper=slept.append,
+         )
+ 
+         adapter.click_region("start")
+ 
+-        self.assertEqual(sender.events, [("click", 100, 25, 40)])
++        self.assertEqual(sender.events, [("down", 100, 25, 40), ("up", 100, 25, 40)])
++        self.assertEqual(slept, [0.1])
+         self.assertEqual(focus.checked_windows, [])
+ 
+     def test_click_region_refocuses_target_window_before_foreground_click(self) -> None:
+         sender = FakeMouseSender()
+         window_adapter = FakeWindowAdapter(can_focus=True)
++        slept: list[float] = []
+         adapter = LiveInputAdapter(
+             target_window=TARGET_WINDOW,
+             mouse_sender=sender,
+             focus_verifier=FakeFocusVerifier(is_foreground=False),
+             window_adapter=window_adapter,  # type: ignore[arg-type]
+             regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
++            sleeper=slept.append,
+         )
+ 
+         adapter.click_region("start")
+ 
+-        self.assertEqual(sender.events, [("click", 25, 40)])
++        self.assertEqual(sender.events, [("down", 25, 40), ("up", 25, 40)])
++        self.assertEqual(slept, [0.1])
+         self.assertEqual(window_adapter.controllers_requested, 1)
+         self.assertEqual(window_adapter.confirm_calls, [TARGET_WINDOW])
+ 
+     def test_click_region_can_override_background_profile_to_foreground(self) -> None:
+         foreground_sender = FakeMouseSender()
+         background_sender = FakeBackgroundMouseSender()
+         window_adapter = FakeWindowAdapter(can_focus=True)
++        slept: list[float] = []
+         adapter = LiveInputAdapter(
+             target_window=TARGET_WINDOW,
+             mouse_sender=foreground_sender,
+             background_mouse_sender=background_sender,
+             focus_verifier=FakeFocusVerifier(is_foreground=False),
+             window_adapter=window_adapter,  # type: ignore[arg-type]
+             regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
+             input_mode="background_window_messages",
++            sleeper=slept.append,
+         )
+ 
+         adapter.click_region("start", input_mode="foreground")
+ 
+-        self.assertEqual(foreground_sender.events, [("click", 25, 40)])
++        self.assertEqual(foreground_sender.events, [("down", 25, 40), ("up", 25, 40)])
+         self.assertEqual(background_sender.events, [])
++        self.assertEqual(slept, [0.1])
+         self.assertEqual(window_adapter.confirm_calls, [TARGET_WINDOW])
+ 
+     def test_click_region_uses_client_origin_for_foreground_clicks(self) -> None:
+         sender = FakeMouseSender()
++        slept: list[float] = []
+         window = TargetWindow(
+             title="decorated",
+             process_name="demo.exe",
+@@ -917,11 +947,32 @@
+             mouse_sender=sender,
+             focus_verifier=FakeFocusVerifier(),
+             regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
++            sleeper=slept.append,
+         )
+ 
+         adapter.click_region("start")
+ 
+-        self.assertEqual(sender.events, [("click", 133, 271)])
++        self.assertEqual(sender.events, [("down", 133, 271), ("up", 133, 271)])
++        self.assertEqual(slept, [0.1])
++
++    def test_click_region_attempts_release_when_sleep_fails(self) -> None:
++        sender = FakeMouseSender()
++
++        def failing_sleep(seconds: float) -> None:
++            raise RuntimeError(f"sleep failed at {seconds}")
++
++        adapter = LiveInputAdapter(
++            target_window=TARGET_WINDOW,
++            mouse_sender=sender,
++            focus_verifier=FakeFocusVerifier(),
++            regions={"start": type("Region", (), {"x": 10, "y": 20, "width": 30, "height": 40})()},
++            sleeper=failing_sleep,
++        )
++
++        with self.assertRaises(RuntimeError):
++            adapter.click_region("start")
++
++        self.assertEqual(sender.events, [("down", 25, 40), ("up", 25, 40)])
+ 
+     def test_hold_click_background_mode_holds_then_releases(self) -> None:
+         sender = FakeBackgroundMouseSender()

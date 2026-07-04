@@ -270,9 +270,13 @@ states:
         key: f
         repeat_every_seconds: 0.2
         seconds: 0.1
+    on_success: keep_alive
+    on_failure: failed
+  keep_alive:
+    actions:
       - type: wait
         seconds: 1
-    on_success: home_screen
+    on_success: keep_alive
     on_failure: failed
   failed:
     terminal: true
@@ -718,6 +722,123 @@ states:
             profile = load_profile(profile_path)
 
             validate_profile(profile, profile_path.parent)
+
+    def test_rejects_duplicate_continuous_input_start_across_states(self) -> None:
+        profile_yaml = """
+version: 1
+name: Duplicate Continuous Input Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: first
+states:
+  first:
+    actions:
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+    on_success: second
+  second:
+    actions:
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+    on_success: done
+  done:
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaisesRegex(
+                ProfileValidationError,
+                "continuous input 'hold_s' is already active before "
+                "state 'second' actions\\[0\\]",
+            ):
+                validate_profile(profile, profile_path.parent)
+
+    def test_accepts_continuous_input_restart_after_stop(self) -> None:
+        profile_yaml = """
+version: 1
+name: Restart Continuous Input Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: first
+states:
+  first:
+    actions:
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+      - type: stop_continuous_input
+        name: hold_s
+    on_success: second
+  second:
+    actions:
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+    on_success: done
+  done:
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            validate_profile(profile, profile_path.parent)
+
+    def test_rejects_stop_for_inactive_continuous_input(self) -> None:
+        profile_yaml = """
+version: 1
+name: Inactive Continuous Input Stop Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home
+states:
+  home:
+    actions:
+      - type: stop_continuous_input
+        name: hold_s
+    on_success: done
+  done:
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+
+            profile = load_profile(profile_path)
+
+            with self.assertRaisesRegex(
+                ProfileValidationError,
+                "continuous input 'hold_s' is not active before "
+                "state 'home' actions\\[0\\]",
+            ):
+                validate_profile(profile, profile_path.parent)
 
     def test_rejects_continuous_press_key_without_repeat_interval(self) -> None:
         profile_yaml = """

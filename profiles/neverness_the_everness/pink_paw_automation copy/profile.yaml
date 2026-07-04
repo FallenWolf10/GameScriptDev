@@ -55,60 +55,9 @@ states:
 
   lg1:
     actions:
-      - type: start_continuous_input
-        name: hold_w
-        action: hold_key
-        key: w
-      - type: wait
-        seconds: 0.1
-      - type: start_continuous_input
-        name: press_left_shift
-        action: press_key
-        key: left_shift
-        seconds: 0.1
-        repeat_every_seconds: 0.2
-      - type: start_continuous_input
-        name: character_loop_cycle
-        action: sequence
-        sequence:
-          - action: press_key
-            key: "1"
-            repeat_every_seconds: 0.1
-            seconds: 0.1
-            run_for_seconds: 0.8
-          - action: press_key
-            key: "2"
-            repeat_every_seconds: 0.1
-            seconds: 0.1
-            run_for_seconds: 0.8
-          - action: press_key
-            key: "3"
-            repeat_every_seconds: 0.1
-            seconds: 0.1
-            run_for_seconds: 0.8
-          - action: press_key
-            key: "4"
-            repeat_every_seconds: 0.1
-            seconds: 0.1
-            run_for_seconds: 0.8
-      - type: wait
-        seconds: 4.5
-      - type: stop_continuous_input
-        name: hold_w
-      - type: start_continuous_input
-        name: hold_a
-        action: hold_key
-        key: a
-        seconds: 0.1
-        repeat_every_seconds: 0.2
-      - type: wait
-        seconds: 4.0
-      - type: stop_continuous_input
-        name: hold_a
-      - type: stop_continuous_input
-        name: character_loop_cycle
-      - type: stop_continuous_input
-        name: press_left_shift
+
+
+
     on_success: exit
     on_failure: failed_route
 
