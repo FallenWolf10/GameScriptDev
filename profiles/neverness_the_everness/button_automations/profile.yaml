@@ -1,0 +1,184 @@
+version: 1
+name: NevernessTheEverness Button Automations
+
+profile_pack:
+  game: NevernessTheEverness
+  game_mode: Button Automations
+  detection_strategy: template_matching
+  known_limitations:
+    - Reconstructed from the paired 2026-07-11 overlay and clean recordings at 1280x720.
+    - The route is timing-based; it is made repeatable by teleporting to the campfire before every pass.
+    - Farming uses repeated normal-attack clicks for a fixed 200-second window and does not track individual moving enemies.
+    - Menu clicks and the protection-point map icon are fixed to the recorded Chinese 1280x720 UI layout.
+    - Foreground mode is required for reliable combat clicks and map interaction.
+    - Dry-run gating is intentionally bypassed for this pack; the operator accepts responsibility for starting it directly in live mode.
+  compatibility:
+    target_identity: true
+    supported_resolution: true
+    required_assets: true
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  process_name: HTGame.exe
+  window_title_contains: NTE
+  input_mode: background_window_messages
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: verify_only
+
+execution:
+  default_timeout_seconds: 30
+  max_retries: 1
+  allow_infinite_run: true
+  manual_stop_is_dry_run_success: true
+  skip_dry_run_requirement: true
+
+regions:
+  campfire_map_icon:
+    x: 525
+    y: 205
+    width: 80
+    height: 85
+  teleport_button:
+    x: 940
+    y: 618
+    width: 315
+    height: 50
+  refresh_monsters_button:
+    x: 20
+    y: 112
+    width: 104
+    height: 99
+  normal_attack_area:
+    x: 700
+    y: 390
+    width: 80
+    height: 80
+
+initial_state: campfire_ready
+
+states:
+  campfire_ready:
+    required_anchors:
+      - name: campfire_interaction_prompt
+        type: template
+        asset: assets/campfire_prompt.png
+    actions:
+      - type: log
+        message: Campfire reset point confirmed; opening the protection-point menu.
+      - type: press_key
+        key: f
+        seconds: 0.1
+      - type: wait
+        seconds: 1.5
+    on_success: campfire_menu_open
+    on_failure: failed_loop
+
+  campfire_menu_open:
+    actions:
+      - type: log
+        message: Refreshing the monsters before starting the recorded route.
+      - type: click_point
+        region: refresh_monsters_button
+        input_mode: foreground
+      - type: wait
+        seconds: 2.0
+      - type: press_key
+        key: esc
+        seconds: 0.1
+    on_success: walk_to_farm
+    on_failure: failed_loop
+
+  walk_to_farm:
+    actions:
+      - type: log
+        message: Replaying the recorded overlapping W and A route from the deterministic campfire origin.
+      - type: start_continuous_input
+        name: route_forward
+        action: hold_key
+        key: w
+        stop_after_seconds: 4.6
+      - type: wait
+        seconds: 2.2
+      - type: start_continuous_input
+        name: route_left
+        action: hold_key
+        key: a
+        stop_after_seconds: 7.0
+      - type: wait
+        seconds: 6.5
+    on_success: fixed_farming
+    on_failure: failed_loop
+
+  fixed_farming:
+    actions:
+      - type: log
+        message: Starting the fixed normal-attack farming window; target displacement is cleared by the later teleport reset.
+      - type: start_continuous_input
+        name: normal_attack_loop
+        action: click_point
+        region: normal_attack_area
+        repeat_every_seconds: 0.2
+        stop_after_seconds: 200
+      - type: wait
+        seconds: 199.5
+    on_success: open_map
+    on_failure: failed_loop
+
+  open_map:
+    actions:
+      - type: log
+        message: Farming window complete; opening the map for a deterministic reset.
+      - type: press_key
+        key: m
+        seconds: 0.1
+      - type: wait_for_state
+        state: map_open
+        timeout_seconds: 10
+        poll_interval_seconds: 0.25
+    on_success: map_open
+    on_failure: failed_loop
+
+  map_open:
+    required_anchors:
+      - name: map_title
+        type: template
+        asset: assets/map_title.png
+    actions:
+      - type: click_point
+        region: campfire_map_icon
+      - type: wait_for_state
+        state: campfire_selected
+        timeout_seconds: 10
+        poll_interval_seconds: 0.25
+    on_success: campfire_selected
+    on_failure: failed_loop
+
+  campfire_selected:
+    required_anchors:
+      - name: campfire_details_panel
+        type: template
+        asset: assets/campfire_details.png
+    actions:
+      - type: log
+        message: Protection point selected; teleporting back to the route origin.
+      - type: click_point
+        region: teleport_button
+      - type: wait_for_state
+        state: campfire_ready
+        timeout_seconds: 45
+        poll_interval_seconds: 0.5
+    on_success: campfire_ready
+    on_failure: failed_loop
+
+  failed_loop:
+    terminal: true
+    result: failed_button_automations_loop

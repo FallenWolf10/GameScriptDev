@@ -175,23 +175,15 @@ states:
         name: hold_w
       - type: press_key
         key: f
-      - type: wait_for_state
-        state: first_gold_entry
-        timeout_seconds: 20
-        poll_interval_seconds: 0.2
     on_success: first_gold_entry
     on_failure: failed_route
 
   first_gold_entry:
-    required_anchors:
-      - name: first_gold_entry
-        type: template
-        asset: assets/door_break.png
     actions:
       - type: log
         message: Reached the first gold entry
       - type: wait
-        seconds: 3.0
+        seconds: 5.0
       - type: start_continuous_input
         name: hold_w
         action: hold_key
@@ -240,38 +232,24 @@ states:
         key: d
         seconds: 1.0
       - type: stop_continuous_input
+        name: press_left_shift
+      - type: stop_continuous_input
         name: character_loop_cycle
       - type: stop_continuous_input
         name: hold_w
-      - type: stop_continuous_input
-        name: press_left_shift
       - type: wait
         seconds: 0.5
       - type: press_key
         key: f
-      - type: wait_for_state
-        state: second_gold_entry
-        timeout_seconds: 20
-        poll_interval_seconds: 0.2
     on_success: second_gold_entry
     on_failure: failed_route
 
   second_gold_entry:
-    required_anchors:
-      - name: second_gold_entry
-        type: template
-        asset: assets/door_break.png
     actions:
       - type: log
         message: Reached the second gold entry
       - type: wait
-        seconds: 3.0
-      - type: start_continuous_input
-        name: press_f
-        action: press_key
-        key: f
-        seconds: 0.1
-        repeat_every_seconds: 0.2
+        seconds: 5.0
       - type: hold_keys
         keys: [w, a]
         seconds: 1.0
@@ -288,19 +266,19 @@ states:
         seconds: 0.1
         repeat_every_seconds: 0.2
       - type: wait
-        seconds: 1.0
+        seconds: 2.0
       - type: hold_key
         key: s
-        seconds: 4.0
+        seconds: 1.0
       - type: stop_continuous_input
         name: hold_a
       - type: stop_continuous_input
         name: press_left_shift
       - type: wait
-        seconds: 1.0
+        seconds: 0.5
       - type: hold_key
         key: d
-        seconds: 2.5
+        seconds: 2.0
       # After the stair
       - type: start_continuous_input
         name: hold_s
@@ -315,43 +293,56 @@ states:
         seconds: 0.1
         repeat_every_seconds: 0.2
       - type: wait
-        seconds: 3.0
-      - type: hold_key
-        key: a
         seconds: 1.0
+      - type: press_key
+        key: '2'
+        seconds: 0.1
+      - type: wait
+        seconds: 1.0
+      - type: press_key
+        key: '3'
+        seconds: 0.1
+      - type: wait
+        seconds: 1.0
+      - type: stop_continuous_input
+        name: press_left_shift
       - type: stop_continuous_input
         name: hold_s
       - type: hold_key
         key: a
-        seconds: 3.0
+        seconds: 0.5
+      - type: press_key
+        key: f
+        seconds: 0.1
+      - type: wait
+        seconds: 9.0
       - type: hold_keys
-        keys: [d, s]
+        keys: [s, d]
         seconds: 1.0
-      - type: stop_continuous_input
-        name: press_left_shift
-    on_success: lg1_e1
+      - type: press_key
+        key: f
+        seconds: 0.1
+    on_success: lg1_e1_elevator
     on_failure: failed_route
 
-  lg1_e1:
+  lg1_e1_elevator:
     actions:
       - type: log
-        message: Waiting to exit the elevator after crossing the second gold entry.
-      - type: stop_continuous_input
-        name: press_f
+        message: Enter lg1_e1_elevator
       - type: press_key
         key: "1"
         seconds: 0.1
       - type: wait
-        seconds: 5.0
-      - type: hold_keys
-        keys: [d, s]
-        seconds: 2.5
-      - type: hold_keys
-        keys: [w, a]
-        seconds: 0.5
+        seconds: 4.0
+      - type: hold_key
+        key: s
+        seconds: 2.0
       - type: hold_key
         key: w
-        seconds: 0.2
+        seconds: 0.5
+      - type: press_key
+        key: "1"
+        seconds: 0.1
       - type: start_continuous_input
         name: hold_w
         action: hold_key
@@ -397,14 +388,383 @@ states:
         name: hold_w
       - type: hold_key
         key: a
-        seconds: 3.0
+        seconds: 5.0
       - type: stop_continuous_input
         name: character_loop_cycle
       - type: stop_continuous_input
         name: press_left_shift
+    on_success: lg1_e1_gold_entry
+    on_failure: failed_route
+
+  lg1_e1_gold_entry:
+    actions:
+      - type: log
+        message: Enter lg1_e1_gold_entry
+      - type: wait
+        seconds: 1.0
+      - type: hold_key
+        key: a
+        seconds: 1.4
+      - type: hold_key
+        key: s
+        seconds: 2.5
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: start_continuous_input
+        name: character_loop_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "3"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "4"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+      - type: wait
+        seconds: 12.0
+      - type: hold_key
+        key: a
+        seconds: 1.0
+      - type: stop_continuous_input
+        name: character_loop_cycle
+      - type: stop_continuous_input
+        name: press_left_shift
+      - type: stop_continuous_input
+        name: hold_s
+      - type: hold_key
+        key: a
+        seconds: 0.5
+    on_success: lg1_e1_lazer
+    on_failure: failed_route
+
+  lg1_e1_lazer:
+    actions:
+      - type: press_key
+        key: '2'
+        seconds: 0.1
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+        stop_after_seconds: 4.0
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        repeat_every_seconds: 0.2
+        seconds: 0.1
+      - type: wait
+        seconds: 1.5
+      - type: hold_key
+        key: d
+        seconds: 0.5
+      - type: wait
+        seconds: 2.0
+      - type: stop_continuous_input
+        name: press_left_shift
+      - type: wait
+        seconds: 0.5
+      - type: start_continuous_input
+        name: hold_a
+        action: hold_key
+        key: a
+      - type: wait
+        seconds: 1.5
+      - type: press_key
+        key: space
+        seconds: 0.1
+      - type: wait
+        seconds: 0.1
+      - type: press_key
+        key: space
+        seconds: 0.1
+      - type: hold_key
+        key: s
+        seconds: 3.0
+      - type: stop_continuous_input
+        name: hold_a
+      - type: hold_key
+        key: w
+        seconds: 0.4
+      - type: hold_key
+        key: a
+        seconds: 2.5
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: start_continuous_input
+        name: character_loop_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "3"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "4"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+      - type: wait
+        seconds: 5.0
+      - type: stop_continuous_input
+        name: character_loop_cycle
+      - type: stop_continuous_input
+        name: press_left_shift
+      - type: stop_continuous_input
+        name: hold_s
+    on_success: lg1_e1_mob
+    on_failure: failed_route
+
+  lg1_e1_mob:
+    actions:
+      - type: hold_key
+        key: s
+        seconds: 2.0
+      - type: hold_key
+        key: w
+        seconds: 2.5
+      - type: wait
+        seconds: 2.0
+      - type: start_continuous_input
+        name: hold_s
+        action: hold_key
+        key: s
+      - type: wait
+        seconds: 0.1
+      - type: start_continuous_input
+        name: press_left_shift
+        action: press_key
+        key: left_shift
+        seconds: 0.1
+        repeat_every_seconds: 0.2
+      - type: start_continuous_input
+        name: character_loop_cycle
+        action: sequence
+        sequence:
+          - action: press_key
+            key: "1"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "2"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "3"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+          - action: press_key
+            key: "4"
+            repeat_every_seconds: 0.1
+            seconds: 0.1
+            run_for_seconds: 1.0
+      - type: wait
+        seconds: 4.0
+      - type: hold_key
+        key: a
+        seconds: 1.0
+      - type: stop_continuous_input
+        name: character_loop_cycle
+      - type: stop_continuous_input
+        name: press_left_shift
+      - type: stop_continuous_input
+        name: hold_s
+      - type: wait
+        seconds: 1.0
+      - type: press_key
+        key: f
+        seconds: 0.1
+      - type: wait
+        seconds: 9.0
+      - type: hold_keys
+        keys: [s, d]
+        seconds: 1.0
+      - type: press_key
+        key: f
+        seconds: 0.1
+    on_success: lg2
+    on_failure: failed_route
+
+  lg2:
+    actions:
+      - type: log
+        message: Enter lg2
+      - type: wait
+        seconds: 3.0
+      - type: press_key
+        key: w
+        seconds: 4.5
+      - type: start_continuous_input
+        name: press_f
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+      - type: hold_key
+        key: a
+        seconds: 1.0
+      - type: hold_keys
+        keys: [space, a]
+        seconds: 3.0
+      - type: wait
+        seconds: 11.0
+      - type: hold_key
+        key: w
+        seconds: 11.0
+      - type: hold_key
+        key: s
+        seconds: 1.0
+      - type: hold_key
+        key: a
+        seconds: 3.0
+      - type: hold_key
+        key: d
+        seconds: 0.5
+      - type: hold_key
+        key: s
+        seconds: 3.0
+      - type: hold_key
+        key: a
+        seconds: 0.5
+      - type: hold_key
+        key: d
+        seconds: 0.5
+      - type: stop_continuous_input
+        name: press_f
+      - type: hold_key
+        key: s
+        seconds: 6.0
+      - type: start_continuous_input
+        name: press_f
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+      - type: hold_key
+        key: d
+        seconds: 7.0
+      - type: hold_key
+        key: s
+        seconds: 1.0
+      - type: hold_key
+        key: d
+        seconds: 0.5
+      - type: wait
+        seconds: 1.0
+
+      - type: hold_key
+        key: w
+        seconds: 12.0
+      - type: hold_key
+        key: d
+        seconds: 3.0
+      - type: hold_key
+        key: s
+        seconds: 1.0
+      - type: hold_key
+        key: a
+        seconds: 0.5
+      - type: hold_key
+        key: s
+        seconds: 2.5
+      - type: hold_key
+        key: d
+        seconds: 0.8
+      - type: hold_key
+        key: a
+        seconds: 0.5
+      - type: hold_key
+        key: s
+        seconds: 7.0
+      - type: hold_keys
+        keys: [s, d]
+        seconds: 1.0
+
+      - type: hold_key
+        key: w
+        seconds: 1.5
+      - type: hold_keys
+        keys: [w, d]
+        seconds: 2.0
+      - type: hold_key
+        key: s
+        seconds: 1.3
+      - type: hold_key
+        key: d
+        seconds: 2.0
+      - type: hold_key
+        key: w
+        seconds: 1.5
+      - type: stop_continuous_input
+        name: press_f
+      - type: hold_key
+        key: d
+        seconds: 4.5
+      - type: hold_key
+        key: w
+        seconds: 4.0
+      - type: start_continuous_input
+        name: press_f
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+      - type: hold_key
+        key: a
+        seconds: 1.0
       - type: hold_keys
         keys: [w, a]
-        seconds: 3.0
+        seconds: 1.0
+
+
+
     on_success: lg1_e2
     on_failure: failed_route
 
@@ -412,153 +772,8 @@ states:
     actions:
       - type: log
         message: Waiting for the elevator exit after LG1.
-      - type: hold_key
-        key: s
-        seconds: 0.3
-      - type: start_continuous_input
-        name: hold_a
-        action: hold_key
-        key: a
       - type: wait
-        seconds: 0.1
-      - type: start_continuous_input
-        name: press_left_shift
-        action: press_key
-        key: left_shift
-        seconds: 0.1
-        repeat_every_seconds: 0.2
-      - type: wait
-        seconds: 2.5
-      - type: stop_continuous_input
-        name: hold_a
-      - type: stop_continuous_input
-        name: press_left_shift
-      - type: wait
-        seconds: 0.5
-      - type: start_continuous_input
-        name: hold_s
-        action: hold_key
-        key: s  
-      - type: wait
-        seconds: 0.1
-      - type: start_continuous_input
-        name: press_left_shift
-        action: press_key
-        key: left_shift
-        seconds: 0.1
-        repeat_every_seconds: 0.2
-      - type: wait
-        seconds: 6.0
-      - type: stop_continuous_input
-        name: hold_s
-      - type: stop_continuous_input
-        name: press_left_shift
-      - type: wait
-        seconds: 0.5
-      - type: hold_key
-        key: w
-        seconds: 0.3
-      - type: hold_key
-        key: a
-        seconds: 2.0
-      - type: start_continuous_input
-        name: hold_s
-        action: hold_key
-        key: s
-      - type: wait
-        seconds: 0.1
-      - type: start_continuous_input
-        name: press_left_shift
-        action: press_key
-        key: left_shift
-        repeat_every_seconds: 0.2
-        seconds: 0.1
-      - type: wait
-        seconds: 5.0
-      - type: stop_continuous_input
-        name: hold_s  
-      - type: stop_continuous_input
-        name: press_left_shift
-      - type: wait
-        seconds: 0.5
-      - type: hold_key
-        key: w
-        seconds: 0.3
-      - type: hold_key
-        key: a
-        seconds: 2.0
-      - type: start_continuous_input
-        name: hold_s
-        action: hold_key
-        key: s
-      - type: wait
-        seconds: 0.1
-      - type: start_continuous_input
-        name: press_left_shift
-        action: press_key
-        key: left_shift
-        repeat_every_seconds: 0.2
-        seconds: 0.1
-      - type: wait
-        seconds: 5.0
-      - type: stop_continuous_input
-        name: hold_s  
-      - type: stop_continuous_input
-        name: press_left_shift
-      - type: wait
-        seconds: 0.5
-      - type: hold_key
-        key: w
-        seconds: 0.3
-      - type: hold_key
-        key: a
-        seconds: 2.0
-      - type: start_continuous_input
-        name: hold_s
-        action: hold_key
-        key: s
-      - type: wait
-        seconds: 0.1
-      - type: start_continuous_input
-        name: press_left_shift
-        action: press_key
-        key: left_shift
-        repeat_every_seconds: 0.2
-        seconds: 0.1
-      - type: wait
-        seconds: 3.0
-      - type: stop_continuous_input
-        name: hold_s  
-      - type: stop_continuous_input
-        name: press_left_shift
-      - type: wait
-        seconds: 0.5
-      - type: hold_key
-        key: w
-        seconds: 0.3
-      - type: hold_key
-        key: a
-        seconds: 1.0
-      - type: start_continuous_input
-        name: hold_s
-        action: hold_key
-        key: s
-      - type: wait
-        seconds: 0.1
-      - type: start_continuous_input
-        name: press_left_shift
-        action: press_key
-        key: left_shift
-        repeat_every_seconds: 0.2
-        seconds: 0.1
-      - type: wait
-        seconds: 3.0
-      - type: stop_continuous_input
-        name: hold_s  
-      - type: stop_continuous_input
-        name: press_left_shift
-      - type: wait
-        seconds: 0.5
+        seconds: 10.0
     on_success: exit
     on_failure: failed_route
 

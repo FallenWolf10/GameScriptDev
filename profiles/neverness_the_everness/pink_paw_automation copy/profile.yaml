@@ -56,8 +56,46 @@ states:
   lg1:
     actions:
 
+      - type: start_continuous_input
+        name: press_f
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
+      - type: hold_key
+        key: d
+        seconds: 0.8
+      - type: hold_key
+        key: w
+        seconds: 10.0
+      - type: hold_keys
+        keys: [d, w]
+        seconds: 1.0
+      - type: hold_key
+        key: d
+        seconds: 1.0
+      - type: hold_key
+        key: s
+        seconds: 2.0
+      - type: hold_keys
+        keys: [s, space]
+        seconds: 2.0
 
-
+      - type: stop_continuous_input
+        name: press_f
+      - type: hold_key
+        key: d
+        seconds: 1.0
+      - type: hold_key
+        key: w
+        seconds: 3.6
+      - type: hold_key
+        key: a
+        seconds: 5.0
+      - type: start_continuous_input
+        name: press_f
+        action: press_key
+        key: f
+        repeat_every_seconds: 0.2
     on_success: exit
     on_failure: failed_route
 
