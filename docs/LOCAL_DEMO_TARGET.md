@@ -32,9 +32,12 @@ Run these steps on Windows:
    dashboard id is `demo__local_target`.
 3. Run a dashboard dry run for `profiles/demo/local_target/profile.yaml`.
 4. Confirm the dashboard readiness view no longer reports the target as absent.
-5. Start a live run only after typing the required `RUN` confirmation.
-6. Confirm the run reaches `success`.
-7. Inspect the daily log folder under `logs/YYYY-MM-DD/` and verify the run
+5. After all readiness blockers are resolved, select `Live Run`.
+6. Review the per-attempt Live Confirmation summary, verify that the Demo
+   Target, foreground input mode, and Saved Profile Version are correct, then
+   deliberately select `Start Live Run`.
+7. Confirm the run reaches `success`.
+8. Inspect the daily log folder under `logs/YYYY-MM-DD/` and verify the run
    folder contains `run.log` and screenshot artifacts showing the state flow.
 
 The demo profile uses small template markers instead of OCR text anchors so live

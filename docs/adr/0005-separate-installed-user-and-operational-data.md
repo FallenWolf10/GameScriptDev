@@ -1,0 +1,3 @@
+# Separate installed, user-authored, and operational data
+
+The Operator Application will keep Built-in Profile Packs read-only in its installation, place editable Profile Packs in a visible and selectable User Workspace that defaults to `Documents\GameScriptDev`, and keep settings, recovery drafts, logs, artifacts, and caches under `%LOCALAPPDATA%\GameScriptDev`. First launch explicitly confirms or selects the User Workspace after a read-only scan rather than silently creating or moving content. Editing a built-in pack creates a user-owned copy, and application updates or uninstallation must not silently remove the User Workspace; this avoids installation-permission and update-overwrite problems while preserving portability, backup, and Git-based authoring.

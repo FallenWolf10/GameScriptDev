@@ -6,3 +6,7 @@ __pycache__/
 .codex/
 logs/
 /artifacts/
+/build/
+/dist/
+/drafts/
+/src/*.egg-info/

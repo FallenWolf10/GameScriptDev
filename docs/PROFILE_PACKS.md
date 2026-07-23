@@ -57,6 +57,9 @@ Supported detection strategies are:
 The standard profile fields still declare target identity, supported
 resolution, states, regions, actions, interruptions, and execution settings.
 The profile-pack block records the compatibility review status for live mode.
+Resolution, region, and template dimensions use unvirtualized physical pixels
+inside the target client area; Windows display scaling is an execution
+environment property and must not be encoded into those values.
 
 Keyboard combo actions are also supported when a workflow needs simultaneous
 input. Use `hold_keys` to hold several keys together for a duration, or

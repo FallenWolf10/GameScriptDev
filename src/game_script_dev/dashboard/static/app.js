@@ -4,10 +4,24 @@ const state = {
   selectedProfileId: null,
   selectedRunId: null,
   selectedRunSummary: null,
+  selectedReadiness: null,
+  targetPreview: null,
+  activeRun: null,
+  activeWorkspace: "run",
+  activeSelectionView: "profiles",
+  activeDetailView: "readiness",
+  builderDocument: null,
+  builderSource: null,
+  builderDraft: null,
+  builderProfileId: null,
+  selectedBuilderState: null,
+  builderAutosaveTimer: null,
+  builderAutosavePending: false,
+  createProfileIdTouched: false,
+  createProfileNameTouched: false,
   pollTimer: null,
   pollCount: 0,
   runtime: null,
-  autoDryRunStartedByProfileId: {},
   lastPreviewRefreshAt: 0,
   previewStreamProfileId: null,
   runLogOffsets: {},
@@ -48,7 +62,10 @@ async function api(path, options = {}) {
   const text = await response.text();
   const payload = text ? JSON.parse(text) : {};
   if (!response.ok) {
-    throw new Error(payload.error || `Request failed: ${response.status}`);
+    const error = new Error(payload.error || `Request failed: ${response.status}`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
   return payload;
 }
@@ -83,33 +100,17 @@ async function validateSelectedProfile() {
   });
 }
 
-async function selectProfile(profileId, { autoDryRun = false, skipInitialReadiness = false } = {}) {
+async function selectProfile(profileId, { skipInitialReadiness = false } = {}) {
+  await flushBuilderAutosave();
   state.selectedProfileId = profileId;
   state.lastPreviewRefreshAt = 0;
   renderProfiles();
   renderProfileSelect();
   renderProfilePackDetail();
+  renderBuilderProfileSummary();
+  await refreshBuilderProfile();
   if (!skipInitialReadiness) {
     await refreshReadiness({ includePreview: true, forcePreview: true });
-  }
-  if (!autoDryRun) return;
-  if (state.autoDryRunStartedByProfileId[profileId]) return;
-  state.autoDryRunStartedByProfileId[profileId] = true;
-  try {
-    const validatedProfile = await validateSelectedProfile();
-    if (validatedProfile) {
-      upsertProfileEntry(validatedProfile);
-      renderProfiles();
-      renderProfileSelect();
-      renderProfilePackDetail();
-    }
-    const selectedProfile = state.profiles.find((profile) => profile.id === profileId);
-    if (!selectedProfile || !selectedProfile.valid) {
-      return;
-    }
-    await startRun("dry-run", null, { skipValidation: true });
-  } catch (error) {
-    console.error(error);
   }
 }
 
@@ -123,6 +124,7 @@ async function refreshProfiles({ refreshReadinessAfter = true } = {}) {
   renderProfiles();
   renderProfileSelect();
   renderProfilePackDetail();
+  renderBuilderProfileSummary();
   if (refreshReadinessAfter) {
     await refreshReadiness({ includePreview: true, forcePreview: true });
   }
@@ -136,6 +138,11 @@ async function refreshRuntimeStatus() {
   }
   state.lastRuntimeSignature = signature;
   state.runtime = runtime;
+  $("settings-workspace").textContent = runtime.workspace || "Unavailable";
+  $("settings-logs").textContent = runtime.logs || "Unavailable";
+  $("settings-server").textContent = `${runtime.host || "127.0.0.1"}:${runtime.port ?? "—"}`;
+  $("settings-runtime-badge").textContent = runtime.is_admin ? "Administrator" : "Standard user";
+  $("settings-runtime-badge").className = `badge ${runtime.is_admin ? "good" : "warn"}`;
   const container = $("runtime-status");
   const title = $("runtime-status-title");
   const message = $("runtime-status-message");
@@ -222,6 +229,7 @@ function upsertProfileEntry(profileEntry) {
 async function refreshReadiness({ includePreview = false, forcePreview = false } = {}) {
   if (!state.selectedProfileId) return;
   const report = await api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/readiness`);
+  state.selectedReadiness = report;
   const signature = JSON.stringify(report || {});
   if (signature !== state.lastReadinessSignature) {
     state.lastReadinessSignature = signature;
@@ -230,9 +238,12 @@ async function refreshReadiness({ includePreview = false, forcePreview = false }
     $("target-status").textContent = report.target_status;
     $("resolution-status").textContent = report.resolution_status;
     $("compatibility-status").textContent = report.compatibility_status;
+    $("background-capture-status").textContent = displayBackgroundCaptureStatus(report.background_capture_status);
     renderMessages("blockers", report.blockers);
     renderMessages("warnings", report.warnings);
   }
+  updateRunCommandState();
+  updateOverviewAlert();
   if (includePreview) {
     await refreshTargetPreview({ force: forcePreview });
   }
@@ -260,6 +271,7 @@ async function refreshTargetPreview({ force = false } = {}) {
   }
   try {
     const preview = await api(`/api/profiles/${encodeURIComponent(state.selectedProfileId)}/target-preview-meta`);
+    state.targetPreview = preview;
     const previewRatio = preview.height > 0 ? preview.width / preview.height : 16 / 9;
     frame.style.setProperty("--target-preview-ratio", String(Math.max(previewRatio, 16 / 9)));
     image.hidden = false;
@@ -267,6 +279,7 @@ async function refreshTargetPreview({ force = false } = {}) {
     meta.textContent = `${preview.title} · ${preview.process_name || "unknown process"} · client ${preview.width}x${preview.height}`;
     state.lastPreviewRefreshAt = now;
   } catch (error) {
+    state.targetPreview = null;
     image.hidden = true;
     image.removeAttribute("src");
     empty.hidden = false;
@@ -377,6 +390,9 @@ function renderMessages(id, messages) {
 async function startRun(mode, confirmation = null, options = {}) {
   const { skipValidation = false } = options;
   if (!state.selectedProfileId) return;
+  if (state.activeRun && isRunActive(state.activeRun)) {
+    throw activeRunConflictError(state.activeRun);
+  }
   if (!skipValidation) {
     const validatedProfile = await validateSelectedProfile();
     if (validatedProfile) {
@@ -395,11 +411,18 @@ async function startRun(mode, confirmation = null, options = {}) {
     }),
   });
   state.selectedRunId = payload.id;
+  state.activeRun = normalizeRunListEntry(payload);
+  state.hasActiveRun = true;
   upsertRunEntry(payload);
   renderRunCount();
   renderRunsList();
   updateStopButton();
+  updateRunCommandState();
+  updateGlobalRunStatus();
   await refreshSelectedRunData({ force: true });
+  activateSelectionView("runs");
+  activateDetailTab("timeline");
+  showNotice(`${mode === "live" ? "Live" : "Dry"} Run started.`, "good");
 }
 
 async function stopSelectedRun() {
@@ -410,9 +433,13 @@ async function stopSelectedRun() {
     method: "POST",
   });
   upsertRunEntry(payload);
+  state.activeRun = isRunActive(payload) ? normalizeRunListEntry(payload) : null;
+  state.hasActiveRun = Boolean(state.activeRun);
   renderRunCount();
   renderRunsList();
   updateStopButton();
+  updateRunCommandState();
+  updateGlobalRunStatus();
   syncSelectedRunListState();
 }
 
@@ -432,8 +459,13 @@ async function refreshRuns() {
   const previousHasActiveRun = state.hasActiveRun;
   state.runs = runs;
   state.totalRunCount = totalCount;
-  state.hasActiveRun = runs.some((run) => isRunActive(run));
-  state.selectedRunId = runs.length ? runs[0].id : null;
+  state.activeRun = payload.active_run
+    ? normalizeRunListEntry(payload.active_run)
+    : (runs.find((run) => isRunActive(run)) || null);
+  state.hasActiveRun = Boolean(state.activeRun);
+  if (!state.selectedRunId || !runs.some((run) => run.id === state.selectedRunId)) {
+    state.selectedRunId = runs.length ? runs[0].id : null;
+  }
   renderRunCount();
   const nextSignature = runsSignature(runs);
   const listChanged = nextSignature !== state.lastRunsSignature;
@@ -443,6 +475,8 @@ async function refreshRuns() {
     renderRunsList();
   }
   updateStopButton();
+  updateRunCommandState();
+  updateGlobalRunStatus();
   
   const shouldRefreshSelectedRunDetail = (
     state.selectedRunId
@@ -544,6 +578,7 @@ async function refreshSelectedRunData({ force = false } = {}) {
   $("selected-run").textContent = summary.id;
   $("current-state").textContent = summary.current_state || "idle";
   $("final-result").textContent = displayResultLabel(summary.final_result || summary.status);
+  updateOverviewAlert();
 
   if (runChanged) {
     state.runLogOffsets[summary.id] = 0;
@@ -718,7 +753,17 @@ function displayResultLabel(result) {
   return result;
 }
 
+function displayBackgroundCaptureStatus(status) {
+  if (status === "verified_for_occlusion") return "Verified for occlusion";
+  if (status === "probe_failed") return "Probe failed";
+  if (status === "visible_required") return "Visible target required";
+  return status || "not_checked";
+}
+
 function getActiveStoppableRun() {
+  if (isRunActive(state.activeRun)) {
+    return state.activeRun;
+  }
   const selectedRun = state.runs.find((run) => run.id === state.selectedRunId);
   if (isRunActive(selectedRun)) {
     return selectedRun;
@@ -743,6 +788,10 @@ function updateStopButton() {
   const run = getActiveStoppableRun();
   button.disabled = !run;
   button.textContent = run ? `Stop ${run.mode}` : "Stop";
+  button.setAttribute(
+    "aria-label",
+    run ? `Stop active ${run.mode} for ${run.profile_id}` : "No active Run to stop",
+  );
 }
 
 function trimLogOutput(target, runId) {
@@ -784,6 +833,10 @@ function resetSelectedRunDetail() {
   state.runLogLineCounts = {};
   renderArtifacts("", [], 0);
   renderRunReview([], { append: false });
+  $("run-readiness-badge").textContent = "Unknown";
+  $("run-readiness-badge").className = "badge";
+  renderMessages("run-readiness-blockers", []);
+  updateOverviewAlert();
 }
 
 function syncSelectedRunListState() {
@@ -841,42 +894,742 @@ function escapeHtml(value) {
   })[character]);
 }
 
-$("refresh-button").addEventListener("click", refreshProfiles);
-$("dry-run-button").addEventListener("click", () => startRun("dry-run"));
-$("live-run-button").addEventListener("click", () => startRun("live"));
-$("stop-run-button").addEventListener("click", () => stopSelectedRun());
-$("profiles").addEventListener("click", async (event) => {
-  if (!(event.target instanceof Element)) {
+function showNotice(message, tone = "") {
+  const notice = $("app-notice");
+  $("app-notice-message").textContent = message;
+  notice.className = `app-notice ${tone}`.trim();
+  notice.setAttribute("role", tone === "error" ? "alert" : "status");
+  notice.hidden = false;
+}
+
+function hideNotice() {
+  $("app-notice").hidden = true;
+}
+
+function activeRunConflictError(run) {
+  const error = new Error("another Run is already active");
+  error.status = 409;
+  error.payload = { active_run: run };
+  return error;
+}
+
+function describeError(error) {
+  const activeRun = error?.payload?.active_run;
+  if (activeRun) {
+    return `A ${activeRun.mode} Run for ${activeRun.profile_id} is already ${activeRun.status}. View or stop it before starting another Run.`;
+  }
+  return error?.message || "The operation could not be completed.";
+}
+
+async function runCommand(command) {
+  try {
+    return await command();
+  } catch (error) {
+    const activeRun = error?.payload?.active_run;
+    if (activeRun) {
+      state.activeRun = normalizeRunListEntry(activeRun);
+      state.hasActiveRun = true;
+      upsertRunEntry(activeRun);
+      renderRunsList();
+      updateStopButton();
+      updateRunCommandState();
+      updateGlobalRunStatus();
+    }
+    showNotice(describeError(error), "error");
+    return null;
+  }
+}
+
+function updateRunCommandState() {
+  const profile = state.profiles.find((item) => item.id === state.selectedProfileId);
+  const activeRun = isRunActive(state.activeRun) ? state.activeRun : null;
+  $("dry-run-button").disabled = Boolean(activeRun) || !profile;
+  $("live-run-button").disabled = (
+    Boolean(activeRun)
+    || !profile
+    || !state.selectedReadiness?.live_available
+  );
+
+  let status = "Select a Profile to inspect readiness.";
+  if (activeRun) {
+    status = `${activeRun.profile_id} has an active ${activeRun.mode} Run. View or stop it before starting another.`;
+  } else if (profile && state.selectedReadiness?.live_available) {
+    status = `${profile.name} is Live Ready. Profile selection never starts a Run.`;
+  } else if (profile) {
+    const blockerCount = state.selectedReadiness?.blockers?.length || 0;
+    status = blockerCount
+      ? `${profile.name} has ${blockerCount} Live blocker${blockerCount === 1 ? "" : "s"}. Dry Run remains explicit.`
+      : `${profile.name} selected. Dry Run remains explicit.`;
+  }
+  $("command-status").textContent = status;
+}
+
+function updateGlobalRunStatus() {
+  const run = isRunActive(state.activeRun) ? state.activeRun : null;
+  $("global-run-label").textContent = run ? "Active Run" : "No active run";
+  $("global-run-summary").textContent = run
+    ? `${run.profile_id} · ${run.mode} · ${run.status}`
+    : "Ready";
+}
+
+function updateOverviewAlert() {
+  const target = $("overview-alert");
+  const summary = state.selectedRunSummary;
+  if (summary) {
+    if (summary.failure_reason) {
+      target.textContent = summary.failure_reason;
+      return;
+    }
+    if (isRunActive(summary)) {
+      target.textContent = `Run is ${summary.status}${summary.current_state ? ` in ${summary.current_state}` : ""}.`;
+      return;
+    }
+    target.textContent = `Run finished with ${displayResultLabel(summary.final_result || summary.status)}.`;
     return;
   }
-  const button = event.target.closest("button[data-profile-id]");
-  if (!button) {
+  const blockers = state.selectedReadiness?.blockers || [];
+  if (blockers.length) {
+    target.textContent = blockers[0];
+  } else if (state.selectedReadiness?.live_available) {
+    target.textContent = "Live Readiness passed. Confirm the matched target before starting Live.";
+  } else if (state.selectedProfileId) {
+    target.textContent = "Refresh readiness or begin an explicit Dry Run.";
+  } else {
+    target.textContent = "Select a Profile to review readiness before starting a Run.";
+  }
+}
+
+async function openLiveConfirmation() {
+  if (!state.selectedProfileId) return;
+  if (isRunActive(state.activeRun)) {
+    throw activeRunConflictError(state.activeRun);
+  }
+  await refreshReadiness({ includePreview: true, forcePreview: true });
+  if (!state.selectedReadiness?.live_available) {
+    activateWorkspace("run");
+    activateDetailTab("readiness");
+    showNotice("Live Run is blocked. Review and resolve the Readiness details first.", "error");
+    $("detail-readiness-tab").focus();
     return;
   }
-  await selectProfile(button.dataset.profileId, { autoDryRun: true });
+
+  const profile = state.profiles.find((item) => item.id === state.selectedProfileId);
+  $("live-confirm-profile").textContent = profile
+    ? `${profile.name} (${profile.id})`
+    : state.selectedProfileId;
+  $("live-confirm-target").textContent = state.targetPreview
+    ? `${state.targetPreview.title} · ${state.targetPreview.process_name || "unknown process"} · ${state.targetPreview.width}×${state.targetPreview.height}`
+    : $("target-preview-meta").textContent;
+  $("live-confirm-readiness").textContent = `${displayBackgroundCaptureStatus(state.selectedReadiness.background_capture_status)} · readiness passed`;
+  $("live-confirm-runtime").textContent = state.runtime?.is_admin
+    ? "Current runtime is elevated"
+    : "Current runtime uses standard user privilege";
+  const dialog = $("live-dialog");
+  dialog.returnValue = "";
+  dialog.showModal();
+  window.requestAnimationFrame(() => $("cancel-live-button").focus());
+}
+
+function activateWorkspace(workspace, { focus = false } = {}) {
+  const allowed = new Set(["run", "build", "settings"]);
+  const nextWorkspace = allowed.has(workspace) ? workspace : "run";
+  state.activeWorkspace = nextWorkspace;
+  document.body.dataset.workspace = nextWorkspace;
+  for (const button of document.querySelectorAll("[data-workspace-target]")) {
+    const selected = button.dataset.workspaceTarget === nextWorkspace;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+  for (const panel of document.querySelectorAll(".workspace-view")) {
+    const selected = panel.id === `workspace-${nextWorkspace}`;
+    panel.hidden = !selected;
+    panel.classList.toggle("active", selected);
+  }
+  localStorage.setItem("operator-workspace", nextWorkspace);
+  if (nextWorkspace === "build") {
+    void runCommand(async () => {
+      await flushBuilderAutosave();
+      await refreshBuilderProfile();
+    });
+  }
+  if (focus) {
+    $(`workspace-${nextWorkspace}`).focus();
+  }
+}
+
+function activateSelectionView(view, { focus = false } = {}) {
+  const nextView = view === "runs" ? "runs" : "profiles";
+  state.activeSelectionView = nextView;
+  for (const button of document.querySelectorAll("[data-selection-target]")) {
+    const selected = button.dataset.selectionTarget === nextView;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+  $("profiles-list-panel").hidden = nextView !== "profiles";
+  $("runs-list-panel").hidden = nextView !== "runs";
+  if (focus) $(`${nextView}-list-tab`).focus();
+}
+
+function activateDetailTab(view, { focus = false } = {}) {
+  const allowed = new Set(["readiness", "timeline", "logs", "artifacts", "pack"]);
+  const nextView = allowed.has(view) ? view : "readiness";
+  state.activeDetailView = nextView;
+  for (const button of document.querySelectorAll("[data-detail-target]")) {
+    const selected = button.dataset.detailTarget === nextView;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+  for (const pane of document.querySelectorAll(".detail-pane")) {
+    const selected = pane.id === `detail-${nextView}`;
+    pane.hidden = !selected;
+    pane.classList.toggle("active", selected);
+  }
+  if (focus) $(`detail-${nextView}-tab`).focus();
+}
+
+function addArrowKeyNavigation(container, buttonSelector, activate) {
+  container.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const buttons = [...container.querySelectorAll(buttonSelector)];
+    const currentIndex = buttons.indexOf(document.activeElement);
+    if (currentIndex < 0) return;
+    event.preventDefault();
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % buttons.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = buttons.length - 1;
+    const button = buttons[nextIndex];
+    activate(button);
+    button.focus();
+  });
+}
+
+function renderBuilderProfileSummary() {
+  const profile = state.profiles.find((item) => item.id === state.selectedProfileId);
+  $("builder-profile-name").textContent = profile?.name || "No Profile selected";
+  $("builder-profile-id").textContent = profile?.id || "—";
+  $("builder-pack-status").textContent = profile?.pack_status || "—";
+  $("builder-profile-path").textContent = profile?.path || "—";
+  $("builder-profile-notes").textContent = profile?.notes || "No notes available.";
+  $("builder-validity").textContent = profile ? (profile.valid ? "Valid" : "Invalid") : "Unknown";
+  $("builder-validity").className = `badge ${profile ? (profile.valid ? "good" : "bad") : ""}`.trim();
+}
+
+async function refreshBuilderProfile() {
+  if (!state.selectedProfileId) {
+    state.builderDocument = null;
+    state.builderSource = null;
+    state.builderDraft = null;
+    state.builderProfileId = null;
+    renderBuilderDocument();
+    renderBuilderDraft();
+    return;
+  }
+  const profileId = state.selectedProfileId;
+  try {
+    const [source, draft] = await Promise.all([
+      api(`/api/profiles/${encodeURIComponent(profileId)}/source`),
+      api(`/api/profiles/${encodeURIComponent(profileId)}/draft`),
+    ]);
+    if (profileId !== state.selectedProfileId) return;
+    state.builderSource = source;
+    state.builderDraft = draft;
+    state.builderDocument = draft.document || null;
+    if (!state.builderDocument) {
+      try {
+        const structured = await api(`/api/profiles/${encodeURIComponent(profileId)}/structured`);
+        if (profileId !== state.selectedProfileId) return;
+        state.builderDocument = structured.document || null;
+      } catch (_error) {
+        state.builderDocument = null;
+      }
+    }
+    state.builderProfileId = profileId;
+    const states = Object.keys(state.builderDocument?.states || {});
+    const initialState = state.builderDocument?.initial_state;
+    state.selectedBuilderState = states.includes(state.selectedBuilderState)
+      ? state.selectedBuilderState
+      : (states.includes(initialState) ? initialState : (states[0] || null));
+  } catch (error) {
+    if (profileId !== state.selectedProfileId) return;
+    state.builderSource = null;
+    state.builderDraft = null;
+    state.builderDocument = null;
+    state.builderProfileId = profileId;
+    state.selectedBuilderState = null;
+    $("builder-empty").querySelector("h2").textContent = "Saved source could not be displayed";
+    $("builder-empty").querySelector("p").textContent = error.message;
+  }
+  renderBuilderDocument();
+  renderBuilderDraft();
+}
+
+function renderBuilderDraft() {
+  const editor = $("builder-yaml-editor");
+  const draft = state.builderDraft;
+  const hasProfile = Boolean(state.builderProfileId && state.builderSource);
+  editor.disabled = !hasProfile;
+  if (hasProfile && editor.value !== draft?.source) {
+    editor.value = draft?.source || state.builderSource?.source || "";
+  }
+  if (!hasProfile) editor.value = "";
+
+  const badge = $("builder-draft-status");
+  if (!hasProfile) {
+    badge.textContent = "No Profile";
+    badge.className = "badge";
+  } else if (draft?.conflict) {
+    badge.textContent = "Save Conflict";
+    badge.className = "badge bad";
+  } else if (state.builderAutosavePending) {
+    badge.textContent = "Autosaving";
+    badge.className = "badge warn";
+  } else if (!draft?.dirty) {
+    badge.textContent = "Saved Version";
+    badge.className = "badge good";
+  } else if (draft?.valid) {
+    badge.textContent = "Valid Draft";
+    badge.className = "badge good";
+  } else {
+    badge.textContent = "Invalid Draft";
+    badge.className = "badge bad";
+  }
+
+  const messages = $("builder-draft-messages");
+  messages.innerHTML = "";
+  const errors = draft?.errors || [];
+  for (const error of errors) {
+    const item = document.createElement("li");
+    item.textContent = error;
+    messages.appendChild(item);
+  }
+  if (draft?.conflict) {
+    const item = document.createElement("li");
+    item.textContent = "profile.yaml changed outside the application. Your draft is preserved; discard it to reload the saved file.";
+    messages.appendChild(item);
+  }
+
+  const meta = $("builder-editor-help");
+  if (!hasProfile) {
+    meta.textContent = "Select a Profile to begin editing.";
+  } else if (draft?.conflict) {
+    meta.textContent = "External changes detected. Save is blocked to prevent an overwrite.";
+  } else if (state.builderAutosavePending) {
+    meta.textContent = "Autosaving the recoverable draft…";
+  } else if (draft?.exists && draft?.dirty) {
+    meta.textContent = "Draft autosaved. The runnable saved version has not changed.";
+  } else {
+    meta.textContent = `Saved source: sha256 ${String(state.builderSource.fingerprint).slice(0, 12)}…`;
+  }
+
+  $("validate-builder-draft").disabled = !hasProfile || state.builderAutosavePending;
+  $("save-builder-profile").disabled = !hasProfile
+    || state.builderAutosavePending
+    || !draft?.exists
+    || !draft?.dirty
+    || !draft?.valid
+    || draft?.conflict;
+  $("reload-builder-source").disabled = !hasProfile
+    || state.builderAutosavePending
+    || (!draft?.exists && !draft?.dirty && !draft?.conflict);
+}
+
+function queueBuilderDraftAutosave() {
+  if (!state.builderProfileId || !state.builderSource) return;
+  window.clearTimeout(state.builderAutosaveTimer);
+  const source = $("builder-yaml-editor").value;
+  state.builderDraft = {
+    ...(state.builderDraft || {}),
+    source,
+    exists: true,
+    dirty: source !== state.builderSource.source,
+    valid: false,
+    errors: [],
+  };
+  state.builderAutosavePending = true;
+  renderBuilderDraft();
+  state.builderAutosaveTimer = window.setTimeout(() => {
+    state.builderAutosaveTimer = null;
+    void persistBuilderDraft({ showResult: false });
+  }, 600);
+}
+
+async function persistBuilderDraft({ showResult = false } = {}) {
+  const profileId = state.builderProfileId;
+  if (!profileId || !state.builderSource) return null;
+  const source = $("builder-yaml-editor").value;
+  const baseFingerprint = state.builderDraft?.base_fingerprint || state.builderSource.fingerprint;
+  state.builderAutosavePending = true;
+  renderBuilderDraft();
+  try {
+    const draft = await api(`/api/profiles/${encodeURIComponent(profileId)}/draft`, {
+      method: "POST",
+      body: JSON.stringify({ source, base_fingerprint: baseFingerprint }),
+    });
+    if (profileId !== state.builderProfileId) return draft;
+    state.builderDraft = draft;
+    if (draft.document) {
+      state.builderDocument = draft.document;
+      const stateNames = Object.keys(draft.document.states || {});
+      if (!stateNames.includes(state.selectedBuilderState)) {
+        state.selectedBuilderState = stateNames.includes(draft.document.initial_state)
+          ? draft.document.initial_state
+          : (stateNames[0] || null);
+      }
+      renderBuilderDocument();
+    }
+    if (showResult) {
+      showNotice(
+        draft.valid ? "Draft is valid and ready to save." : "Draft was preserved, but validation found problems.",
+        draft.valid ? "good" : "error",
+      );
+    }
+    return draft;
+  } catch (error) {
+    if (profileId === state.builderProfileId) {
+      state.builderDraft = {
+        ...(state.builderDraft || {}),
+        valid: false,
+        errors: [describeError(error)],
+      };
+    }
+    if (showResult) throw error;
+    return null;
+  } finally {
+    if (profileId === state.builderProfileId) {
+      state.builderAutosavePending = false;
+      renderBuilderDraft();
+    }
+  }
+}
+
+async function flushBuilderAutosave() {
+  if (!state.builderAutosaveTimer) return;
+  window.clearTimeout(state.builderAutosaveTimer);
+  state.builderAutosaveTimer = null;
+  const draft = await persistBuilderDraft({ showResult: false });
+  if (!draft) {
+    throw new Error("The draft could not be autosaved, so the Profile selection was not changed.");
+  }
+}
+
+async function validateBuilderDraft() {
+  await flushBuilderAutosave();
+  if (!state.builderAutosavePending) {
+    await persistBuilderDraft({ showResult: true });
+  }
+}
+
+async function saveBuilderProfile() {
+  const profileId = state.builderProfileId;
+  if (!profileId) return;
+  await flushBuilderAutosave();
+  const draft = await persistBuilderDraft({ showResult: false });
+  if (!draft?.valid) {
+    showNotice("Fix the Draft Validation problems before saving the Profile.", "error");
+    renderBuilderDraft();
+    return;
+  }
+  let saved;
+  try {
+    saved = await api(`/api/profiles/${encodeURIComponent(profileId)}/save`, {
+      method: "POST",
+      body: "{}",
+    });
+  } catch (error) {
+    if (error.status === 409) {
+      state.builderDraft = {
+        ...(state.builderDraft || {}),
+        conflict: true,
+        errors: [describeError(error)],
+      };
+      renderBuilderDraft();
+    }
+    throw error;
+  }
+  upsertProfileEntry(saved.profile);
+  state.builderSource = saved.source;
+  state.builderDraft = saved.draft;
+  state.builderDocument = saved.draft.document || null;
+  renderProfiles();
+  renderProfileSelect();
+  renderProfilePackDetail();
+  renderBuilderProfileSummary();
+  renderBuilderDocument();
+  renderBuilderDraft();
+  await refreshReadiness({ includePreview: false });
+  showNotice("Profile saved. A revision backup was retained.", "good");
+}
+
+async function discardBuilderDraft() {
+  const profileId = state.builderProfileId;
+  if (!profileId) return;
+  if (!window.confirm("Discard the recoverable draft and reload the saved profile.yaml?")) return;
+  window.clearTimeout(state.builderAutosaveTimer);
+  state.builderAutosaveTimer = null;
+  const draft = await api(`/api/profiles/${encodeURIComponent(profileId)}/discard-draft`, {
+    method: "POST",
+    body: "{}",
+  });
+  state.builderDraft = draft;
+  state.builderDocument = draft.document || null;
+  renderBuilderDocument();
+  renderBuilderDraft();
+  showNotice("Draft discarded. Reloaded the saved Profile.", "good");
+}
+
+function renderBuilderDocument() {
+  const documentValue = state.builderDocument;
+  const states = documentValue?.states || {};
+  const stateNames = Object.keys(states);
+  $("builder-fingerprint").textContent = state.builderSource?.fingerprint
+    ? `sha256 ${state.builderSource.fingerprint.slice(0, 12)}…`
+    : "No source loaded";
+  $("builder-empty").hidden = stateNames.length > 0;
+  $("builder-flow").hidden = stateNames.length === 0;
+  if (!stateNames.length) return;
+
+  const target = $("builder-state-list");
+  target.innerHTML = "";
+  for (const stateName of stateNames) {
+    const stateValue = states[stateName] || {};
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `builder-state-node${stateName === state.selectedBuilderState ? " active" : ""}`;
+    button.dataset.builderState = stateName;
+    button.setAttribute("role", "listitem");
+    const transitionParts = [stateValue.on_success, stateValue.on_failure].filter(Boolean);
+    button.innerHTML = `<strong>${escapeHtml(stateName)}</strong><span>${stateValue.terminal ? "terminal" : transitionParts.length ? `to ${transitionParts.map(escapeHtml).join(" / ")}` : "no transition"}</span>`;
+    target.appendChild(button);
+  }
+  renderBuilderState();
+}
+
+function renderBuilderState() {
+  const documentValue = state.builderDocument;
+  const stateName = state.selectedBuilderState;
+  const stateValue = documentValue?.states?.[stateName] || {};
+  $("builder-state-name").textContent = stateName || "No State selected";
+  const kind = stateValue.terminal
+    ? "Terminal"
+    : (stateName === documentValue?.initial_state ? "Initial" : "State");
+  $("builder-state-kind").textContent = kind;
+  $("builder-state-kind").className = `badge ${stateValue.terminal ? "good" : ""}`.trim();
+
+  const transitions = $("builder-state-transitions");
+  transitions.innerHTML = `
+    <div><dt>On success</dt><dd>${escapeHtml(stateValue.on_success || "—")}</dd></div>
+    <div><dt>On failure</dt><dd>${escapeHtml(stateValue.on_failure || "—")}</dd></div>
+  `;
+
+  const anchors = $("builder-anchor-list");
+  const requiredAnchors = stateValue.required_anchors || [];
+  anchors.innerHTML = requiredAnchors.length
+    ? requiredAnchors.map((anchor) => `<li><strong>${escapeHtml(anchor.name || anchor.type || "anchor")}</strong><span class="muted">${escapeHtml(anchor.type || "unknown")}</span></li>`).join("")
+    : '<li class="muted">No required anchors</li>';
+
+  const actions = $("builder-action-list");
+  const actionValues = stateValue.actions || [];
+  actions.innerHTML = actionValues.length
+    ? actionValues.map((action, index) => `<li><strong>${index + 1}. ${escapeHtml(action.type || "action")}</strong><span>${escapeHtml(formatActionSummary(action))}</span></li>`).join("")
+    : '<li class="muted">No Actions</li>';
+}
+
+function formatActionSummary(action) {
+  const fields = Object.entries(action || {})
+    .filter(([key]) => key !== "type")
+    .slice(0, 4)
+    .map(([key, value]) => {
+      const rendered = typeof value === "object" ? JSON.stringify(value) : String(value);
+      return `${key}=${rendered}`;
+    });
+  return fields.join(" · ") || "No additional settings";
+}
+
+function profileIdFromText(value) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+}
+
+function updateCreateProfileSuggestions() {
+  const game = $("create-profile-game").value.trim();
+  const mode = $("create-profile-mode").value.trim();
+  const nameInput = $("create-profile-name");
+  if (!state.createProfileNameTouched) {
+    nameInput.value = [game, mode].filter(Boolean).join(" ");
+  }
+  if (!state.createProfileIdTouched) {
+    $("create-profile-id").value = profileIdFromText(
+      nameInput.value.trim() || [game, mode].filter(Boolean).join(" "),
+    );
+  }
+  const identifier = $("create-profile-id").value.trim() || "<identifier>";
+  $("create-profile-destination").textContent = `Destination: profiles/${identifier}/`;
+}
+
+function openCreateProfileDialog() {
+  const form = $("create-profile-form");
+  form.reset();
+  state.createProfileIdTouched = false;
+  state.createProfileNameTouched = false;
+  $("create-profile-initial-state").value = "start";
+  $("create-profile-error").hidden = true;
+  $("confirm-create-profile").disabled = false;
+  updateCreateProfileSuggestions();
+  $("create-profile-dialog").showModal();
+  window.requestAnimationFrame(() => $("create-profile-game").focus());
+}
+
+async function createProfile(event) {
+  event.preventDefault();
+  const form = $("create-profile-form");
+  if (!form.reportValidity()) return;
+  const errorTarget = $("create-profile-error");
+  const submitButton = $("confirm-create-profile");
+  errorTarget.hidden = true;
+  submitButton.disabled = true;
+  try {
+    const created = await api("/api/profiles", {
+      method: "POST",
+      body: JSON.stringify({
+        game: $("create-profile-game").value.trim(),
+        mode: $("create-profile-mode").value.trim(),
+        name: $("create-profile-name").value.trim(),
+        profile_id: $("create-profile-id").value.trim(),
+        initial_state: $("create-profile-initial-state").value.trim(),
+      }),
+    });
+    $("create-profile-dialog").close();
+    await refreshProfiles({ refreshReadinessAfter: false });
+    await selectProfile(created.profile.id, { skipInitialReadiness: true });
+    activateWorkspace("build");
+    showNotice(`Created ${created.profile.name}. Complete the YAML Draft, then validate and save.`, "good");
+    window.requestAnimationFrame(() => $("builder-yaml-editor").focus());
+  } catch (error) {
+    errorTarget.textContent = describeError(error);
+    errorTarget.hidden = false;
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+async function refreshStartupChecks() {
+  const payload = await api("/api/startup-checks");
+  $("startup-checks-badge").textContent = payload.ok ? "Passed" : "Needs attention";
+  $("startup-checks-badge").className = `badge ${payload.ok ? "good" : "bad"}`;
+  const list = $("startup-checks-list");
+  list.innerHTML = "";
+  for (const [name, value] of Object.entries(payload.checks || {})) {
+    const item = document.createElement("li");
+    item.textContent = `${name.replaceAll("_", " ")}: ${String(value)}`;
+    list.appendChild(item);
+  }
+  for (const message of payload.messages || []) {
+    const item = document.createElement("li");
+    item.textContent = message;
+    list.appendChild(item);
+  }
+  if (!list.children.length) {
+    const item = document.createElement("li");
+    item.className = "muted";
+    item.textContent = "No diagnostics were returned.";
+    list.appendChild(item);
+  }
+}
+
+$("refresh-button").addEventListener("click", () => runCommand(() => refreshProfiles()));
+$("readiness-refresh-button").addEventListener("click", () => runCommand(() => refreshReadiness({ includePreview: true, forcePreview: true })));
+$("dry-run-button").addEventListener("click", () => runCommand(() => startRun("dry-run")));
+$("live-run-button").addEventListener("click", () => runCommand(() => openLiveConfirmation()));
+$("stop-run-button").addEventListener("click", () => runCommand(() => stopSelectedRun()));
+$("app-notice-dismiss").addEventListener("click", hideNotice);
+$("build-view-in-run").addEventListener("click", () => activateWorkspace("run", { focus: true }));
+$("create-profile-button").addEventListener("click", openCreateProfileDialog);
+$("cancel-create-profile").addEventListener("click", () => $("create-profile-dialog").close());
+$("create-profile-form").addEventListener("submit", (event) => void createProfile(event));
+$("create-profile-game").addEventListener("input", updateCreateProfileSuggestions);
+$("create-profile-mode").addEventListener("input", updateCreateProfileSuggestions);
+$("create-profile-name").addEventListener("input", () => {
+  state.createProfileNameTouched = true;
+  updateCreateProfileSuggestions();
 });
-$("runs").addEventListener("click", async (event) => {
-  if (!(event.target instanceof Element)) {
-    return;
-  }
+$("create-profile-id").addEventListener("input", () => {
+  state.createProfileIdTouched = true;
+  updateCreateProfileSuggestions();
+});
+$("builder-yaml-editor").addEventListener("input", queueBuilderDraftAutosave);
+$("validate-builder-draft").addEventListener("click", () => runCommand(() => validateBuilderDraft()));
+$("save-builder-profile").addEventListener("click", () => runCommand(() => saveBuilderProfile()));
+$("reload-builder-source").addEventListener("click", () => runCommand(() => discardBuilderDraft()));
+$("settings-refresh-button").addEventListener("click", () => runCommand(async () => {
+  await Promise.all([refreshRuntimeStatus(), refreshStartupChecks()]);
+  showNotice("Diagnostics refreshed.", "good");
+}));
+
+$("workspace-navigation").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-workspace-target]");
+  if (button) activateWorkspace(button.dataset.workspaceTarget, { focus: true });
+});
+$("profiles-list-tab").addEventListener("click", () => activateSelectionView("profiles"));
+$("runs-list-tab").addEventListener("click", () => activateSelectionView("runs"));
+$("detail-tabs").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-detail-target]");
+  if (button) activateDetailTab(button.dataset.detailTarget);
+});
+
+addArrowKeyNavigation($("workspace-navigation"), "button[data-workspace-target]", (button) => activateWorkspace(button.dataset.workspaceTarget));
+addArrowKeyNavigation(document.querySelector(".segmented-control"), "button[data-selection-target]", (button) => activateSelectionView(button.dataset.selectionTarget));
+addArrowKeyNavigation($("detail-tabs"), "button[data-detail-target]", (button) => activateDetailTab(button.dataset.detailTarget));
+
+$("profiles").addEventListener("click", (event) => runCommand(async () => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("button[data-profile-id]");
+  if (!button) return;
+  await selectProfile(button.dataset.profileId);
+}));
+
+$("runs").addEventListener("click", (event) => runCommand(async () => {
+  if (!(event.target instanceof Element)) return;
   const button = event.target.closest("button[data-run-id]");
-  if (!button) {
-    return;
-  }
+  if (!button) return;
   state.selectedRunId = button.dataset.runId;
   renderRunsList();
   await refreshRunDetail();
+}));
+
+$("builder-state-list").addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("button[data-builder-state]");
+  if (!button) return;
+  state.selectedBuilderState = button.dataset.builderState;
+  renderBuilderDocument();
 });
-$("runtime-admin-button").addEventListener("click", async () => {
+
+$("runtime-admin-button").addEventListener("click", () => runCommand(async () => {
   try {
     await relaunchDashboardAsAdmin();
   } catch (error) {
     $("runtime-status-title").textContent = "Administrator relaunch failed";
     $("runtime-status-message").textContent = error.message;
+    throw error;
   }
-});
-$("profile-select").addEventListener("change", async (event) => {
-  await selectProfile(event.target.value, { autoDryRun: true });
+}));
+
+$("profile-select").addEventListener("change", (event) => runCommand(() => selectProfile(event.target.value)));
+
+$("live-dialog").addEventListener("close", () => {
+  if ($("live-dialog").returnValue === "confirm") {
+    void runCommand(() => startRun("live", "start-live-run"));
+  }
 });
 
 $("target-preview-image").addEventListener("load", () => {
@@ -894,29 +1647,23 @@ $("target-preview-image").addEventListener("error", () => {
   image.hidden = true;
 });
 
-refreshProfiles().then(async () => {
-  await refreshRuns();
-  if (state.selectedProfileId) {
-    await selectProfile(state.selectedProfileId, {
-      autoDryRun: true,
-      skipInitialReadiness: true,
-    });
+async function initialize() {
+  const savedWorkspace = localStorage.getItem("operator-workspace") || "run";
+  activateWorkspace(savedWorkspace);
+  activateSelectionView("profiles");
+  activateDetailTab("readiness");
+  updateStopButton();
+  updateRunCommandState();
+  updateGlobalRunStatus();
+  try {
+    await refreshProfiles();
+    await refreshBuilderProfile();
+    await refreshRuns();
+  } catch (error) {
+    showNotice(`Dashboard initialization failed: ${describeError(error)}`, "error");
+  } finally {
+    scheduleNextPoll();
   }
-});
-scheduleNextPoll();
-
-// Sidebar Toggle Handler with LocalStorage Persistence
-const sidebarToggle = $("sidebar-toggle");
-
-if (sidebarToggle) {
-  // Load initial sidebar collapsed state
-  const isCollapsed = localStorage.getItem("sidebar-collapsed") === "true";
-  if (isCollapsed) {
-    document.body.classList.add("sidebar-collapsed");
-  }
-
-  sidebarToggle.addEventListener("click", () => {
-    const collapsed = document.body.classList.toggle("sidebar-collapsed");
-    localStorage.setItem("sidebar-collapsed", collapsed);
-  });
 }
+
+void initialize();

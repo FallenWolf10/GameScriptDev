@@ -27,6 +27,8 @@ target:
   # Optional. Supported values:
   # - background_window_messages
   # - foreground
+  # This selects how input is delivered. It does not prove that screenshots or
+  # anchors remain reliable while another window covers the target.
 
   foreground_key_method: sendinput_vk
   # Optional. Used only when input_mode: foreground.
@@ -54,10 +56,10 @@ target:
 window:
   resolution:
     width: 1280
-    # Required. Expected target width in pixels.
+    # Required. Expected target client width in unvirtualized physical pixels.
 
     height: 720
-    # Required. Expected target height in pixels.
+    # Required. Expected target client height in unvirtualized physical pixels.
 
     policy: verify_only
     # Optional. Supported values currently used by the runner:
@@ -66,6 +68,8 @@ window:
     # - attempt_resize
     # The live runner does not implement resizing yet, so attempt_resize will
     # still be blocked in readiness checks.
+    # During Live Run, later minimization or a client-size change interrupts
+    # execution for every policy, including ignore.
 
 execution:
   default_timeout_seconds: 30
@@ -84,6 +88,11 @@ execution:
   # Optional. Set true only for intentionally infinite or operator-driven
   # dry-run workflows where the dashboard should treat an operator-stopped
   # dry run as valid live-readiness evidence.
+
+  skip_dry_run_requirement: false
+  # Optional. When true, dashboard live-readiness does not require a prior
+  # successful dry run. Other readiness checks still apply. Use only when the
+  # operator explicitly accepts direct-live execution risk.
 
 profile_pack:
   game: Example Game
@@ -124,7 +133,9 @@ regions:
     width: 200
     height: 64
   # Optional. Named click region. Actions like click_point and hold_click
-  # reference the region name instead of duplicating coordinates.
+  # reference the region name instead of duplicating coordinates. Region x/y
+  # start at the target client area's top-left and all values are physical
+  # client pixels, not desktop logical or Builder CSS pixels.
 
   close_popup:
     x: 1120
@@ -538,6 +549,8 @@ The current schema accepts these keys:
 
 - Prefer named `regions` over repeating raw click coordinates in multiple
   actions.
+- Author resolution, regions, and template captures in physical target-client
+  pixels. Windows display scaling must not be baked into Profile coordinates.
 - Use `required_anchors` for the minimum proof that the state is really on
   screen.
 - Add `forbidden_anchors` for known bad states that look similar to valid ones.
@@ -554,4 +567,9 @@ The current schema accepts these keys:
   means the input was sent, not necessarily that the target consumed it.
 - Keep `known_limitations` honest. They are part of the readiness contract, not
   just a comment bucket.
+- Treat target visibility as a separate capture constraint from `input_mode`.
+  Keep `Requires the target window to remain visible` in `known_limitations`
+  unless Live Readiness has established Background Capture Compatibility for
+  the target and Saved Profile Version. Background compatibility never permits
+  minimization.
 - Start with dry-run and validation before attempting live mode.

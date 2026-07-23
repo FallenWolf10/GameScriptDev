@@ -13,6 +13,17 @@ from game_script_dev.profile_loader import load_profile
 from game_script_dev.schema import validate_profile
 
 
+TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+
+
+class ActiveRunConflictError(Exception):
+    """Raised when a new Run is requested while another Run is active."""
+
+    def __init__(self, active_run: "RunRecord") -> None:
+        super().__init__(f"run {active_run.id} is already active")
+        self.active_run = active_run
+
+
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -98,6 +109,10 @@ class RunRegistry:
         with self._lock:
             return len(self._records)
 
+    def active_run(self) -> RunRecord | None:
+        with self._lock:
+            return self._active_run_locked()
+
     def get_run(self, run_id: str) -> RunRecord:
         with self._lock:
             return self._records[run_id]
@@ -117,6 +132,9 @@ class RunRegistry:
         )
         stop_event = threading.Event()
         with self._lock:
+            active_run = self._active_run_locked()
+            if active_run is not None:
+                raise ActiveRunConflictError(active_run)
             self._records[run_id] = record
             self._run_order.insert(0, run_id)
             self._stop_events[run_id] = stop_event
@@ -133,13 +151,20 @@ class RunRegistry:
     def stop_run(self, run_id: str) -> RunRecord:
         with self._lock:
             record = self._records[run_id]
-            if record.status in {"completed", "failed"}:
+            if record.status in TERMINAL_RUN_STATUSES:
                 return record
             record.stop_requested = True
             stop_event = self._stop_events.get(run_id)
             if stop_event is not None:
                 stop_event.set()
             return record
+
+    def _active_run_locked(self) -> RunRecord | None:
+        for run_id in self._run_order:
+            record = self._records[run_id]
+            if record.status not in TERMINAL_RUN_STATUSES:
+                return record
+        return None
 
     def read_log(self, run_id: str) -> str:
         record = self.get_run(run_id)

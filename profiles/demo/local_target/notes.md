@@ -43,6 +43,8 @@ review.
 3. Select `Local Demo Target`.
 4. Run a dashboard dry run and confirm it finishes with `success`.
 5. Refresh readiness and confirm the target is matched.
-6. Type `RUN` only when ready for live desktop input.
-7. Confirm the live run finishes with `success`.
-8. Review the run log and screenshot artifacts under `logs/YYYY-MM-DD/`.
+6. Select `Live Run`, review the per-attempt confirmation summary, and verify
+   that it names the Demo Target and foreground input mode.
+7. Select `Start Live Run` only when ready for live desktop input.
+8. Confirm the live run finishes with `success`.
+9. Review the run log and screenshot artifacts under `logs/YYYY-MM-DD/`.

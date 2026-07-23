@@ -8,19 +8,36 @@ A user-operated tool that automates repetitive UI actions on the user's local ma
 
 ### Local Web Dashboard
 
-A browser-based control surface hosted on the user's local machine for managing profiles, validation, dry runs, live-run confirmation, run logs, and artifacts without turning the runner into a cloud service.
+A browser-based control surface hosted on the user's local machine for managing profiles, validation, dry runs, readiness-gated live runs, run logs, and artifacts without turning the runner into a cloud service.
 
-### Dashboard-Managed Run
+### Application-Managed Run
 
-A run launched from the Local Web Dashboard and executed as a background job owned by the dashboard process. It remains observable through dashboard status, timeline, logs, and artifacts while avoiding any requirement that the operator keep a foreground terminal session attached.
+A run launched from the Operator Application and owned by that application. It remains observable through status, timeline, logs, and artifacts without requiring a foreground terminal session.
+_Avoid_: Dashboard-Managed Run, Detached Run
 
-### Dashboard Ownership
+### Run Ownership
 
-The rule that a Dashboard-Managed Run remains valid only while the dashboard process that launched it is still running. If that process stops unexpectedly during a live run, the runner fails closed, records the interruption in logs and artifacts when possible, and sends no further input.
+The rule that an Application-Managed Run remains valid only while the Operator Application that launched it still owns it. If ownership is lost during a live run, the runner fails closed, records the interruption when possible, and sends no further input.
+_Avoid_: Dashboard Ownership
+
+### Active Run
+
+The single Application-Managed Run that has been admitted and has not yet reached a completed, failed, cancelled, or interrupted terminal status.
+_Avoid_: Selected Run, Open Run
+
+### Interrupted Run
+
+A terminal Run that lost application ownership, worker communication, or orderly shutdown before reaching its intended result. Its available evidence is preserved, but execution is never resumed from that record.
+_Avoid_: Paused Run, Recoverable Run
 
 ### Background Window Message Input
 
 Live input delivered directly to a specific target window handle by posting keyboard or mouse messages to that window instead of injecting global desktop input into the current foreground application.
+
+### Background Capture Compatibility
+
+A Live Readiness finding that target-client capture and required anchor recognition remain reliable while the non-minimized target is behind other windows. It is independent of Background Window Message Input; without this finding, the target must remain visible.
+_Avoid_: Background Input Support, Minimized Capture, Assumed Occlusion Support
 
 ### Foreground Input Fallback
 
@@ -29,6 +46,21 @@ A compatibility path used only when a target cannot reliably accept Background W
 ### Robust Input Variation
 
 Small coordinate and timing variation used to reduce brittle exact-pixel assumptions in UI automation. It is not anti-detection or evasion behavior.
+
+### Physical Client Pixel
+
+One unvirtualized pixel inside the matched target window's client area. Profile resolution, named regions, capture dimensions, and absolute pointer targets use this coordinate space independently of Windows display scaling.
+_Avoid_: CSS Pixel, Desktop Logical Pixel
+
+### Target Display Change
+
+A change to the matched target window's monitor or effective DPI after a Live Run Snapshot is admitted. It invalidates the coordinate environment and interrupts the Run rather than being handled as a workflow Transition.
+_Avoid_: Application DPI Change, State Transition
+
+### Target Geometry Change
+
+Minimization or a change to the matched target window's physical client width or height after Live admission. It interrupts the Run even when the Profile's Resolution Policy is `ignore`.
+_Avoid_: Same-Monitor Repositioning, Window Decoration Change
 
 ### Game Profile
 
@@ -53,6 +85,191 @@ A post-run inspection of the states, actions, anchor detections, screenshots, re
 ### Operator Package
 
 A local installable or runnable form of the tool intended for an operator who wants to use the runner, dashboard, and demo workflows without working directly from source.
+
+### Operator Installer
+
+The signed per-user Windows EXE that installs, repairs, updates, and uninstalls the Operator Application while preserving the User Workspace and Operational Data.
+_Avoid_: Portable ZIP, MSIX Package
+
+### Supported Windows Platform
+
+A currently serviced x64 release of Windows 11 included in the Operator Application's tested release matrix.
+_Avoid_: Windows 10 Compatibility, Best-Effort Platform
+
+### Operator Application
+
+The single user-facing product that brings together profile execution and profile authoring while preserving local control and live-run safety.
+_Avoid_: Desktop Dashboard, Software Application
+
+### Application Bar
+
+The fixed top-level Operator Application row that switches between Run, Build, and Settings while keeping Active Run identity and Stop globally visible beneath the native Windows controls.
+_Avoid_: Browser Navigation, Second Sidebar
+
+### Run Workspace
+
+The operator-focused part of the Operator Application for selecting profiles, checking readiness, starting and stopping runs, and reviewing results.
+_Avoid_: Run Dashboard, Operator Dashboard
+
+### Run Overview
+
+The central Run Workspace surface that presents the selected Profile or Run, Target Preview, critical status, primary controls, and current progress at a glance.
+_Avoid_: Readiness Page, Main Dashboard
+
+### Run Progress Card
+
+The compact active-Run summary beside the Target Preview that shows execution status, current State and Action, elapsed time, retries, and the latest meaningful event without duplicating the full Timeline.
+_Avoid_: Live Log Card, Progress Percentage
+
+### Run Outcome Summary
+
+The completed-Run form of the Run Progress Card that shows terminal status, result, duration, final State, primary failure information, latest evidence, and relevant review or repeat actions.
+_Avoid_: Completion Popup, Automatic Run Review
+
+### Run Detail Panel
+
+The fixed right area of Run Workspace that provides Readiness, Timeline, Logs, Artifacts, and Profile Pack details without navigating away from the Run Overview.
+_Avoid_: Log Column, Details Page
+
+### Profile Builder
+
+The author-focused part of the Operator Application for creating, arranging, validating, and reviewing profile packs through structured visual editing.
+_Avoid_: Builder Dashboard, Profile Dashboard
+
+### Profile Setup
+
+The short guided entry into Profile Builder that chooses a starting source, records essential identity and target information, scaffolds the Profile Pack, and then opens a recoverable Profile Draft.
+_Avoid_: New Profile Wizard, Project Wizard
+
+### Flow View
+
+The Profile Builder view that presents States and their success and failure Transitions as a compact workflow graph.
+_Avoid_: Graph Page, Workflow Dashboard
+
+### State Node
+
+The compact Flow View representation of one State, showing its identity, role, anchor and Action counts, Transition connectors, and aggregate validation status.
+_Avoid_: State Card, Expanded State Form
+
+### Flow Layout
+
+The portable visual arrangement of State nodes in Flow View; it has no effect on State order, Transitions, validation, or execution.
+_Avoid_: State Order, Workflow Behavior
+
+### State View
+
+The Profile Builder view that focuses on the anchors, ordered Actions, and Transitions belonging to one selected State.
+_Avoid_: State Page, Action Dashboard
+
+### Action Block
+
+The compact State View representation of one ordered Action, showing its essential summary, selection, and validation status.
+_Avoid_: Action Card, Action Form
+
+### Action Inspector
+
+The persistent contextual editor that exposes the complete configuration of the selected Action while its State and target preview remain visible.
+_Avoid_: Action Modal, Action Dialog
+
+### Tool Palette
+
+The fixed left area of Profile Builder whose available tools follow the active view: State and Transition tools in Flow View, and Action tools in State View.
+_Avoid_: Action Sidebar, Permanent Toolbox
+
+### Context Rail
+
+The persistent split area on the right of Profile Builder that keeps the Target Preview above the contextual Inspector, with a user-adjustable divider.
+_Avoid_: Right Sidebar, Floating Properties Window
+
+### Problems Drawer
+
+The collapsible Profile Builder area that lists all current authoring problems and navigates directly to the affected Profile, State, anchor, Transition, or Action.
+_Avoid_: Error Page, Validation Popup
+
+### Draft Validation
+
+The authoritative schema and pack check of the current Profile Draft that determines whether it can become a Saved Profile Version.
+_Avoid_: Live Readiness, Overall Status
+
+### Live Readiness
+
+The safety gate for a Saved Profile Version that combines validity, target compatibility, required evidence, and operational checks to determine whether Live Run is available.
+_Avoid_: Draft Validation, Profile Validity
+
+### Profile Draft
+
+A recoverable authoring version of a Profile Pack that may be incomplete or invalid and has not replaced the last explicitly saved profile.
+_Avoid_: Autosaved Profile, Temporary Profile
+
+### Saved Profile Version
+
+A validated profile version explicitly accepted by the author as the current runnable form of a Profile Pack.
+_Avoid_: Published Profile, Final Profile
+
+### Run Snapshot
+
+The immutable profile content assigned to one automation run so later authoring changes cannot alter that run while it is executing.
+_Avoid_: Live Draft, Working Profile
+
+### Run Evidence Unit
+
+The self-contained stored set for one Run: identity and result metadata, Run Snapshot, readiness record, Timeline, log, and artifacts. Retention, export, and deletion operate on the unit rather than leaving partial evidence behind.
+_Avoid_: Artifact Folder, Log File
+
+### Evidence Bundle
+
+A standard ZIP export of a terminal Run Evidence Unit containing an offline HTML summary, versioned machine-readable manifest, Run Snapshot, readiness record, Timeline, log, original artifacts, and file checksums.
+_Avoid_: Proprietary Run File, PDF Report
+
+### Shareable Bundle
+
+An explicitly reduced Evidence Bundle whose operator-selected omissions are recorded in its manifest so it cannot be mistaken for complete Run evidence.
+_Avoid_: Redacted Evidence, Full Evidence Bundle
+
+### Pinned Run
+
+A completed Run whose Run Snapshot, logs, timeline, and artifacts are protected from automatic retention until the operator explicitly unpins it. Pinning is not a substitute for exporting or backing up evidence.
+_Avoid_: Saved Profile, Archived Run
+
+### Operational Data
+
+Application-managed settings, recovery drafts, Run records, logs, artifacts, and caches stored under `%LOCALAPPDATA%\GameScriptDev`, separately from installed files and the User Workspace.
+_Avoid_: User Workspace, Profile Data
+
+### Verified Application Update
+
+An Operator Application release whose publisher signature and package hash are validated before an explicitly approved installation that cannot modify the User Workspace or run during an Active Run.
+_Avoid_: Silent Update, Built-in Source Update
+
+### User Workspace
+
+The user-owned location that contains editable Profile Packs and their assets independently of the Operator Application installation.
+_Avoid_: Working Directory, Installation Folder
+
+### Built-in Profile Pack
+
+A runnable Profile Pack supplied with the Operator Application whose original contents remain protected; editing begins from a copy in the User Workspace.
+_Avoid_: Bundled Template, Read-Only Template
+
+### Profile Reference
+
+The source-qualified identity of a Profile Pack, combining its Built-in or User source with its pack identifier so equal identifiers never shadow one another.
+_Avoid_: Profile Name, Unqualified Profile ID
+
+### Pack Lineage
+
+Portable Profile Pack metadata that records the Built-in Profile Reference and version from which a user-owned Pack was copied, without making the copy dependent on its source.
+_Avoid_: Live Link, Inheritance
+
+### Lineage Baseline
+
+The immutable comparison record captured when a Built-in Profile Pack is copied, containing original structured text plus an asset checksum inventory so later source updates can distinguish user changes from upstream changes.
+_Avoid_: Parent Profile, Inherited Profile
+
+### Source Update
+
+A newer Built-in version of the Pack recorded by a user-owned Pack's lineage. It is offered for deliberate comparison and never changes the User Pack automatically.
+_Avoid_: Required Upgrade, Automatic Merge
 
 ### Regression Fixture
 
@@ -85,6 +302,11 @@ An anchor whose presence proves that the automation runner is not in the expecte
 ### Action
 
 An input or observation step performed by the automation runner while it is in a state.
+
+### Disabled Workflow Item
+
+A State or Action retained in a Profile Pack for later authoring work but deliberately excluded from the active state graph and automation execution.
+_Avoid_: Commented-Out Code, Inactive Code
 
 ### Transition
 
@@ -136,7 +358,7 @@ A repo-owned desktop window used to exercise live-mode safety checks, screenshot
 
 ### Live Verification Scenario
 
-A controlled run that pairs a profile with a known local target so live mode can be verified end-to-end while preserving explicit confirmation, target-window checks, and graceful termination.
+A controlled run that pairs a profile with a known local target so live mode can be verified end-to-end while preserving readiness gating, target-window checks, and graceful termination.
 
 ### Dry Run Mode
 
@@ -148,7 +370,7 @@ An explicit execution mode that can focus windows, capture screenshots, move the
 
 ### Live Confirmation
 
-A required operator confirmation before live mode sends the first mouse or keyboard input to the target application.
+A required Operator Application summary shown after Live Readiness passes and before the Live Run Worker starts. It identifies the Saved Profile Version, target window, input mode, and any elevation request; Cancel has initial focus and the operator must explicitly activate `Start Live Run` for each attempt.
 
 ### Runtime Adapter
 

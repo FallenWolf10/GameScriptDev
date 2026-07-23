@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from game_script_dev.action_metadata import SUPPORTED_CONTINUOUS_INPUT_ACTION_TYPES
 
 SUPPORTED_ANCHOR_TYPES = {"template", "text"}
 SUPPORTED_ACTION_TYPES = {
@@ -187,6 +188,7 @@ class Profile:
     max_retries: int = 3
     allow_infinite_run: bool = False
     manual_stop_is_dry_run_success: bool = False
+    skip_dry_run_requirement: bool = False
     profile_pack: ProfilePack | None = None
 
 
@@ -267,6 +269,11 @@ def profile_from_mapping(raw: dict[str, Any]) -> Profile:
         manual_stop_is_dry_run_success=_boolean(
             execution_raw,
             "manual_stop_is_dry_run_success",
+            default=False,
+        ),
+        skip_dry_run_requirement=_boolean(
+            execution_raw,
+            "skip_dry_run_requirement",
             default=False,
         ),
         profile_pack=_profile_pack_from_mapping(raw.get("profile_pack")),
@@ -923,17 +930,7 @@ def _validate_continuous_action_payload(
     allow_sequence: bool,
 ) -> None:
     continuous_action = data.get("action")
-    allowed_actions = {
-        "click_point",
-        "hold_click",
-        "press_key",
-        "press_keys",
-        "hold_key",
-        "hold_keys",
-        "repeat_key",
-        "hold_key_while_repeating_key",
-        "scroll_mouse",
-    }
+    allowed_actions = set(SUPPORTED_CONTINUOUS_INPUT_ACTION_TYPES) - {"sequence"}
     if allow_sequence:
         allowed_actions.add("sequence")
     if continuous_action not in allowed_actions:
@@ -1037,10 +1034,6 @@ def _validate_continuous_action_payload(
             if input_mode not in SUPPORTED_INPUT_MODES:
                 errors.append(
                     f"{action_context}.input_mode uses unknown input mode '{input_mode}'"
-                )
-            elif input_mode != "foreground":
-                errors.append(
-                    f"{action_context}.input_mode must be foreground for mouse wheel actions"
                 )
 
     if continuous_action in {"press_keys", "hold_keys"}:
@@ -1174,10 +1167,6 @@ def _validate_scroll_mouse_action(
         if input_mode not in SUPPORTED_INPUT_MODES:
             errors.append(
                 f"{action_context}.input_mode uses unknown input mode '{input_mode}'"
-            )
-        elif input_mode != "foreground":
-            errors.append(
-                f"{action_context}.input_mode must be foreground for mouse wheel actions"
             )
 
 

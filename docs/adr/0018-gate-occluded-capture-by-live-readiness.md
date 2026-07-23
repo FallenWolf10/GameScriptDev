@@ -1,0 +1,3 @@
+# Gate Occluded Capture By Live Readiness
+
+The Operator Application will treat background input and background capture as independent capabilities. A non-minimized target may run behind other windows only when Live Readiness verifies target-client capture and required-anchor recognition for the Saved Profile Version; otherwise the target must remain visible, and loss of that visibility interrupts Live mode. Minimization remains unsupported, and the worker will not silently continue through an unverified capture fallback. This preserves the convenience of reliable background operation without assuming that a successful `PrintWindow` call or background input path proves trustworthy visual state.

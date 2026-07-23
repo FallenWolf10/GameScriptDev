@@ -1492,10 +1492,10 @@ states:
 
             validate_profile(profile, profile_path.parent)
 
-    def test_rejects_scroll_mouse_background_override(self) -> None:
+    def test_accepts_scroll_mouse_background_override(self) -> None:
         profile_yaml = """
 version: 1
-name: Broken Scroll Mouse Profile
+name: Background Scroll Mouse Profile
 target:
   process_name: demo.exe
 window:
@@ -1522,13 +1522,7 @@ states:
 
             profile = load_profile(profile_path)
 
-            with self.assertRaises(ProfileValidationError) as captured:
-                validate_profile(profile, profile_path.parent)
-
-            self.assertIn(
-                "input_mode must be foreground for mouse wheel actions",
-                str(captured.exception),
-            )
+            validate_profile(profile, profile_path.parent)
 
     def test_rejects_unknown_click_action_input_mode_override(self) -> None:
         profile_yaml = """

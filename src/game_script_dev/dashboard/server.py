@@ -11,20 +11,28 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from game_script_dev.dashboard.profile_catalog import ProfileCatalog
+from game_script_dev.dashboard.profile_catalog import (
+    InvalidProfileDraftError,
+    ProfileCatalog,
+    ProfileConflictError,
+)
 from game_script_dev.dashboard.readiness import evaluate_readiness
-from game_script_dev.dashboard.run_registry import RunRegistry
+from game_script_dev.dashboard.run_registry import ActiveRunConflictError, RunRegistry
 from game_script_dev.dashboard.target_preview import (
     TargetPreviewError,
     TargetPreviewService,
 )
 from game_script_dev.operator_package import run_startup_checks
+from game_script_dev.profile_loader import ProfileLoadError
 from game_script_dev.retention import apply_workspace_retention
 from game_script_dev.windows_elevation import (
     WindowsElevationError,
     is_running_as_admin,
     relaunch_module_as_admin,
 )
+
+
+LIVE_CONFIRMATION_VALUE = "start-live-run"
 
 
 class DashboardState:
@@ -41,7 +49,10 @@ class DashboardState:
         self.workspace_root = workspace_root
         self.log_root = log_root
         apply_workspace_retention(workspace_root, log_root=log_root)
-        self.catalog = ProfileCatalog(workspace_root / "profiles")
+        self.catalog = ProfileCatalog(
+            workspace_root / "profiles",
+            draft_root=log_root.resolve().parent / "drafts",
+        )
         self.runs = RunRegistry(log_root)
         self.target_preview = target_preview or TargetPreviewService()
         self._readiness_cache: dict[
@@ -71,6 +82,35 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(self._readiness(profile_id).to_dict())
             except KeyError as error:
                 self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/source"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                self._send_json(self.state.catalog.profile_source(profile_id))
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            except OSError as error:
+                self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/structured"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                self._send_json(self.state.catalog.structured_profile(profile_id))
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            except ProfileLoadError as error:
+                self._send_error(HTTPStatus.UNPROCESSABLE_ENTITY, str(error))
+            except OSError as error:
+                self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/draft"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                self._send_json(self.state.catalog.get_draft(profile_id))
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                self._send_error(HTTPStatus.CONFLICT, str(error))
             return
         if path.startswith("/api/profiles/") and path.endswith("/target-preview-meta"):
             profile_id = unquote(path.split("/")[3])
@@ -108,10 +148,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/runs":
             limit = _query_int(query, "limit", None)
             runs = self.state.runs.list_runs(limit=limit)
+            active_run = self.state.runs.active_run()
             self._send_json(
                 {
                     "runs": [run.to_list_dict() for run in runs],
                     "total_count": self.state.runs.run_count(),
+                    "active_run": (
+                        active_run.to_list_dict() if active_run is not None else None
+                    ),
                 }
             )
             return
@@ -135,6 +179,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/profiles":
+            self._create_profile()
+            return
         if path.startswith("/api/profiles/") and path.endswith("/validate"):
             profile_id = unquote(path.split("/")[3])
             try:
@@ -143,6 +190,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(HTTPStatus.NOT_FOUND, str(error))
                 return
             self._send_json(entry.to_dict())
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/draft"):
+            self._save_profile_draft(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/validate-draft"):
+            self._validate_profile_draft(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/discard-draft"):
+            self._discard_profile_draft(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/save"):
+            self._save_profile(path)
             return
         if path == "/api/runs":
             self._start_run()
@@ -154,6 +213,122 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._relaunch_admin()
             return
         self._send_error(HTTPStatus.NOT_FOUND, "not found")
+
+    def _create_profile(self) -> None:
+        body = self._read_json_body()
+        try:
+            entry = self.state.catalog.create_profile(
+                profile_id=str(body.get("profile_id", "")),
+                name=str(body.get("name", "")),
+                game=str(body.get("game", "")),
+                mode=str(body.get("mode", "")),
+                initial_state=str(body.get("initial_state", "home")),
+            )
+            source = self.state.catalog.profile_source(entry.id)
+            draft = self.state.catalog.get_draft(entry.id)
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except FileExistsError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self.state._readiness_cache.clear()
+        self._send_json(
+            {
+                "profile": entry.to_dict(),
+                "source": source,
+                "draft": draft,
+            },
+            status=HTTPStatus.CREATED,
+        )
+
+    def _save_profile_draft(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        source = body.get("source")
+        if not isinstance(source, str):
+            self._send_error(HTTPStatus.BAD_REQUEST, "source must be text")
+            return
+        base_fingerprint = body.get("base_fingerprint")
+        try:
+            draft = self.state.catalog.save_draft(
+                profile_id,
+                source,
+                base_fingerprint=(
+                    str(base_fingerprint) if base_fingerprint is not None else None
+                ),
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(draft)
+
+    def _validate_profile_draft(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        try:
+            draft = self.state.catalog.get_draft(profile_id)
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(draft)
+
+    def _discard_profile_draft(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        try:
+            draft = self.state.catalog.discard_draft(profile_id)
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(draft)
+
+    def _save_profile(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        try:
+            entry = self.state.catalog.save_profile(profile_id)
+            source = self.state.catalog.profile_source(profile_id)
+            draft = self.state.catalog.get_draft(profile_id)
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except InvalidProfileDraftError as error:
+            self._send_error(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                str(error),
+                {"errors": error.errors},
+            )
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self.state._readiness_cache.clear()
+        self._send_json(
+            {
+                "profile": entry.to_dict(),
+                "source": source,
+                "draft": draft,
+            }
+        )
 
     @property
     def state(self) -> DashboardState:
@@ -238,7 +413,21 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         except KeyError as error:
             self._send_error(HTTPStatus.NOT_FOUND, str(error))
             return
+        profile_entry = self.state.catalog.validate_profile(profile_id)
+        if not profile_entry.valid:
+            self._send_error(
+                HTTPStatus.BAD_REQUEST,
+                "profile is invalid",
+                {"profile": profile_entry.to_dict()},
+            )
+            return
         if mode == "live":
+            if body.get("confirmation") != LIVE_CONFIRMATION_VALUE:
+                self._send_error(
+                    HTTPStatus.BAD_REQUEST,
+                    "live confirmation is required for every live run",
+                )
+                return
             readiness = self._readiness(profile_id)
             if not readiness.live_available:
                 self._send_error(
@@ -253,6 +442,13 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 profile_path,
                 mode,
             )
+        except ActiveRunConflictError as error:
+            self._send_error(
+                HTTPStatus.CONFLICT,
+                "another run is already active",
+                {"active_run": error.active_run.to_list_dict()},
+            )
+            return
         except ValueError as error:
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
             return
@@ -493,9 +689,10 @@ def create_server(
     target_preview: TargetPreviewService | None = None,
 ) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), DashboardRequestHandler)
+    bound_port = int(server.server_address[1])
     server.dashboard_state = DashboardState(  # type: ignore[attr-defined]
         host,
-        port,
+        bound_port,
         workspace_root,
         log_root,
         target_preview,

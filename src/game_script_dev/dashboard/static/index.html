@@ -3,56 +3,103 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GameScriptDev Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <title>GameScriptDev Operator</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
-    <header class="topbar">
-      <div class="topbar-brand">
-        <button id="sidebar-toggle" class="sidebar-toggle" type="button" title="Toggle Sidebar">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
-        </button>
+  <body data-workspace="run">
+    <a class="skip-link" href="#workspace-run">Skip to workspace</a>
+
+    <header class="application-bar">
+      <div class="application-brand" aria-label="GameScriptDev Operator">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 9h8M8 15h5" />
+            <rect x="3" y="4" width="18" height="16" rx="3" />
+          </svg>
+        </span>
         <div>
           <h1>GameScriptDev</h1>
-          <p id="workspace-status">Local operator dashboard</p>
+          <p id="workspace-status">Local operator application</p>
         </div>
       </div>
-      <div class="run-controls">
-        <select id="profile-select" aria-label="Profile"></select>
-        <button id="dry-run-button" type="button">Dry Run</button>
-        <button id="live-run-button" type="button">Live Run</button>
-        <button id="stop-run-button" type="button">Stop</button>
+
+      <nav id="workspace-navigation" class="workspace-navigation" aria-label="Application workspaces" role="tablist">
+        <button id="workspace-run-tab" class="workspace-tab active" type="button" role="tab" aria-selected="true" aria-controls="workspace-run" data-workspace-target="run">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 11 7-11 7z" /></svg>
+          <span>Run</span>
+        </button>
+        <button id="workspace-build-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="workspace-build" data-workspace-target="build" tabindex="-1">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5-5L7 4l3 3 2.7-2.7a4 4 0 0 0 5 5L9 18l-3-3z" /><path d="m5 17-2 2 2 2 2-2" /></svg>
+          <span>Build</span>
+        </button>
+        <button id="workspace-settings-tab" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="workspace-settings" data-workspace-target="settings" tabindex="-1">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></svg>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <div id="global-run-control" class="global-run-control" aria-live="polite">
+        <div class="global-run-copy">
+          <span id="global-run-label" class="eyebrow">No active run</span>
+          <strong id="global-run-summary">Ready</strong>
+        </div>
+        <button id="stop-run-button" class="danger-button" type="button" disabled>Stop</button>
       </div>
     </header>
 
-    <main class="layout">
-      <div class="sidebar">
-        <section class="panel profile-panel">
-          <div class="panel-heading">
-            <h2>Profiles</h2>
-            <button id="refresh-button" type="button">Refresh</button>
-          </div>
-          <div id="profiles" class="profile-list"></div>
-        </section>
+    <div id="app-notice" class="app-notice" role="status" aria-live="polite" hidden>
+      <span id="app-notice-message"></span>
+      <button id="app-notice-dismiss" class="icon-button" type="button" aria-label="Dismiss message">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
+      </button>
+    </div>
 
-        <section class="panel runs-panel">
-          <div class="panel-heading">
-            <h2>Run History</h2>
-            <span id="run-count" class="muted">0 runs</span>
-          </div>
-          <div id="runs" class="runs"></div>
-        </section>
-      </div>
-
-      <section class="panel readiness-panel">
-        <div class="panel-heading">
-          <h2>Readiness</h2>
-          <span id="readiness-badge" class="badge">Unknown</span>
+    <section id="workspace-run" class="workspace-view active" role="tabpanel" aria-labelledby="workspace-run-tab" tabindex="-1">
+      <header class="command-bar">
+        <div class="command-context">
+          <label for="profile-select">Profile</label>
+          <select id="profile-select" aria-label="Selected profile"></select>
+          <span id="command-status" class="command-status">Select a Profile to inspect readiness.</span>
         </div>
-        <div class="readiness-content">
+        <div class="run-controls" aria-label="Run commands">
+          <button id="dry-run-button" type="button">Dry Run</button>
+          <button id="live-run-button" class="primary-button" type="button">Live Run</button>
+        </div>
+      </header>
+
+      <main class="run-layout">
+        <aside class="selection-rail panel" aria-label="Profile and run selection">
+          <div class="rail-heading">
+            <div class="segmented-control" role="tablist" aria-label="Selection lists">
+              <button id="profiles-list-tab" class="active" type="button" role="tab" aria-selected="true" aria-controls="profiles-list-panel" data-selection-target="profiles">Profiles</button>
+              <button id="runs-list-tab" type="button" role="tab" aria-selected="false" aria-controls="runs-list-panel" data-selection-target="runs" tabindex="-1">Run History</button>
+            </div>
+            <button id="refresh-button" class="icon-button" type="button" title="Refresh Profiles" aria-label="Refresh Profiles">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6v5h-5M4 18v-5h5" /><path d="M6.1 9A7 7 0 0 1 18.5 6.5L20 11M4 13l1.5 4.5A7 7 0 0 0 17.9 15" /></svg>
+            </button>
+          </div>
+
+          <section id="profiles-list-panel" class="rail-list-panel active" role="tabpanel" aria-labelledby="profiles-list-tab">
+            <div id="profiles" class="profile-list"></div>
+          </section>
+
+          <section id="runs-list-panel" class="rail-list-panel" role="tabpanel" aria-labelledby="runs-list-tab" hidden>
+            <div class="list-summary">
+              <span id="run-count" class="muted">0 runs</span>
+            </div>
+            <div id="runs" class="runs"></div>
+          </section>
+        </aside>
+
+        <section class="run-overview panel" aria-labelledby="run-overview-title">
+          <div class="panel-heading overview-heading">
+            <div>
+              <span class="eyebrow">Run Overview</span>
+              <h2 id="run-overview-title">Selected Profile</h2>
+            </div>
+            <span id="readiness-badge" class="badge">Unknown</span>
+          </div>
+
           <figure id="target-preview" class="target-preview">
             <div id="target-preview-frame" class="target-preview-frame">
               <span id="target-preview-empty" class="muted">No target preview</span>
@@ -60,14 +107,8 @@
             </div>
             <figcaption id="target-preview-meta" class="muted">Refresh readiness to capture the matched target client area.</figcaption>
           </figure>
-          <div id="runtime-status" class="runtime-status">
-            <div>
-              <strong id="runtime-status-title">Dashboard privilege unknown</strong>
-              <p id="runtime-status-message" class="muted">Checking local dashboard runtime.</p>
-            </div>
-            <button id="runtime-admin-button" type="button" hidden>Relaunch as Admin</button>
-          </div>
-          <dl class="status-grid">
+
+          <dl class="status-grid overview-status-grid">
             <div>
               <dt>Target</dt>
               <dd id="target-status">not_checked</dd>
@@ -81,57 +122,266 @@
               <dd id="compatibility-status">not_applicable</dd>
             </div>
             <div>
-              <dt>Current State</dt>
-              <dd id="current-state">idle</dd>
-            </div>
-            <div>
-              <dt>Final Result</dt>
-              <dd id="final-result">none</dd>
+              <dt>Background Capture</dt>
+              <dd id="background-capture-status">not_checked</dd>
             </div>
           </dl>
-          <h3>Blockers</h3>
-          <ul id="blockers" class="message-list"></ul>
-          <h3>Warnings</h3>
-          <ul id="warnings" class="message-list"></ul>
-          <h3>Profile Pack</h3>
-          <div id="profile-pack-detail" class="pack-detail"></div>
-          <h3>Live Verification</h3>
-          <ol id="live-verification-checklist" class="checklist">
-            <li>Start the selected target window.</li>
-            <li>Run and confirm a successful dashboard dry run.</li>
-            <li>Refresh readiness and resolve every blocker.</li>
-            <li>Start live mode only when ready for real input.</li>
-            <li>Review the final result, log, and screenshot artifacts.</li>
-          </ol>
-        </div>
-      </section>
 
-      <section class="panel log-panel">
-        <div class="panel-heading">
-          <h2>Log</h2>
-          <span id="selected-run" class="muted">No run selected</span>
+          <section class="progress-card" aria-labelledby="progress-card-title">
+            <div>
+              <span class="eyebrow">Selected Run</span>
+              <h3 id="progress-card-title">Progress &amp; Outcome</h3>
+            </div>
+            <span id="selected-run" class="muted">No run selected</span>
+            <dl class="progress-summary">
+              <div><dt>Current State</dt><dd id="current-state">idle</dd></div>
+              <div><dt>Final Result</dt><dd id="final-result">none</dd></div>
+            </dl>
+            <p id="overview-alert" class="overview-alert muted">Select a Profile to review readiness before starting a Run.</p>
+          </section>
+        </section>
+
+        <aside class="detail-panel panel" aria-label="Run details">
+          <div id="detail-tabs" class="detail-tabs" role="tablist" aria-label="Run detail views">
+            <button id="detail-readiness-tab" class="active" type="button" role="tab" aria-selected="true" aria-controls="detail-readiness" data-detail-target="readiness">Readiness</button>
+            <button id="detail-timeline-tab" type="button" role="tab" aria-selected="false" aria-controls="detail-timeline" data-detail-target="timeline" tabindex="-1">Timeline</button>
+            <button id="detail-logs-tab" type="button" role="tab" aria-selected="false" aria-controls="detail-logs" data-detail-target="logs" tabindex="-1">Logs</button>
+            <button id="detail-artifacts-tab" type="button" role="tab" aria-selected="false" aria-controls="detail-artifacts" data-detail-target="artifacts" tabindex="-1">Artifacts</button>
+            <button id="detail-pack-tab" type="button" role="tab" aria-selected="false" aria-controls="detail-pack" data-detail-target="pack" tabindex="-1">Profile Pack</button>
+          </div>
+
+          <div class="detail-content">
+            <section id="detail-readiness" class="detail-pane active" role="tabpanel" aria-labelledby="detail-readiness-tab">
+              <div class="detail-heading">
+                <h2>Live Readiness</h2>
+                <button id="readiness-refresh-button" class="text-button" type="button">Refresh</button>
+              </div>
+              <h3>Blockers</h3>
+              <ul id="blockers" class="message-list"></ul>
+              <h3>Warnings</h3>
+              <ul id="warnings" class="message-list"></ul>
+              <div id="selected-run-readiness" class="detail-heading selected-run-readiness">
+                <h3>Selected Run Readiness</h3>
+                <span id="run-readiness-badge" class="badge">Unknown</span>
+              </div>
+              <ul id="run-readiness-blockers" class="message-list"></ul>
+              <h3>Live Verification</h3>
+              <ol id="live-verification-checklist" class="checklist">
+                <li>Start the selected target window.</li>
+                <li>Run and confirm a successful dashboard dry run.</li>
+                <li>Refresh readiness and resolve every blocker.</li>
+                <li>Start live mode only when ready for real input.</li>
+                <li>Review the final result, log, and screenshot artifacts.</li>
+              </ol>
+            </section>
+
+            <section id="detail-timeline" class="detail-pane" role="tabpanel" aria-labelledby="detail-timeline-tab" hidden>
+              <div class="detail-heading"><h2>Run Timeline</h2></div>
+              <ol id="run-review-timeline" class="timeline"></ol>
+            </section>
+
+            <section id="detail-logs" class="detail-pane log-pane" role="tabpanel" aria-labelledby="detail-logs-tab" hidden>
+              <div class="detail-heading"><h2>Log</h2></div>
+              <pre id="log-output" tabindex="0" aria-label="Selected Run log"></pre>
+            </section>
+
+            <section id="detail-artifacts" class="detail-pane" role="tabpanel" aria-labelledby="detail-artifacts-tab" hidden>
+              <div class="detail-heading"><h2>Artifacts</h2></div>
+              <div id="primary-artifact" class="primary-artifact">
+                <span id="latest-screenshot-link" class="muted">Latest artifact: none</span>
+              </div>
+              <div id="artifacts" class="artifacts"></div>
+            </section>
+
+            <section id="detail-pack" class="detail-pane" role="tabpanel" aria-labelledby="detail-pack-tab" hidden>
+              <div class="detail-heading"><h2>Profile Pack</h2></div>
+              <div id="profile-pack-detail" class="pack-detail"></div>
+            </section>
+          </div>
+        </aside>
+      </main>
+    </section>
+
+    <section id="workspace-build" class="workspace-view secondary-workspace" role="tabpanel" aria-labelledby="workspace-build-tab" tabindex="-1" hidden>
+      <header class="secondary-header">
+        <div>
+          <span class="eyebrow">Profile Builder</span>
+          <h2>Create and edit Profiles</h2>
+          <p>Create a Profile Pack in the User Workspace, edit its YAML as a recoverable draft, validate it, and explicitly save a runnable version.</p>
         </div>
-        <pre id="log-output"></pre>
-        <div class="log-details-section">
-          <div class="panel-heading artifact-heading">
-            <h2>Artifacts</h2>
-          </div>
-          <div id="primary-artifact" class="primary-artifact">
-            <span id="latest-screenshot-link" class="muted">Latest artifact: none</span>
-          </div>
-          <div id="artifacts" class="artifacts"></div>
-          <div class="panel-heading artifact-heading">
-            <h2>Run Review</h2>
-          </div>
-          <ol id="run-review-timeline" class="timeline"></ol>
-          <div id="selected-run-readiness" class="panel-heading artifact-heading">
-            <h2>Selected Run Readiness</h2>
-            <span id="run-readiness-badge" class="badge">Unknown</span>
-          </div>
-          <ul id="run-readiness-blockers" class="message-list"></ul>
+        <div class="secondary-actions">
+          <button id="create-profile-button" class="primary-button" type="button">Create Profile</button>
+          <button id="build-view-in-run" type="button">View in Run</button>
         </div>
-      </section>
-    </main>
+      </header>
+      <main class="secondary-grid">
+        <section class="panel builder-summary-panel">
+          <div class="panel-heading"><h2>Selected Profile</h2><span class="badge" id="builder-validity">Unknown</span></div>
+          <dl id="builder-profile-summary" class="settings-list">
+            <div><dt>Name</dt><dd id="builder-profile-name">No Profile selected</dd></div>
+            <div><dt>Identifier</dt><dd id="builder-profile-id">—</dd></div>
+            <div><dt>Pack status</dt><dd id="builder-pack-status">—</dd></div>
+            <div><dt>Source path</dt><dd id="builder-profile-path">—</dd></div>
+          </dl>
+        </section>
+        <section class="panel builder-readonly-view" aria-labelledby="builder-canvas-title">
+          <div class="panel-heading builder-view-heading">
+            <div>
+              <span class="eyebrow">Flow View</span>
+              <h2 id="builder-canvas-title">States and ordered Actions</h2>
+            </div>
+            <span id="builder-fingerprint" class="muted">No source loaded</span>
+          </div>
+          <div id="builder-empty" class="builder-empty">
+            <span class="read-only-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 8h8M8 12h5M8 16h3" /></svg>
+            </span>
+            <h2>Select or create a Profile</h2>
+            <p>Valid YAML drafts appear here as a readable State and Action flow.</p>
+          </div>
+          <div id="builder-flow" class="builder-flow" hidden>
+            <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
+            <section class="builder-state-detail" aria-live="polite">
+              <div class="builder-state-detail-heading">
+                <div>
+                  <span class="eyebrow">State View</span>
+                  <h2 id="builder-state-name">No State selected</h2>
+                </div>
+                <span id="builder-state-kind" class="badge">State</span>
+              </div>
+              <dl id="builder-state-transitions" class="builder-transition-list"></dl>
+              <h3>Required Anchors</h3>
+              <ul id="builder-anchor-list" class="builder-anchor-list"></ul>
+              <h3>Ordered Actions</h3>
+              <ol id="builder-action-list" class="builder-action-list"></ol>
+            </section>
+          </div>
+          <p class="builder-readonly-message">Flow editing is still read only. Use the YAML Draft editor below to make changes without leaving the application.</p>
+        </section>
+        <aside class="panel builder-notes-panel">
+          <div class="panel-heading"><h2>Pack Notes</h2><span class="badge">Read only</span></div>
+          <pre id="builder-profile-notes" class="notes-preview">No notes available.</pre>
+        </aside>
+        <section class="panel builder-editor-panel" aria-labelledby="builder-editor-title">
+          <div class="panel-heading builder-editor-heading">
+            <div>
+              <span class="eyebrow">Recoverable Draft</span>
+              <h2 id="builder-editor-title">YAML Profile</h2>
+            </div>
+            <span id="builder-draft-status" class="badge">No Profile</span>
+          </div>
+          <p class="builder-editor-help">Changes are autosaved as a draft and do not replace <code>profile.yaml</code> until Validate succeeds and you select Save Profile.</p>
+          <label class="sr-only" for="builder-yaml-editor">Profile YAML draft</label>
+          <textarea id="builder-yaml-editor" spellcheck="false" autocomplete="off" aria-describedby="builder-editor-help builder-draft-messages" disabled></textarea>
+          <div id="builder-editor-help" class="builder-draft-meta muted">Select a Profile to begin editing.</div>
+          <ul id="builder-draft-messages" class="builder-draft-messages" role="status" aria-live="polite"></ul>
+          <div class="builder-editor-actions">
+            <button id="reload-builder-source" type="button" disabled>Discard Draft &amp; Reload</button>
+            <div>
+              <button id="validate-builder-draft" type="button" disabled>Validate Draft</button>
+              <button id="save-builder-profile" class="primary-button" type="button" disabled>Save Profile</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </section>
+
+    <section id="workspace-settings" class="workspace-view secondary-workspace" role="tabpanel" aria-labelledby="workspace-settings-tab" tabindex="-1" hidden>
+      <header class="secondary-header">
+        <div>
+          <span class="eyebrow">Settings</span>
+          <h2>Application and workspace diagnostics</h2>
+          <p>Current runtime information is available here. Settings that need packaged application storage remain read only until their backend is implemented.</p>
+        </div>
+        <button id="settings-refresh-button" type="button">Refresh diagnostics</button>
+      </header>
+      <main class="settings-grid">
+        <section class="panel">
+          <div class="panel-heading"><h2>Runtime</h2><span id="settings-runtime-badge" class="badge">Checking</span></div>
+          <div id="runtime-status" class="runtime-status">
+            <div>
+              <strong id="runtime-status-title">Dashboard privilege unknown</strong>
+              <p id="runtime-status-message" class="muted">Checking local dashboard runtime.</p>
+            </div>
+            <button id="runtime-admin-button" type="button" hidden>Relaunch as Admin</button>
+          </div>
+          <dl class="settings-list">
+            <div><dt>Workspace</dt><dd id="settings-workspace">Checking…</dd></div>
+            <div><dt>Run evidence</dt><dd id="settings-logs">Checking…</dd></div>
+            <div><dt>Server</dt><dd id="settings-server">Checking…</dd></div>
+          </dl>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><h2>Startup diagnostics</h2><span id="startup-checks-badge" class="badge">Not checked</span></div>
+          <ul id="startup-checks-list" class="diagnostic-list">
+            <li class="muted">Select Refresh diagnostics to run startup checks.</li>
+          </ul>
+        </section>
+        <section class="panel settings-unavailable">
+          <div class="panel-heading"><h2>Packaged application settings</h2><span class="badge">Planned</span></div>
+          <p>Workspace switching, evidence retention, application updates, and accessibility preferences need packaged application APIs. No placeholder control here changes or persists data.</p>
+        </section>
+      </main>
+    </section>
+
+    <dialog id="live-dialog" aria-labelledby="live-dialog-title" aria-describedby="live-dialog-description">
+      <form method="dialog" class="dialog-body">
+        <div>
+          <span class="eyebrow">Live Confirmation</span>
+          <h2 id="live-dialog-title">Start a Live Run?</h2>
+        </div>
+        <p id="live-dialog-description">GameScriptDev may send real keyboard or mouse input to the matched target.</p>
+        <dl class="confirmation-summary">
+          <div><dt>Profile</dt><dd id="live-confirm-profile">—</dd></div>
+          <div><dt>Target</dt><dd id="live-confirm-target">—</dd></div>
+          <div><dt>Readiness</dt><dd id="live-confirm-readiness">—</dd></div>
+          <div><dt>Runtime</dt><dd id="live-confirm-runtime">—</dd></div>
+        </dl>
+        <p class="dialog-warning">Confirm the target before continuing. Readiness is checked again by the backend when the Run starts.</p>
+        <div class="dialog-actions">
+          <button id="cancel-live-button" value="cancel" type="submit" autofocus>Cancel</button>
+          <button id="confirm-live-button" value="confirm" class="primary-button" type="submit">Start Live Run</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="create-profile-dialog" aria-labelledby="create-profile-title" aria-describedby="create-profile-description">
+      <form id="create-profile-form" class="dialog-body">
+        <div>
+          <span class="eyebrow">Profile Setup</span>
+          <h2 id="create-profile-title">Create a Blank Profile</h2>
+        </div>
+        <p id="create-profile-description">This creates an editable Profile Pack in the current User Workspace. Target details and workflow steps can be completed in the YAML editor.</p>
+        <div class="form-grid">
+          <label>
+            <span>Game</span>
+            <input id="create-profile-game" name="game" type="text" maxlength="120" required autocomplete="off" />
+          </label>
+          <label>
+            <span>Mode or workflow</span>
+            <input id="create-profile-mode" name="mode" type="text" maxlength="120" required autocomplete="off" />
+          </label>
+          <label class="form-span">
+            <span>Profile name</span>
+            <input id="create-profile-name" name="name" type="text" maxlength="120" required autocomplete="off" />
+          </label>
+          <label>
+            <span>Profile identifier</span>
+            <input id="create-profile-id" name="profile_id" type="text" maxlength="64" pattern="[a-z0-9][a-z0-9_-]{0,63}" required autocomplete="off" aria-describedby="create-profile-destination" />
+          </label>
+          <label>
+            <span>Initial State</span>
+            <input id="create-profile-initial-state" name="initial_state" type="text" maxlength="64" pattern="[a-z][a-z0-9_]{0,63}" value="start" required autocomplete="off" />
+          </label>
+        </div>
+        <p id="create-profile-destination" class="form-hint">Destination: profiles/&lt;identifier&gt;/</p>
+        <p id="create-profile-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button id="cancel-create-profile" type="button">Cancel</button>
+          <button id="confirm-create-profile" class="primary-button" type="submit">Create Profile</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="/app.js"></script>
   </body>

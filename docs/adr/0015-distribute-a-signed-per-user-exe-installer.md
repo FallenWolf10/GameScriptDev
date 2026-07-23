@@ -1,0 +1,3 @@
+# Distribute a signed per-user EXE installer
+
+The primary Windows release will be a publisher-signed, per-user EXE Operator Installer around a tested PyInstaller one-folder payload instead of a portable ZIP or MSIX. The installer provides dependency checks, Evergreen WebView2 deployment, shortcuts, repair, verified updates, rollback, and uninstall while leaving the Operator Application normally unelevated and preserving the User Workspace and Operational Data. The raw one-folder output remains a packaging proof and diagnostic artifact; other distribution formats are deferred until a concrete deployment need justifies their separate identity, update, and support paths.

@@ -1,0 +1,3 @@
+# Allow only one active Run
+
+The Operator Application and backend will admit at most one Active Run at a time across Dry and Live modes and all Profiles. This makes command and Stop ownership unambiguous, avoids competing target capture or live-input activity, and keeps application-to-worker heartbeat and fail-closed behaviour understandable. UI button state is not the authority: backend admission must enforce the invariant atomically and reject a competing request with the Active Run summary, without creating a queued Run or replaying the request later. Operators may continue browsing evidence or editing drafts because the Active Run uses an immutable Run Snapshot; expanding execution concurrency later requires an explicit replacement decision.

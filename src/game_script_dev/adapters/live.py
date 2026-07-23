@@ -43,6 +43,7 @@ SMTO_NORMAL = 0x0000
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
+WM_MOUSEWHEEL = 0x020A
 ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
 FOREGROUND_CONFIRM_TIMEOUT_SECONDS = 1.0
 FOREGROUND_CONFIRM_POLL_SECONDS = 0.05
@@ -425,6 +426,9 @@ class BackgroundMouseSender(Protocol):
 
     def button_up(self, window: TargetWindow, x: int, y: int) -> None:
         """Release the left mouse button at target-window client coordinates."""
+
+    def scroll_vertical(self, window: TargetWindow, delta: int) -> None:
+        """Send one vertical mouse wheel delta to the target window."""
 
 
 class LiveScreenAdapter:
@@ -845,10 +849,15 @@ class LiveInputAdapter:
             )
         if steps < 1:
             raise ValueError("live mouse scroll steps must be at least 1")
-        window = self._verify_mouse_motion_target(input_mode)
+        window = self._verify_scroll_target(input_mode)
+        delta = WHEEL_DELTA if normalized_direction == "up" else -WHEEL_DELTA
+        if self._resolved_input_mode(input_mode) == "background_window_messages":
+            sender = self._background_mouse_sender()
+            for _ in range(int(steps)):
+                sender.scroll_vertical(window, delta)
+            return
         sender = self._mouse_sender()
         self._focus_mouse_target(window)
-        delta = WHEEL_DELTA if normalized_direction == "up" else -WHEEL_DELTA
         for _ in range(int(steps)):
             sender.scroll_vertical(delta)
 
@@ -1187,7 +1196,7 @@ class LiveInputAdapter:
                 if "input_mode" in action_data
                 else None
             )
-            window = self._verify_mouse_motion_target(input_mode)
+            window = self._verify_scroll_target(input_mode)
             delta = WHEEL_DELTA if normalized_direction == "up" else -WHEEL_DELTA
             return lambda: self._run_continuous_scroll_mouse(
                 window,
@@ -1196,6 +1205,7 @@ class LiveInputAdapter:
                 repeat_every,
                 delta,
                 steps,
+                self._resolved_input_mode(input_mode),
             )
 
         if action_type == "hold_keys":
@@ -1483,9 +1493,30 @@ class LiveInputAdapter:
         repeat_every_seconds: float,
         delta: int,
         steps: int,
+        mode: str,
     ) -> None:
         deadline = self._continuous_deadline(stop_after)
         next_scroll_at = time.monotonic()
+        if mode == "background_window_messages":
+            sender = self._background_mouse_sender()
+            while not stop_event.is_set():
+                now = time.monotonic()
+                if deadline is not None and now >= deadline:
+                    return
+                wait_seconds = max(0.0, next_scroll_at - now)
+                if wait_seconds > 0 and self._wait_for_stop_event(
+                    stop_event,
+                    self._limit_wait(wait_seconds, deadline),
+                ):
+                    return
+                for _ in range(steps):
+                    if stop_event.is_set():
+                        return
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return
+                    sender.scroll_vertical(window, delta)
+                next_scroll_at += repeat_every_seconds
+            return
         sender = self._mouse_sender()
         self._focus_mouse_target(window)
         while not stop_event.is_set():
@@ -1850,13 +1881,22 @@ class LiveInputAdapter:
         self.background_mouse_sender = Win32BackgroundMouseSender.create()
         return self.background_mouse_sender
 
+    def _resolved_input_mode(self, input_mode: str | None) -> str:
+        return self.input_mode if input_mode is None else input_mode
+
     def _verify_mouse_motion_target(self, input_mode: str | None) -> TargetWindow:
-        mode = self.input_mode if input_mode is None else input_mode
+        mode = self._resolved_input_mode(input_mode)
         if mode != "foreground":
             raise LiveAdaptersUnavailable(
                 "mouse-look actions currently require foreground input mode"
             )
         return self._verify_live_target(mode)
+
+    def _verify_scroll_target(self, input_mode: str | None) -> TargetWindow:
+        mode = self._resolved_input_mode(input_mode)
+        if mode == "background_window_messages":
+            return self._verify_live_target(mode)
+        return self._verify_mouse_motion_target(mode)
 
     def _focus_mouse_target(self, window: TargetWindow) -> None:
         if window.handle is None:
@@ -2613,6 +2653,27 @@ class Win32BackgroundMouseSender:
         self._post_handle(target_handle, WM_MOUSEMOVE, 0, l_param)
         self._post_handle(target_handle, WM_LBUTTONUP, 0, l_param)
 
+    def scroll_vertical(self, window: TargetWindow, delta: int) -> None:
+        target_x = int(window.content_width // 2)
+        target_y = int(window.content_height // 2)
+        target_handle, child_x, child_y = self._target_at_client_point(
+            window,
+            target_x,
+            target_y,
+        )
+        screen_point = self._screen_point_from_target_client(
+            target_handle,
+            child_x,
+            child_y,
+        )
+        self._activate_click_target(window, target_handle)
+        self._post_handle(
+            target_handle,
+            WM_MOUSEWHEEL,
+            _mouse_wheel_wparam(delta),
+            _client_coordinates_lparam(screen_point.x, screen_point.y),
+        )
+
     def _activate_click_target(self, window: TargetWindow, target_handle: int) -> None:
         if window.handle is None:
             raise LiveAdaptersUnavailable(
@@ -2651,6 +2712,17 @@ class Win32BackgroundMouseSender:
         if not self.user32.ScreenToClient(child_handle, ctypes.byref(screen_point)):
             raise LiveAdaptersUnavailable("Win32 ScreenToClient failed")
         return child_handle, int(screen_point.x), int(screen_point.y)
+
+    def _screen_point_from_target_client(
+        self,
+        target_handle: int,
+        x: int,
+        y: int,
+    ) -> wintypes.POINT:
+        point = wintypes.POINT(int(x), int(y))
+        if not self.user32.ClientToScreen(int(target_handle), ctypes.byref(point)):
+            raise LiveAdaptersUnavailable("Win32 ClientToScreen failed")
+        return point
 
     def _post(
         self,
@@ -2899,6 +2971,10 @@ def _safe_name(value: str | None) -> str:
 
 def _client_coordinates_lparam(x: int, y: int) -> int:
     return ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF)
+
+
+def _mouse_wheel_wparam(delta: int, key_flags: int = 0) -> int:
+    return (((int(delta) & 0xFFFF) << 16) | (int(key_flags) & 0xFFFF))
 
 
 def _virtual_key_to_char(virtual_key: int) -> str | None:

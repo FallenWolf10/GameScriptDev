@@ -29,6 +29,10 @@ This repository currently contains the v1 skeleton:
 - optional OCR adapter support behind the vision adapter boundary
 - named-region pointer clicks through window-relative background messages or foreground desktop input, depending on profile compatibility
 - local web dashboard for profile discovery, validation, dry runs, readiness, logs, and artifacts
+- local Windows Operator Application shell with the same dashboard capabilities
+- one-screen Run workspace with an explicit per-attempt Live Confirmation
+- Profile Builder foundation with in-app blank Profile creation, recoverable YAML Draft editing, validation, and conflict-safe Save
+- atomic single-Active-Run admission enforced by the backend
 - profile-pack metadata and live-mode compatibility checklist gating
 - profile-pack scaffold/check authoring commands
 - run review timeline and startup checks in the dashboard
@@ -158,7 +162,44 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The dashboard discovers profiles, validates them, launches dry runs, shows readiness blockers before live mode, requires `RUN` confirmation for live runs, and surfaces run history, logs, artifacts, current state, final result, and failure reason. New contributors should use the `Local Demo Target` profile pack before any real game profile work.
+The dashboard discovers profiles, validates them, launches explicit dry runs,
+shows readiness blockers before live mode, and surfaces run history, logs,
+artifacts, current state, final result, and failure reason. A ready Live Run opens
+the per-attempt confirmation summary specified in `docs/RUN_WORKSPACE_UI.md`;
+the backend rechecks readiness and requires the confirmation value before it
+admits the run. New contributors should use the `Local Demo Target` profile
+pack before any real game profile work.
+
+### Desktop Operator Application
+
+Install the optional desktop dependency, then launch the same local dashboard
+inside the Windows application shell:
+
+```powershell
+python -m pip install -e .[desktop]
+game-script-dev-app --workspace . --logs logs
+```
+
+The shell binds its private dashboard server to an automatically assigned
+loopback port, uses the Edge/WebView2 renderer, and shuts the server down with
+the window. It refuses a normal close while a Run is active. The current shell
+is a source and packaging proof; it does not yet include the signed per-user
+installer, dedicated elevated Live Run Worker, updater, or managed evidence
+retention described in `docs/OPERATOR_PACKAGE.md`.
+
+To build the PyInstaller one-folder proof on Windows:
+
+```powershell
+python -m pip install -e .[package]
+.\scripts\build_operator.ps1
+```
+
+The expected output is `dist/GameScriptDev/GameScriptDev.exe`. The proof build
+has been generated and smoke-tested on a Windows x64 development machine: the
+packaged server started, discovered the workspace Profiles, passed startup
+diagnostics, and served its embedded interface assets. It must still be
+exercised on the full supported Windows/DPI matrix before it is treated as a
+distributable release.
 
 The Local Demo Target pack uses `target.input_mode: foreground` because Tk
 windows do not reliably accept direct background mouse messages. Live input is
@@ -219,7 +260,17 @@ Safe fixture rules live in
 
 ## Live Mode
 
-Live mode is explicit and requires confirmation before it can control the desktop. The canonical input path posts keyboard and mouse messages directly to the target window handle when the profile supports `background_window_messages`. The foreground path is a compatibility fallback for targets that require global desktop input. In both cases, the runner checks that the original target is still alive before live screenshots and input, and fails closed when the window cannot be confirmed.
+Live mode is always an explicit operator command. The CLI additionally requires
+typing `RUN` unless `--yes` is supplied. The dashboard and Operator Application
+require both passing readiness and an explicit per-attempt Live Confirmation;
+the backend rejects missing or stale confirmation and admits at most one Active
+Run. The canonical input path posts keyboard and mouse messages directly to the
+target window handle when the profile supports `background_window_messages`.
+The foreground path is a compatibility fallback for targets that require
+global desktop input. In both cases, the runner checks that the original target
+is still alive before live screenshots and input, and fails closed when the
+window cannot be confirmed. The dedicated least-privilege Live Run Worker
+described in the packaging plan remains future work.
 
 ## Roadmap
 

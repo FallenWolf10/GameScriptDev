@@ -31,6 +31,7 @@ class ReadinessReport:
     target_status: str = "not_checked"
     resolution_status: str = "not_checked"
     compatibility_status: str = "not_applicable"
+    background_capture_status: str = "visible_required"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -42,6 +43,7 @@ class ReadinessReport:
             "target_status": self.target_status,
             "resolution_status": self.resolution_status,
             "compatibility_status": self.compatibility_status,
+            "background_capture_status": self.background_capture_status,
         }
 
 
@@ -81,7 +83,7 @@ def evaluate_readiness(
             blockers.append(
                 "profile pack compatibility checklist is incomplete: " + missing
             )
-    if not last_dry_run_success:
+    if not last_dry_run_success and not profile.skip_dry_run_requirement:
         if profile.manual_stop_is_dry_run_success:
             blockers.append(
                 "live mode requires a dashboard dry-run that finishes with "

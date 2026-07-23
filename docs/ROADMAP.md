@@ -15,12 +15,21 @@ Sections 1 through 9 are implemented and committed. The runner now has:
 - optional OCR adapter boundary
 - contextual logs and artifacts
 - validation example profiles
-- local web dashboard for discovery, validation, dry runs, readiness, run history, logs, artifacts, compatibility status, explicit live confirmation, current state, final result, and failure reason
+- local web dashboard for discovery, validation, explicit dry runs,
+  readiness-gated live launch with per-attempt confirmation, run history, logs,
+  artifacts, compatibility status, current state, final result, and failure reason
 - profile-pack metadata and compatibility checklist gating
+- source-tree Windows Operator Application shell and PyInstaller one-folder proof
+- atomic single-Active-Run backend admission
+- one-screen Run workspace and read-only Profile Builder foundation
 
-The current implementation focus is proving the Demo Profile against the repo-owned `Demo Automation Window` target before moving on to a real target profile pack.
+The current implementation focus is completing the packaged application safety
+boundaries and moving the writable raw-YAML Builder foundation into structured
+Action editing and later drag-and-drop authoring. Manual Windows live
+verification against the repo-owned `Demo Automation Window` passed on
+2026-07-24; every real target pack still requires its own independent proof.
 
-Sections 10 and 11 now have implementation slices in the worktree: the Local Demo Target can be launched with `python -m game_script_dev.demo_target`, the flat demo profile remains available, and the canonical `profiles/demo/local_target/profile.yaml` pack is discoverable as `demo__local_target`. Section 12 also has an ergonomics slice: the dashboard shows a live verification checklist, selected-run readiness, and a final/latest screenshot link, while live captures now include per-context sequence numbers and final success screenshots. Sections 14 through 19 now have source-tree support: profile-pack scaffolding/checks, dashboard pack metadata, run review, startup checks, and safe Local Demo regression fixtures. The remaining proof for Section 10 is manual Windows live verification that focuses the target, captures screenshots, sends input, and records useful live artifacts.
+Sections 10 and 11 now have implementation slices in the worktree: the Local Demo Target can be launched with `python -m game_script_dev.demo_target`, the flat demo profile remains available, and the canonical `profiles/demo/local_target/profile.yaml` pack is discoverable as `demo__local_target`. Section 12 also has an ergonomics slice: the dashboard shows a live verification checklist, selected-run readiness, and a final/latest screenshot link, while live captures now include per-context sequence numbers and final success screenshots. Sections 14 through 19 now have source-tree support: profile-pack scaffolding/checks, dashboard pack metadata, run review, startup checks, and safe Local Demo regression fixtures. The Section 10 Windows proof matched and foregrounded the repo-owned target, captured the Home, Daily Tasks, and final-success screens, recognized the expected templates, delivered the region click plus `F` and held `W` input, reached `completion_popup`, and retained final evidence.
 
 ## Grill-With-Docs Outcome
 
@@ -208,20 +217,41 @@ Goal: make the runner, dashboard, and demo workflows usable without requiring da
 Required behavior:
 
 - Provide an Operator Package for Windows after the Local Demo Target and dashboard flow are stable.
+- Ship the primary release as a publisher-signed, per-user EXE installer around the proven PyInstaller one-folder payload.
+- Support currently serviced Windows 11 x64 releases through an explicit packaged test matrix for v1.
+- Make the application and Live Run Worker Per-Monitor V2 aware and prove physical-client-pixel capture/input at 100%, 125%, 150%, and 200% scaling.
+- Gate operation behind other windows on Background Capture Compatibility
+  established by Live Readiness; otherwise require the non-minimized target to
+  remain visible and interrupt on visibility loss.
 - Include startup checks for runtime dependencies, writable log folders, profile discovery, and basic live adapter availability.
-- Preserve explicit live confirmation and readiness gating in packaged form.
+- Add the approved Live Confirmation summary and preserve readiness gating in packaged form.
+- Replace legacy 24-hour cleanup with 30-day/5 GB managed Run-evidence retention and Pinned Run protection.
+- Provide publisher-signed, hash-verified application updates that install only with explicit approval and never during an Active Run.
 - Document how to launch the dashboard, run dry runs, start the Local Demo Target, and locate logs/artifacts.
 - Keep source-based development workflows available for contributors.
 
 Acceptance checks:
 
 - An operator can launch the packaged tool, open the dashboard, run the demo dry run, and find logs.
-- The package does not bypass live confirmation, readiness blockers, or profile validation.
+- Install, repair, update, and uninstall preserve the User Workspace and Operational Data without requiring the main application to run elevated.
+- The package requires the approved Live Confirmation summary and does not bypass readiness blockers or profile validation.
+- Readiness and Live Confirmation distinguish background input from background
+  capture; occluded operation is unavailable unless capture and required-anchor
+  recognition have been verified.
+- Operators can inspect storage usage, pin important Runs, and verify that automatic cleanup removes only eligible completed Runs.
+- Update failure preserves a runnable prior installation, User Workspace, and Operational Data.
 - Packaging docs explain what is included and what remains source-only.
 
-Status: implemented as a source-tree operator package slice with
-`game-script-dev doctor`, dashboard `/api/startup-checks`, and
-`docs/OPERATOR_PACKAGE.md`. A standalone Windows wrapper remains future work.
+Status: first application-shell slice implemented in the worktree. It includes
+`game-script-dev-app`, an ephemeral loopback server, Edge/WebView2 hosting, the
+PyInstaller one-folder spec and manifest, build validation script, explicit
+Live Confirmation, atomic single-Active-Run admission, and the redesigned Run,
+Build, and Settings workspaces. Automated and browser-based layout checks pass.
+A real Windows x64 one-folder build and packaged-server smoke test also pass.
+The signed installer and supported-matrix proof,
+dedicated Live Run Worker/elevation boundary, immutable snapshots and ownership
+recovery, background-capture probing, managed retention, and verified updater
+remain outstanding.
 
 ## Section 19: Create Regression Fixtures From Safe Runs
 
@@ -273,8 +303,15 @@ Acceptance checks:
 - Generated YAML remains readable and reviewable.
 - Profile builder writes are constrained to the selected profile pack folder.
 
-Status: planned. See `docs/PROFILE_BUILDER_UI.md` for the proposed structure,
-user roles, backend shape, and phased implementation plan.
+Status: Phase 1 foundation and the first Phase 2 writable slice are implemented.
+The Build workspace loads a selected Profile through fingerprinted source and
+structured-profile endpoints, then shows its state list, transitions, required
+anchors, ordered Actions, source path, pack status, and notes. Authors can create
+a blank Profile, edit recoverable raw-YAML Drafts, validate them, and Save with
+external-change conflict protection and retained revision backups. The visual
+State and Action flow remains read only. The full graph canvas, structured Action
+editing, drag-and-drop authoring, and creation/asset tools remain planned in
+`docs/PROFILE_BUILDER_UI.md`.
 
 ## Completed Sections
 
@@ -287,7 +324,7 @@ user roles, backend shape, and phased implementation plan.
 7. Expanded demo and validation profile coverage.
 8. Local web dashboard.
 9. Game expansion and profile-pack requirements.
-10. Local Demo Target implementation slice, pending manual Windows live proof.
+10. Local Demo Target implementation slice and manual Windows live proof.
 11. Local Demo Target profile-pack promotion.
 12. Live verification ergonomics slice.
 13. Real target pack exercise deferred pending operator/rules confirmation.
@@ -295,9 +332,11 @@ user roles, backend shape, and phased implementation plan.
 15. Dashboard profile-pack management.
 16. Live run review mode.
 17. Tighten real-target pack notes.
-18. Source-tree operator package and startup checks.
+18. Operator Application and one-folder packaging proof; production release
+    gates remain.
 19. Safe Local Demo regression fixtures.
-20. Visual Profile Builder planned.
+20. Visual Profile Builder foundation and writable raw-YAML Draft slice;
+    structured editing phases remain.
 
 ## Source Coverage
 

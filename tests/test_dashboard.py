@@ -13,8 +13,15 @@ from urllib.request import Request, urlopen
 from game_script_dev.adapters.base import TargetWindow
 from game_script_dev.dashboard.profile_catalog import ProfileCatalog
 from game_script_dev.dashboard.readiness import evaluate_readiness
-from game_script_dev.dashboard.run_registry import RunRegistry
-from game_script_dev.dashboard.server import create_server, main as dashboard_main
+from game_script_dev.dashboard.run_registry import (
+    ActiveRunConflictError,
+    RunRegistry,
+)
+from game_script_dev.dashboard.server import (
+    LIVE_CONFIRMATION_VALUE,
+    create_server,
+    main as dashboard_main,
+)
 from game_script_dev.dashboard.target_preview import TargetPreview
 
 
@@ -204,6 +211,23 @@ class DashboardTests(unittest.TestCase):
             self.assertFalse(report.live_available)
             self.assertIn("stopped by the operator", " ".join(report.blockers))
 
+    def test_readiness_allows_profile_scoped_dry_run_bypass(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_yaml = PROFILE_YAML.replace(
+                "execution:\n",
+                "execution:\n  skip_dry_run_requirement: true\n",
+            )
+            profile_path = _write_profile(Path(temp_dir), profile_yaml)
+
+            report = evaluate_readiness(
+                "demo",
+                profile_path,
+                last_dry_run_success=False,
+                check_target=False,
+            )
+
+            self.assertNotIn("dry-run", " ".join(report.blockers))
+
     def test_readiness_uses_client_resolution_when_window_has_decorations(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             profile_path = _write_profile(Path(temp_dir))
@@ -236,6 +260,7 @@ class DashboardTests(unittest.TestCase):
 
             self.assertFalse(report.live_available)
             self.assertEqual(report.compatibility_status, "incomplete")
+            self.assertEqual(report.background_capture_status, "visible_required")
             self.assertIn("compatibility checklist", " ".join(report.blockers))
             self.assertIn("successful_validation_or_dry_run", " ".join(report.blockers))
 
@@ -250,6 +275,10 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(payload["profile_pack"]["game"], "Demo Game")
             self.assertIn("successful_validation_or_dry_run", payload["profile_pack"]["missing_compatibility_checks"])
             self.assertIn("Dashboard notes", payload["notes"])
+            self.assertEqual(payload["target"]["process_name"], "demo.exe")
+            self.assertEqual(payload["target"]["input_mode"], "background_window_messages")
+            self.assertEqual(payload["resolution"]["width"], 1280)
+            self.assertEqual(payload["state_count"], 1)
 
     def test_run_registry_records_dry_run_result_and_log(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -290,6 +319,86 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(len(runs), 1)
             self.assertEqual(runs[0].id, second.id)
             self.assertEqual(registry.run_count(), 2)
+
+    def test_run_registry_atomically_rejects_a_second_active_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+            worker_started = threading.Event()
+            release_worker = threading.Event()
+
+            def hold_worker(record, _stop_event) -> None:
+                worker_started.set()
+                release_worker.wait(5)
+                registry._update(  # type: ignore[attr-defined]
+                    record.id,
+                    status="completed",
+                    finished_at="finished",
+                )
+
+            with patch.object(registry, "_run_profile", side_effect=hold_worker):
+                first = registry.start_run("demo", profile_path, "dry-run")
+                self.assertTrue(worker_started.wait(1))
+
+                with self.assertRaises(ActiveRunConflictError) as raised:
+                    registry.start_run("demo", profile_path, "dry-run")
+
+                self.assertEqual(raised.exception.active_run.id, first.id)
+                self.assertEqual(registry.run_count(), 1)
+                self.assertEqual(registry.active_run().id, first.id)
+                release_worker.set()
+                _wait_for_run(registry, first.id)
+
+            self.assertIsNone(registry.active_run())
+
+    def test_run_registry_admits_exactly_one_of_two_concurrent_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            registry = RunRegistry(root / "logs")
+            request_barrier = threading.Barrier(3)
+            release_worker = threading.Event()
+            accepted = []
+            conflicts = []
+
+            def hold_worker(record, _stop_event) -> None:
+                release_worker.wait(5)
+                registry._update(  # type: ignore[attr-defined]
+                    record.id,
+                    status="completed",
+                    finished_at="finished",
+                )
+
+            def request_run() -> None:
+                request_barrier.wait()
+                try:
+                    accepted.append(
+                        registry.start_run("demo", profile_path, "dry-run")
+                    )
+                except ActiveRunConflictError as error:
+                    conflicts.append(error)
+
+            with patch.object(registry, "_run_profile", side_effect=hold_worker):
+                requests = [
+                    threading.Thread(target=request_run, daemon=True)
+                    for _ in range(2)
+                ]
+                for request in requests:
+                    request.start()
+                request_barrier.wait()
+                for request in requests:
+                    request.join(2)
+
+                self.assertEqual(len(accepted), 1)
+                self.assertEqual(len(conflicts), 1)
+                self.assertEqual(registry.run_count(), 1)
+                self.assertEqual(
+                    conflicts[0].active_run.id,
+                    accepted[0].id,
+                )
+                release_worker.set()
+                _wait_for_run(registry, accepted[0].id)
 
     def test_run_registry_preserves_newest_first_run_order_without_sorting(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -489,6 +598,16 @@ class DashboardTests(unittest.TestCase):
                 profiles = _get_json(f"{base_url}/api/profiles")
                 self.assertEqual(profiles["profiles"][0]["id"], "demo")
 
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                structured = _get_json(
+                    f"{base_url}/api/profiles/demo/structured"
+                )
+                self.assertFalse(source["read_only"])
+                self.assertEqual(len(source["fingerprint"]), 64)
+                self.assertEqual(structured["fingerprint"], source["fingerprint"])
+                self.assertEqual(structured["document"]["name"], "Dashboard Demo")
+                self.assertFalse(structured["read_only"])
+
                 request = Request(
                     f"{base_url}/api/runs",
                     data=json.dumps({"profile_id": "demo", "mode": "dry-run"}).encode(
@@ -503,6 +622,204 @@ class DashboardTests(unittest.TestCase):
                 runs = _get_json(f"{base_url}/api/runs")
                 self.assertNotIn("timeline", runs["runs"][0])
                 self.assertIn("total_count", runs)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_creates_a_new_profile_pack_in_the_user_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                created = _post_json(
+                    f"{base_url}/api/profiles",
+                    {
+                        "profile_id": "daily_route",
+                        "name": "Daily Route",
+                        "game": "Example Game",
+                        "mode": "Daily Task",
+                        "initial_state": "start",
+                    },
+                )
+
+                self.assertEqual(created["profile"]["id"], "daily_route")
+                self.assertEqual(created["profile"]["name"], "Daily Route")
+                pack_dir = root / "profiles" / "daily_route"
+                self.assertTrue((pack_dir / "profile.yaml").is_file())
+                self.assertTrue((pack_dir / "notes.md").is_file())
+                self.assertTrue((pack_dir / "assets" / ".gitkeep").is_file())
+                self.assertTrue(
+                    (pack_dir / "validation_examples" / "valid" / ".gitkeep").is_file()
+                )
+                self.assertIn("initial_state: start", created["source"]["source"])
+                self.assertIn("  start:", created["source"]["source"])
+                self.assertFalse(created["source"]["read_only"])
+                self.assertEqual(
+                    _get_json(f"{base_url}/api/profiles")["profiles"][0]["id"],
+                    "daily_route",
+                )
+
+                with self.assertRaises(HTTPError) as duplicate:
+                    _post_json(
+                        f"{base_url}/api/profiles",
+                        {
+                            "profile_id": "daily_route",
+                            "name": "Duplicate",
+                            "game": "Example Game",
+                            "mode": "Daily Task",
+                            "initial_state": "start",
+                        },
+                    )
+                self.assertEqual(duplicate.exception.code, 409)
+
+                with self.assertRaises(HTTPError) as traversal:
+                    _post_json(
+                        f"{base_url}/api/profiles",
+                        {
+                            "profile_id": "../outside",
+                            "name": "Outside",
+                            "game": "Example Game",
+                            "mode": "Daily Task",
+                            "initial_state": "start",
+                        },
+                    )
+                self.assertEqual(traversal.exception.code, 400)
+                self.assertFalse((root / "outside").exists())
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_persists_drafts_and_only_replaces_yaml_on_valid_save(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                invalid_source = "version: [\n"
+
+                invalid_draft = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": invalid_source,
+                        "base_fingerprint": source["fingerprint"],
+                    },
+                )
+
+                self.assertFalse(invalid_draft["valid"])
+                self.assertTrue(invalid_draft["dirty"])
+                self.assertEqual(profile_path.read_text(encoding="utf-8"), PROFILE_YAML)
+                recovered = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(recovered["source"], invalid_source)
+                self.assertTrue(recovered["exists"])
+
+                with self.assertRaises(HTTPError) as invalid_save:
+                    _post_json(f"{base_url}/api/profiles/demo/save", {})
+                self.assertEqual(invalid_save.exception.code, 422)
+                self.assertEqual(profile_path.read_text(encoding="utf-8"), PROFILE_YAML)
+
+                valid_source = PROFILE_YAML.replace(
+                    "name: Dashboard Demo",
+                    "name: Edited In Application",
+                    1,
+                )
+                valid_draft = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": valid_source,
+                        "base_fingerprint": source["fingerprint"],
+                    },
+                )
+                self.assertTrue(valid_draft["valid"], valid_draft["errors"])
+
+                saved = _post_json(f"{base_url}/api/profiles/demo/save", {})
+
+                self.assertEqual(saved["profile"]["name"], "Edited In Application")
+                self.assertEqual(profile_path.read_text(encoding="utf-8"), valid_source)
+                self.assertFalse(
+                    _get_json(f"{base_url}/api/profiles/demo/draft")["exists"]
+                )
+                revisions = list((root / "drafts" / "revisions").rglob("*.yaml"))
+                self.assertEqual(len(revisions), 1)
+                self.assertEqual(revisions[0].read_text(encoding="utf-8"), PROFILE_YAML)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_refuses_to_overwrite_an_external_yaml_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                draft_source = PROFILE_YAML.replace(
+                    "name: Dashboard Demo",
+                    "name: Draft Name",
+                    1,
+                )
+                _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": draft_source,
+                        "base_fingerprint": source["fingerprint"],
+                    },
+                )
+                external_source = PROFILE_YAML.replace(
+                    "name: Dashboard Demo",
+                    "name: External Name",
+                    1,
+                )
+                profile_path.write_text(external_source, encoding="utf-8")
+
+                with self.assertRaises(HTTPError) as conflict:
+                    _post_json(f"{base_url}/api/profiles/demo/save", {})
+
+                self.assertEqual(conflict.exception.code, 409)
+                payload = json.loads(conflict.exception.read())
+                self.assertIn("changed outside", payload["error"])
+                self.assertEqual(profile_path.read_text(encoding="utf-8"), external_source)
+                recovered = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(recovered["source"], draft_source)
+                self.assertTrue(recovered["conflict"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_rejects_invalid_profile_without_creating_a_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, "version: [\n")
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+
+                with self.assertRaises(HTTPError) as invalid:
+                    _post_json(
+                        f"{base_url}/api/runs",
+                        {"profile_id": "demo", "mode": "dry-run"},
+                    )
+
+                self.assertEqual(invalid.exception.code, 400)
+                payload = json.loads(invalid.exception.read())
+                self.assertEqual(payload["error"], "profile is invalid")
+                self.assertFalse(payload["profile"]["valid"])
+                self.assertEqual(
+                    _get_json(f"{base_url}/api/runs")["total_count"],
+                    0,
+                )
             finally:
                 server.shutdown()
                 server.server_close()
@@ -673,7 +990,7 @@ class DashboardTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-    def test_server_starts_live_run_without_run_confirmation_text(self) -> None:
+    def test_server_requires_and_accepts_per_attempt_live_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             _write_profile(root)
@@ -692,9 +1009,20 @@ class DashboardTests(unittest.TestCase):
                         (),
                         {"live_available": True, "to_dict": lambda self: {"live_available": True}},
                     )()
+                    with self.assertRaises(HTTPError) as missing_confirmation:
+                        _post_json(
+                            f"{base_url}/api/runs",
+                            {"profile_id": "demo", "mode": "live"},
+                        )
+                    self.assertEqual(missing_confirmation.exception.code, 400)
+
                     response = _post_json(
                         f"{base_url}/api/runs",
-                        {"profile_id": "demo", "mode": "live"},
+                        {
+                            "profile_id": "demo",
+                            "mode": "live",
+                            "confirmation": LIVE_CONFIRMATION_VALUE,
+                        },
                     )
 
                 self.assertEqual(response["mode"], "live")
@@ -749,6 +1077,7 @@ class DashboardTests(unittest.TestCase):
 
                 self.assertFalse(runtime["is_admin"])
                 self.assertEqual(runtime["host"], "127.0.0.1")
+                self.assertEqual(runtime["port"], server.server_port)
             finally:
                 server.shutdown()
                 server.server_close()
@@ -813,6 +1142,47 @@ class DashboardTests(unittest.TestCase):
                     _wait_for_server_run(base_url, response["id"])
                     run = _get_json(f"{base_url}/api/runs/{response['id']}")
                     self.assertEqual(run["final_result"], "operator_stopped")
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_server_rejects_competing_run_with_active_run_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with patch(
+                    "game_script_dev.dashboard.run_registry.Engine",
+                    FakeStoppableEngine,
+                ):
+                    first = _post_json(
+                        f"{base_url}/api/runs",
+                        {"profile_id": "demo", "mode": "dry-run"},
+                    )
+                    _wait_for_server_status(base_url, first["id"], "running")
+
+                    with self.assertRaises(HTTPError) as conflict:
+                        _post_json(
+                            f"{base_url}/api/runs",
+                            {"profile_id": "demo", "mode": "dry-run"},
+                        )
+
+                    self.assertEqual(conflict.exception.code, 409)
+                    payload = json.loads(conflict.exception.read())
+                    self.assertEqual(payload["active_run"]["id"], first["id"])
+                    runs = _get_json(f"{base_url}/api/runs")
+                    self.assertEqual(runs["total_count"], 1)
+                    self.assertEqual(runs["active_run"]["id"], first["id"])
+
+                    _post_json(
+                        f"{base_url}/api/runs/{first['id']}/stop",
+                        {},
+                    )
+                    _wait_for_server_run(base_url, first["id"])
             finally:
                 server.shutdown()
                 server.server_close()
@@ -914,7 +1284,7 @@ class DashboardTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-    def test_dashboard_static_ui_contains_live_verification_containers(self) -> None:
+    def test_dashboard_static_ui_exposes_operator_application_contract(self) -> None:
         html = Path("src/game_script_dev/dashboard/static/index.html").read_text(
             encoding="utf-8"
         )
@@ -925,84 +1295,61 @@ class DashboardTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('id="live-verification-checklist"', html)
-        self.assertIn('id="selected-run-readiness"', html)
-        self.assertIn('id="latest-screenshot-link"', html)
-        self.assertIn('id="profile-pack-detail"', html)
-        self.assertIn('id="run-review-timeline"', html)
-        self.assertIn('id="target-preview-image"', html)
-        self.assertIn('id="target-preview-meta"', html)
-        self.assertIn('id="runtime-admin-button"', html)
-        self.assertIn('id="runtime-status"', html)
-        self.assertIn('id="stop-run-button"', html)
-        self.assertNotIn('id="live-dialog"', html)
+        required_ids = {
+            "workspace-navigation",
+            "workspace-run",
+            "workspace-build",
+            "workspace-settings",
+            "stop-run-button",
+            "target-preview-image",
+            "background-capture-status",
+            "live-verification-checklist",
+            "run-review-timeline",
+            "log-output",
+            "artifacts",
+            "profile-pack-detail",
+            "builder-state-list",
+            "builder-action-list",
+            "create-profile-button",
+            "create-profile-dialog",
+            "create-profile-form",
+            "builder-yaml-editor",
+            "validate-builder-draft",
+            "save-builder-profile",
+            "reload-builder-source",
+            "builder-draft-messages",
+            "startup-checks-list",
+            "live-dialog",
+            "cancel-live-button",
+            "confirm-live-button",
+        }
+        for element_id in required_ids:
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn('id="cancel-live-button" value="cancel"', html)
+        self.assertNotIn("fonts.googleapis.com", html)
+        self.assertNotIn("fonts.googleapis.com", styles)
+
         self.assertIn("aspect-ratio: var(--target-preview-ratio, 16 / 9);", styles)
-        self.assertIn("min-height: 220px;", styles)
+        self.assertIn(".run-layout", styles)
+        self.assertIn(".builder-state-node", styles)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
+        self.assertIn(":focus-visible", styles)
+
         self.assertIn(
             'frame.style.setProperty("--target-preview-ratio", String(Math.max(previewRatio, 16 / 9)));',
             app_js,
         )
-        self.assertIn('function displayResultLabel(result)', app_js)
-        self.assertIn('return "interrupt";', app_js)
-        self.assertIn("function getActiveStoppableRun()", app_js)
-        self.assertIn('button.textContent = run ? `Stop ${run.mode}` : "Stop";', app_js)
-        self.assertIn("state.selectedRunId = runs.length ? runs[0].id : null;", app_js)
-        self.assertIn("const latestArtifact = artifacts[0] || null;", app_js)
-        self.assertIn("link.textContent = `Latest artifact: ${latestArtifact.name}`;", app_js)
-        self.assertIn("async function refreshSelectedRunData({ force = false } = {})", app_js)
-        self.assertIn("async function fetchLogTail(runId, offset)", app_js)
-        self.assertIn('response.headers.get("X-Log-Next-Offset")', app_js)
-        self.assertIn("artifacts?limit=", app_js)
-        self.assertIn("const MAX_VISIBLE_RUNS = 100;", app_js)
-        self.assertIn('api(`/api/runs?limit=${MAX_VISIBLE_RUNS}`)', app_js)
+        self.assertIn("payload.active_run", app_js)
+        self.assertIn("dialog.showModal();", app_js)
+        self.assertIn('startRun("live", "start-live-run")', app_js)
+        self.assertIn("async function refreshBuilderProfile()", app_js)
+        self.assertIn("/structured`)", app_js)
+        self.assertIn("async function persistBuilderDraft", app_js)
+        self.assertIn("async function saveBuilderProfile", app_js)
+        self.assertIn("async function createProfile", app_js)
+        self.assertIn("function activateWorkspace(workspace", app_js)
         self.assertIn("function scheduleNextPoll()", app_js)
-        self.assertIn("window.setTimeout(async () => {", app_js)
-        self.assertIn("const PREVIEW_REFRESH_INTERVAL_MS = 1000;", app_js)
-        self.assertIn("const ACTIVE_POLL_INTERVAL_MS = 1000;", app_js)
-        self.assertIn("const IDLE_POLL_INTERVAL_MS = 1000;", app_js)
-        self.assertIn("hasActiveRun: false,", app_js)
-        self.assertIn("state.hasActiveRun = runs.some((run) => isRunActive(run));", app_js)
-        self.assertIn("const interval = state.hasActiveRun ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;", app_js)
-        self.assertIn("await refreshReadiness({ includePreview: true });", app_js)
-        self.assertIn("include_artifacts=0", app_js)
-        self.assertIn("function renderRunsList()", app_js)
-        self.assertIn("function renderRunCount()", app_js)
-        self.assertIn("function upsertRunEntry(runEntry)", app_js)
-        self.assertIn("function normalizeRunListEntry(runEntry)", app_js)
-        self.assertIn("renderRunsList();", app_js)
-        self.assertIn('button.dataset.profileId = profile.id;', app_js)
-        self.assertIn('button.dataset.runId = run.id;', app_js)
-        self.assertIn('$("profiles").addEventListener("click", async (event) => {', app_js)
-        self.assertIn('$("runs").addEventListener("click", async (event) => {', app_js)
-        self.assertIn("const shouldRefreshSelectedRunDetail = (", app_js)
-        self.assertIn("|| state.hasActiveRun", app_js)
-        self.assertIn("|| previousHasActiveRun !== state.hasActiveRun", app_js)
-        self.assertIn("function syncSelectedRunListState()", app_js)
-        self.assertIn("async function selectProfile(profileId, { autoDryRun = false, skipInitialReadiness = false } = {})", app_js)
-        self.assertIn("function upsertProfileEntry(profileEntry)", app_js)
-        self.assertIn("skipInitialReadiness: true", app_js)
-        self.assertIn("const validatedProfile = await validateSelectedProfile();", app_js)
-        self.assertIn("previous.artifact_stamp !== summary.artifact_stamp", app_js)
-        self.assertIn('runLogLineCounts: {}', app_js)
-        self.assertIn("state.runLogLineCounts[summary.id] = countLines(target.textContent);", app_js)
-        self.assertIn("state.runLogLineCounts[runId] = countLines(text);", app_js)
-        self.assertIn("scrollLogToLatest(target);", app_js)
-        self.assertIn("function scrollLogToLatest(target)", app_js)
-        self.assertIn("target.scrollTop = target.scrollHeight;", app_js)
-        self.assertIn("function countLines(text)", app_js)
-        self.assertIn('lastProfilesSignature: ""', app_js)
-        self.assertIn('lastProfileSelectSignature: ""', app_js)
-        self.assertIn('lastPackDetailSignature: ""', app_js)
-        self.assertIn('lastRuntimeSignature: ""', app_js)
-        self.assertIn('lastReadinessSignature: ""', app_js)
-        self.assertIn('lastRunReadinessSignature: ""', app_js)
-        self.assertIn("if (signature === state.lastProfilesSignature) {", app_js)
-        self.assertIn("if (signature === state.lastProfileSelectSignature) {", app_js)
-        self.assertIn("if (signature === state.lastPackDetailSignature) {", app_js)
-        self.assertIn("if (signature === state.lastRuntimeSignature) {", app_js)
-        self.assertIn("if (signature !== state.lastReadinessSignature) {", app_js)
-        self.assertIn("if (signature === state.lastRunReadinessSignature) {", app_js)
-        self.assertIn("state.lastMessageSignatures[id] === signature", app_js)
+        self.assertNotIn("autoDryRun", app_js)
 
     def test_dashboard_can_relaunch_as_admin(self) -> None:
         with patch(

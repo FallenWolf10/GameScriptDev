@@ -14,12 +14,20 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
 ]
+desktop = [
+    "pywebview>=6.2,<7",
+]
 opencv = [
     "opencv-python>=4.10",
+]
+package = [
+    "PyInstaller>=6.21,<7",
+    "pywebview>=6.2,<7",
 ]
 
 [project.scripts]
 game-script-dev = "game_script_dev.cli:main"
+game-script-dev-app = "game_script_dev.operator_app:main"
 game-script-dev-dashboard = "game_script_dev.dashboard.server:main"
 
 [tool.setuptools.package-data]
@@ -27,6 +35,7 @@ game_script_dev = ["dashboard/static/*"]
 
 [tool.ruff]
 line-length = 88
+exclude = [".external"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

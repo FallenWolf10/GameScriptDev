@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,7 +25,7 @@ profile_pack:
 {compatibility}
 
 target:
-  window_title_contains: Replace Me
+  window_title_contains: {window_title}
   input_mode: background_window_messages
 
 window:
@@ -35,14 +37,14 @@ window:
 execution:
   max_retries: 1
 
-initial_state: home
+initial_state: {initial_state}
 
 states:
-  home:
+  {initial_state}:
     required_anchors:
-      - name: home_title
+      - name: {initial_state}_title
         type: text
-        text: Home
+        text: {initial_state_label}
     terminal: true
     result: success
 """
@@ -63,7 +65,20 @@ class PackCheckResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def scaffold_profile_pack(pack_dir: Path, *, game: str, mode: str) -> list[Path]:
+def scaffold_profile_pack(
+    pack_dir: Path,
+    *,
+    game: str,
+    mode: str,
+    name: str | None = None,
+    initial_state: str = "home",
+) -> list[Path]:
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", initial_state):
+        raise ValueError(
+            "initial_state must start with a lowercase letter and contain only "
+            "lowercase letters, numbers, and underscores"
+        )
+    profile_name = name or f"{game} {mode}"
     pack_dir.mkdir(parents=True, exist_ok=True)
     assets_dir = pack_dir / "assets"
     valid_dir = pack_dir / "validation_examples" / "valid"
@@ -82,16 +97,21 @@ def scaffold_profile_pack(pack_dir: Path, *, game: str, mode: str) -> list[Path]
     if not profile_path.exists():
         profile_path.write_text(
             PROFILE_TEMPLATE.format(
-                name=f"{game} {mode}",
-                game=game,
-                mode=mode,
+                name=_yaml_string(profile_name),
+                game=_yaml_string(game),
+                mode=_yaml_string(mode),
+                window_title=_yaml_string("Replace Me"),
+                initial_state=initial_state,
+                initial_state_label=_yaml_string(
+                    initial_state.replace("_", " ").title()
+                ),
                 compatibility=compatibility.rstrip(),
             ),
             encoding="utf-8",
         )
     if not notes_path.exists():
         notes_path.write_text(
-            NOTES_TEMPLATE.format(name=f"{game} {mode}"),
+            NOTES_TEMPLATE.format(name=profile_name),
             encoding="utf-8",
         )
     return [profile_path, notes_path, assets_dir, valid_dir, invalid_dir]
@@ -139,3 +159,7 @@ def check_profile_pack(pack_dir: Path) -> PackCheckResult:
             errors.append(str(error))
 
     return PackCheckResult(path=pack_dir, ok=not errors, errors=errors, warnings=warnings)
+
+
+def _yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)

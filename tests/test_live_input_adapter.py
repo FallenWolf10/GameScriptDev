@@ -89,6 +89,10 @@ class FakeBackgroundMouseSender:
         assert window.handle is not None
         self.events.append(("up", window.handle, x, y))
 
+    def scroll_vertical(self, window: TargetWindow, delta: int) -> None:
+        assert window.handle is not None
+        self.events.append(("wheel", window.handle, delta, 0))
+
 
 class FakeMouseSender:
     def __init__(self) -> None:
@@ -1145,17 +1149,18 @@ class LiveInputAdapterTests(unittest.TestCase):
 
         self.assertEqual(sender.events, [("cursor", 748, 591), ("move", 20, -10)])
 
-    def test_scroll_mouse_requires_foreground_mode(self) -> None:
-        sender = FakeMouseSender()
+    def test_scroll_mouse_supports_background_mode(self) -> None:
+        sender = FakeBackgroundMouseSender()
         adapter = LiveInputAdapter(
             target_window=TARGET_WINDOW,
-            mouse_sender=sender,
-            focus_verifier=FakeFocusVerifier(),
+            background_mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
             input_mode="background_window_messages",
         )
 
-        with self.assertRaises(LiveAdaptersUnavailable):
-            adapter.scroll_mouse("down")
+        adapter.scroll_mouse("down")
+
+        self.assertEqual(sender.events, [("wheel", 100, -120, 0)])
 
     def test_scroll_mouse_can_override_background_profile_to_foreground(self) -> None:
         sender = FakeMouseSender()
@@ -1175,6 +1180,32 @@ class LiveInputAdapterTests(unittest.TestCase):
             [("cursor", 640, 360), ("wheel", -120, 0), ("wheel", -120, 0)],
         )
         self.assertEqual(window_adapter.confirm_calls, [TARGET_WINDOW])
+
+    def test_continuous_scroll_mouse_supports_background_mode(self) -> None:
+        sender = FakeBackgroundMouseSender()
+        adapter = LiveInputAdapter(
+            target_window=TARGET_WINDOW,
+            background_mouse_sender=sender,
+            focus_verifier=FakeFocusVerifier(is_foreground=False),
+            input_mode="background_window_messages",
+        )
+
+        adapter.start_continuous_input(
+            "keep_scrolling",
+            "scroll_mouse",
+            {
+                "direction": "down",
+                "steps": 2,
+                "repeat_every_seconds": 0.01,
+            },
+        )
+        time.sleep(0.04)
+        adapter.stop_continuous_input("keep_scrolling")
+
+        wheel_events = [
+            event for event in sender.events if event == ("wheel", 100, -120, 0)
+        ]
+        self.assertGreaterEqual(len(wheel_events), 4)
 
     def test_scroll_mouse_rejects_unknown_direction(self) -> None:
         sender = FakeMouseSender()
