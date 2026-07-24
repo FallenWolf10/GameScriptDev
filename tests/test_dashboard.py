@@ -1312,6 +1312,9 @@ class DashboardTests(unittest.TestCase):
             "builder-action-list",
             "builder-action-palette",
             "builder-action-inspector-form",
+            "builder-diff-dialog",
+            "builder-diff-preview",
+            "confirm-builder-diff",
             "move-builder-action-state",
             "move-builder-action-state-button",
             "builder-problems-drawer",
@@ -1360,6 +1363,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("function renderBuilderInspectorField", app_js)
         self.assertIn("data-builder-action-field", app_js)
         self.assertIn("mutation.unset_fields", app_js)
+        self.assertIn("function confirmBuilderDiff", app_js)
+        self.assertIn("/actions/preview", app_js)
+        self.assertIn("function stateProblems", app_js)
         self.assertIn("async function createProfile", app_js)
         self.assertIn("function activateWorkspace(workspace", app_js)
         self.assertIn("function scheduleNextPoll()", app_js)
@@ -1559,6 +1565,91 @@ class DashboardTests(unittest.TestCase):
                 )
                 self.assertEqual(wait_event["action_type"], "wait")
                 self.assertIn("0.01", wait_event["action_summary"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_structured_mutation_preview_requires_matching_confirmation(self) -> None:
+        source = LONG_WAIT_PROFILE_YAML.replace(
+            "      - type: wait",
+            "      # Keep timing context.\n      - type: wait",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root, source)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                request = {
+                    "expected_version": draft["version"],
+                    "expected_fingerprint": draft["draft_fingerprint"],
+                    "mutation": {
+                        "operation": "delete",
+                        "state": "home",
+                        "index": 0,
+                    },
+                }
+                preview = _post_json(
+                    f"{base_url}/api/profiles/demo/actions/preview",
+                    request,
+                )
+                self.assertTrue(preview["requires_confirmation"])
+                self.assertTrue(preview["comment_changes"])
+                self.assertIn("-      # Keep timing context.", preview["diff"])
+
+                with self.assertRaises(HTTPError) as unconfirmed:
+                    _post_json(
+                        f"{base_url}/api/profiles/demo/actions",
+                        request,
+                    )
+                self.assertEqual(unconfirmed.exception.code, 428)
+                unchanged = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(unchanged["version"], draft["version"])
+
+                confirmed = _post_json(
+                    f"{base_url}/api/profiles/demo/actions",
+                    {
+                        **request,
+                        "confirmed_preview_fingerprint": preview[
+                            "updated_fingerprint"
+                        ],
+                    },
+                )
+                self.assertEqual(confirmed["document"]["states"]["home"]["actions"], [])
+                self.assertNotIn("# Keep timing context.", confirmed["source"])
+                self.assertEqual(profile_path.read_text(encoding="utf-8"), source)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_state_validation_problem_has_a_navigable_location(self) -> None:
+        source = PROFILE_YAML.replace("    result: success", '    result: ""')
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                invalid = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": source,
+                        "base_fingerprint": draft["base_fingerprint"],
+                        "expected_version": draft["version"],
+                    },
+                )
+
+                self.assertFalse(invalid["valid"])
+                self.assertEqual(
+                    invalid["problems"][0]["location"],
+                    "states.done.result",
+                )
             finally:
                 server.shutdown()
                 server.server_close()

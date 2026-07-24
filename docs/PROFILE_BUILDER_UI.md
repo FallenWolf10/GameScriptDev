@@ -58,6 +58,11 @@ The initial common Action forms (`wait`, `log`, `press_key`, `hold_key`,
 contract. More complex Action forms, drag and drop, the editable Flow graph,
 asset editing, and broader problem navigation remain planned.
 
+Mutations that move, duplicate, or delete authored YAML now require an exact
+backend-generated diff preview and matching confirmation fingerprint. Contiguous
+comments immediately above an Action travel with that Action. Validation
+problems expose Action- or State-level locations for badges and navigation.
+
 ## Primary Users
 
 ### Profile Author

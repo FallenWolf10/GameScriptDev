@@ -15,6 +15,7 @@ from game_script_dev.action_metadata import action_schema_payload
 from game_script_dev.dashboard.profile_catalog import (
     InvalidProfileDraftError,
     ProfileCatalog,
+    ProfileConfirmationRequired,
     ProfileConflictError,
 )
 from game_script_dev.dashboard.readiness import evaluate_readiness
@@ -198,6 +199,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/profiles/") and path.endswith("/draft"):
             self._save_profile_draft(path)
             return
+        if path.startswith("/api/profiles/") and path.endswith("/actions/preview"):
+            self._preview_profile_actions(path)
+            return
         if path.startswith("/api/profiles/") and path.endswith("/actions"):
             self._mutate_profile_actions(path)
             return
@@ -312,6 +316,50 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     if body.get("expected_fingerprint") is not None
                     else None
                 ),
+                confirmed_preview_fingerprint=(
+                    str(body["confirmed_preview_fingerprint"])
+                    if body.get("confirmed_preview_fingerprint") is not None
+                    else None
+                ),
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except ProfileConfirmationRequired as error:
+            self._send_error(
+                HTTPStatus.PRECONDITION_REQUIRED,
+                str(error),
+                {"preview": error.preview},
+            )
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(draft)
+
+    def _preview_profile_actions(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        mutation = body.get("mutation")
+        if not isinstance(mutation, dict):
+            self._send_error(HTTPStatus.BAD_REQUEST, "mutation must be an object")
+            return
+        try:
+            preview = self.state.catalog.preview_action_mutation(
+                profile_id,
+                mutation,
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+                expected_fingerprint=(
+                    str(body["expected_fingerprint"])
+                    if body.get("expected_fingerprint") is not None
+                    else None
+                ),
             )
         except KeyError as error:
             self._send_error(HTTPStatus.NOT_FOUND, str(error))
@@ -322,10 +370,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
             return
-        except OSError as error:
-            self._send_error(HTTPStatus.CONFLICT, str(error))
-            return
-        self._send_json(draft)
+        self._send_json(preview)
 
     def _restore_profile_actions(self, path: str, *, undo: bool) -> None:
         profile_id = unquote(path.split("/")[3])

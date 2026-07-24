@@ -85,6 +85,14 @@ class StructuredActionMutationTests(unittest.TestCase):
             yaml.safe_load(moved)["states"]["home"]["actions"][0]["seconds"],
             2.25,
         )
+        self.assertLess(
+            moved.index("seconds: 2.25"),
+            moved.index("# This comment belongs with the wait."),
+        )
+        self.assertLess(
+            moved.index("# This comment belongs with the wait."),
+            moved.index("seconds: 1 # keep inline context"),
+        )
 
         duplicated = mutate_action_source(
             moved,
@@ -205,6 +213,11 @@ class StructuredActionMutationTests(unittest.TestCase):
             [{"type": "wait", "seconds": 1}],
         )
         self.assertIn("seconds: 1 # keep inline context", moved)
+        done_section = moved.split("  done:", maxsplit=1)[1]
+        self.assertLess(
+            done_section.index("# This comment belongs with the wait."),
+            done_section.index("- type: wait"),
+        )
 
     def test_insert_supports_missing_and_empty_action_lists(self) -> None:
         missing = SOURCE.replace(

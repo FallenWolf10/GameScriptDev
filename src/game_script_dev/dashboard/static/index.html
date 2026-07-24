@@ -389,6 +389,22 @@
       </form>
     </dialog>
 
+    <dialog id="builder-diff-dialog" aria-labelledby="builder-diff-title" aria-describedby="builder-diff-description">
+      <form method="dialog" class="dialog-body builder-diff-body">
+        <div>
+          <span class="eyebrow">Draft Safety</span>
+          <h2 id="builder-diff-title">Review structured YAML changes</h2>
+        </div>
+        <p id="builder-diff-description">This operation moves, duplicates, or removes authored YAML lines. Review the exact Draft diff before continuing.</p>
+        <p id="builder-diff-comment-warning" class="dialog-warning" hidden>Comments are included in the changed lines and will move, duplicate, or be removed with the Action.</p>
+        <pre id="builder-diff-preview" class="builder-diff-preview" tabindex="0"></pre>
+        <div class="dialog-actions">
+          <button id="cancel-builder-diff" value="cancel" type="submit" autofocus>Cancel</button>
+          <button id="confirm-builder-diff" value="confirm" class="primary-button" type="submit">Apply Draft Change</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="create-profile-dialog" aria-labelledby="create-profile-title" aria-describedby="create-profile-description">
       <form id="create-profile-form" class="dialog-body">
         <div>

@@ -14,6 +14,11 @@ Implemented:
 - Action Block drag handles and a keyboard-operable cross-State move command
 - metadata-driven forms for `wait`, `log`, `press_key`, `hold_key`,
   `click_point`, `wait_for_state`, and `stop`
+- Action-attached comment ownership across insert, move, cross-State move,
+  duplicate, and delete operations
+- backend-enforced diff confirmation for mutations that move, duplicate, or
+  remove authored YAML lines
+- Action- and State-level problem badges with navigable structured locations
 - synchronized raw YAML autosave, authoritative validation, explicit Save, revision
   retention, external-change conflict protection, and saved-version dry-run proof
 

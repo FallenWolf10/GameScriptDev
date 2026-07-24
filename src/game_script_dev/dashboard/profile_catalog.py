@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -25,6 +26,14 @@ from game_script_dev.schema import (
 
 class ProfileConflictError(RuntimeError):
     """Raised when a save would overwrite a newer saved Profile."""
+
+
+class ProfileConfirmationRequired(RuntimeError):
+    def __init__(self, preview: dict[str, object]) -> None:
+        super().__init__(
+            "Confirm the structured Draft diff before applying this mutation"
+        )
+        self.preview = preview
 
 
 class InvalidProfileDraftError(ValueError):
@@ -286,6 +295,7 @@ class ProfileCatalog:
         *,
         expected_version: int | None,
         expected_fingerprint: str | None = None,
+        confirmed_preview_fingerprint: str | None = None,
     ) -> dict[str, object]:
         with self._write_lock:
             draft = self.get_draft(profile_id)
@@ -301,6 +311,12 @@ class ProfileCatalog:
             updated = mutate_action_source(source, mutation)
             if updated == source:
                 return draft
+            preview = _structured_mutation_preview(source, updated, mutation)
+            if (
+                preview["requires_confirmation"]
+                and confirmed_preview_fingerprint != preview["updated_fingerprint"]
+            ):
+                raise ProfileConfirmationRequired(preview)
             self._undo_history.setdefault(profile_id, []).append(source)
             self._undo_history[profile_id] = self._undo_history[profile_id][-100:]
             self._redo_history.pop(profile_id, None)
@@ -311,6 +327,32 @@ class ProfileCatalog:
                 version=version + 1,
             )
             return self.get_draft(profile_id)
+
+    def preview_action_mutation(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_action_source(source, mutation)
+            return {
+                **_structured_mutation_preview(source, updated, mutation),
+                "version": version,
+                "draft_fingerprint": draft["draft_fingerprint"],
+            }
 
     def undo_actions(
         self,
@@ -619,6 +661,30 @@ def _problems_from_errors(errors: list[str]) -> list[dict[str, str]]:
                     location += f".{field_name}"
                 elif action_type:
                     location += f".{action_type}"
+            if not location:
+                transition_match = re.search(
+                    r"state '([^']+)' (on_success|on_failure)",
+                    message,
+                )
+                if transition_match:
+                    state_name, field_name = transition_match.groups()
+                    location = f"states.{state_name}.{field_name}"
+            if not location:
+                required_transition_match = re.search(
+                    r"state '([^']+)' must define (on_success|on_failure)",
+                    message,
+                )
+                if required_transition_match:
+                    state_name, field_name = required_transition_match.groups()
+                    location = f"states.{state_name}.{field_name}"
+            if not location:
+                terminal_match = re.search(r"terminal state '([^']+)'", message)
+                if terminal_match:
+                    location = f"states.{terminal_match.group(1)}.result"
+            if not location:
+                unreachable_match = re.search(r"state '([^']+)' is unreachable", message)
+                if unreachable_match:
+                    location = f"states.{unreachable_match.group(1)}"
             problems.append(
                 {
                     "severity": "error",
@@ -627,6 +693,45 @@ def _problems_from_errors(errors: list[str]) -> list[dict[str, str]]:
                 }
             )
     return problems
+
+
+def _structured_mutation_preview(
+    source: str,
+    updated: str,
+    mutation: dict[str, object],
+) -> dict[str, object]:
+    diff_lines = list(
+        difflib.unified_diff(
+            source.splitlines(),
+            updated.splitlines(),
+            fromfile="Draft before",
+            tofile="Draft after",
+            lineterm="",
+            n=3,
+        )
+    )
+    changed_comment_lines = [
+        line
+        for line in diff_lines
+        if line.startswith(("+", "-"))
+        and not line.startswith(("+++", "---"))
+        and "#" in line
+    ]
+    operation = str(mutation.get("operation", ""))
+    requires_confirmation = bool(diff_lines) and operation in {
+        "move",
+        "move_to_state",
+        "duplicate",
+        "delete",
+    }
+    return {
+        "operation": operation,
+        "changed": updated != source,
+        "requires_confirmation": requires_confirmation,
+        "comment_changes": bool(changed_comment_lines),
+        "diff": "\n".join(diff_lines),
+        "updated_fingerprint": _source_fingerprint(updated),
+    }
 
 
 def _required_text(value: str, field_name: str, max_length: int) -> str:

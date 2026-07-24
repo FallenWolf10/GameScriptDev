@@ -196,7 +196,11 @@ def _insert_action(
         indent = _line_indent(source, action_nodes[0].start_mark.line)
         block = _dump_action_block(action, indent)
         insertion = (
-            _line_start(source, action_nodes[index].start_mark.line)
+            _action_start(
+                source,
+                action_nodes[index],
+                include_leading_comments=True,
+            )
             if index < len(action_nodes)
             else _line_start(source, location.actions_node.end_mark.line)
         )
@@ -352,7 +356,11 @@ def _insert_action_block(
         target_indent = _line_indent(source, action_nodes[0].start_mark.line)
         rendered = _reindent_block(block, source_indent, target_indent)
         insertion = (
-            _line_start(source, action_nodes[index].start_mark.line)
+            _action_start(
+                source,
+                action_nodes[index],
+                include_leading_comments=True,
+            )
             if index < len(action_nodes)
             else _line_start(source, location.actions_node.end_mark.line)
         )
@@ -410,12 +418,36 @@ def _action_spans(
     location: ActionLocation,
     nodes: list[MappingNode],
 ) -> list[tuple[int, int]]:
-    starts = [_line_start(source, node.start_mark.line) for node in nodes]
+    starts = [
+        _action_start(source, node, include_leading_comments=True)
+        for node in nodes
+    ]
     sequence_end = _line_start(source, location.actions_node.end_mark.line)
     return [
         (start, starts[index + 1] if index + 1 < len(starts) else sequence_end)
         for index, start in enumerate(starts)
     ]
+
+
+def _action_start(
+    source: str,
+    node: MappingNode,
+    *,
+    include_leading_comments: bool,
+) -> int:
+    line_number = node.start_mark.line
+    if not include_leading_comments:
+        return _line_start(source, line_number)
+    lines = source.splitlines(keepends=True)
+    action_indent = _line_indent(source, line_number)
+    while line_number > 0:
+        previous = lines[line_number - 1]
+        stripped = previous.strip()
+        previous_indent = len(previous) - len(previous.lstrip(" "))
+        if not stripped.startswith("#") or previous_indent < action_indent:
+            break
+        line_number -= 1
+    return _line_start(source, line_number)
 
 
 def _dump_action_block(action: dict[str, object], indent: int) -> str:

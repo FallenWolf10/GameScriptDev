@@ -1449,7 +1449,11 @@ function renderBuilderDocument() {
     button.dataset.builderState = stateName;
     button.setAttribute("role", "listitem");
     const transitionParts = [stateValue.on_success, stateValue.on_failure].filter(Boolean);
-    button.innerHTML = `<strong>${escapeHtml(stateName)}</strong><span>${stateValue.terminal ? "terminal" : transitionParts.length ? `to ${transitionParts.map(escapeHtml).join(" / ")}` : "no transition"}</span>`;
+    const problemCount = stateProblems(stateName).length;
+    const problemBadge = problemCount
+      ? `<span class="builder-state-problems">${problemCount} error${problemCount === 1 ? "" : "s"}</span>`
+      : "";
+    button.innerHTML = `<strong>${escapeHtml(stateName)}</strong><span>${stateValue.terminal ? "terminal" : transitionParts.length ? `to ${transitionParts.map(escapeHtml).join(" / ")}` : "no transition"}</span>${problemBadge}`;
     target.appendChild(button);
   }
   renderBuilderState();
@@ -1540,6 +1544,12 @@ function renderBuilderActionPalette() {
 function actionProblems(stateName, actionIndex) {
   const prefix = `states.${stateName}.actions[${actionIndex}]`;
   return (state.builderDraft?.problems || []).filter((problem) => problem.location?.startsWith(prefix));
+}
+
+function stateProblems(stateName) {
+  const prefix = `states.${stateName}`;
+  return (state.builderDraft?.problems || [])
+    .filter((problem) => problem.location === prefix || problem.location?.startsWith(`${prefix}.`));
 }
 
 function builderFieldLabel(fieldName) {
@@ -1659,6 +1669,21 @@ function applyStructuredDraft(draft) {
   renderBuilderDraft();
 }
 
+function confirmBuilderDiff(preview) {
+  const dialog = $("builder-diff-dialog");
+  $("builder-diff-preview").textContent = preview.diff || "No textual change.";
+  $("builder-diff-comment-warning").hidden = !preview.comment_changes;
+  dialog.returnValue = "cancel";
+  dialog.showModal();
+  return new Promise((resolve) => {
+    dialog.addEventListener(
+      "close",
+      () => resolve(dialog.returnValue === "confirm"),
+      { once: true },
+    );
+  });
+}
+
 async function mutateBuilderAction(
   mutation,
   { focusIndex = null, focusField = null, focusState = null } = {},
@@ -1667,6 +1692,28 @@ async function mutateBuilderAction(
   if (!profileId || state.structuredMutationPending) return;
   await flushBuilderInspectorEdit();
   await flushBuilderAutosave({ includeInspector: false });
+  let confirmedPreviewFingerprint = null;
+  if (["move", "move_to_state", "duplicate", "delete"].includes(mutation.operation)) {
+    const preview = await api(
+      `/api/profiles/${encodeURIComponent(profileId)}/actions/preview`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_version: state.builderDraft?.version,
+          expected_fingerprint: state.builderDraft?.draft_fingerprint,
+          mutation,
+        }),
+      },
+    );
+    if (preview.requires_confirmation) {
+      const confirmed = await confirmBuilderDiff(preview);
+      if (!confirmed) {
+        showNotice("Structured Draft change cancelled.", "good");
+        return;
+      }
+      confirmedPreviewFingerprint = preview.updated_fingerprint;
+    }
+  }
   state.structuredMutationPending = true;
   renderBuilderDraft();
   renderBuilderActionPalette();
@@ -1677,6 +1724,7 @@ async function mutateBuilderAction(
       body: JSON.stringify({
         expected_version: state.builderDraft?.version,
         expected_fingerprint: state.builderDraft?.draft_fingerprint,
+        confirmed_preview_fingerprint: confirmedPreviewFingerprint,
         mutation,
       }),
     });
@@ -2076,14 +2124,17 @@ $("builder-problem-list").addEventListener("click", (event) => {
   if (!button) return;
   const problem = state.builderDraft?.problems?.[Number(button.dataset.builderProblemIndex)];
   const match = problem?.location?.match(/^states\.([^.]+)\.actions\[(\d+)\](?:\.(.+))?$/);
-  if (!match) return;
-  state.selectedBuilderState = match[1];
-  state.selectedBuilderActionIndex = Number(match[2]);
+  const stateMatch = problem?.location?.match(/^states\.([^.]+)(?:\.(.+))?$/);
+  if (!match && !stateMatch) return;
+  state.selectedBuilderState = match?.[1] || stateMatch[1];
+  state.selectedBuilderActionIndex = match ? Number(match[2]) : null;
   renderBuilderDocument();
   window.requestAnimationFrame(() => {
-    const target = match[3]
+    const target = match?.[3]
       ? document.querySelector(`[data-builder-action-field="${match[3]}"]`)
-      : document.querySelector(`[data-builder-action-index="${match[2]}"]`);
+      : (match
+        ? document.querySelector(`[data-builder-action-index="${match[2]}"]`)
+        : document.querySelector(`[data-builder-state="${state.selectedBuilderState}"]`));
     target?.focus();
   });
 });

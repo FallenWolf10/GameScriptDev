@@ -1023,6 +1023,11 @@ dd {
   font: 10px/1.3 var(--mono);
 }
 
+.builder-state-node .builder-state-problems {
+  color: var(--bad);
+  font-weight: 700;
+}
+
 .builder-state-node.active {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -1357,6 +1362,25 @@ dialog::backdrop {
   border-left: 3px solid var(--warn);
   padding: 8px 10px;
   background: rgba(251, 191, 36, 0.07);
+}
+
+#builder-diff-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.builder-diff-preview {
+  max-height: min(52vh, 520px);
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  background: var(--surface-inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
 }
 
 .dialog-actions {
