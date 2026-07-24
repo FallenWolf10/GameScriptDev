@@ -71,6 +71,26 @@ class ActionMetadataTests(unittest.TestCase):
         self.assertTrue(definition.fields[0].required)
         self.assertEqual(definition.fields[0].default, 1)
 
+    def test_initial_common_actions_expose_structured_forms(self) -> None:
+        expected = {
+            "wait",
+            "log",
+            "press_key",
+            "hold_key",
+            "click_point",
+            "wait_for_state",
+            "stop",
+        }
+
+        self.assertEqual(
+            {
+                action_type
+                for action_type, definition in ACTION_DEFINITIONS.items()
+                if definition.structured
+            },
+            expected,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 
 ## Status
 
-First vertical slice implemented on `codex/structured-action-editor`.
+Phases 1–4 implemented on `codex/structured-action-editor`.
 
 Implemented:
 
@@ -12,11 +12,12 @@ Implemented:
 - session undo and redo with stale-Draft conflict rejection
 - keyboard-operable `wait` palette, Action Stack, Inspector, and Problems Drawer
 - Action Block drag handles and a keyboard-operable cross-State move command
+- metadata-driven forms for `wait`, `log`, `press_key`, `hold_key`,
+  `click_point`, `wait_for_state`, and `stop`
 - synchronized raw YAML autosave, authoritative validation, explicit Save, revision
   retention, external-change conflict protection, and saved-version dry-run proof
 
-The later common-Action forms, drag-and-drop enhancement, and editable Flow graph
-remain intentionally deferred until this first slice receives manual acceptance.
+Drag-and-drop enhancement and the editable Flow graph remain to be implemented.
 
 ## Objective
 

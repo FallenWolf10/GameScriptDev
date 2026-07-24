@@ -894,6 +894,16 @@ def _validate_actions(
                 _validate_duration(
                     action.data["seconds"], f"{action_context}.seconds", errors
                 )
+        if action.type == "log":
+            message = action.data.get("message")
+            if not isinstance(message, str) or not message.strip():
+                errors.append(f"{action_context}.message is required")
+        if action.type == "stop" and "result" in action.data:
+            result = action.data["result"]
+            if not isinstance(result, str) or not result.strip():
+                errors.append(
+                    f"{action_context}.result must be a non-empty string when provided"
+                )
 
 
 def _validate_continuous_input_action(

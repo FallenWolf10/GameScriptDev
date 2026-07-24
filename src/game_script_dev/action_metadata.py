@@ -75,11 +75,25 @@ ACTION_DEFINITIONS: dict[str, ActionDefinition] = {
         "flow_timing",
         ("screen", "detect", "poll", "transition"),
         (
-            _field("state", "state", required=True),
-            _field("timeout_seconds", "positive_duration"),
-            _field("poll_interval_seconds", "positive_duration"),
+            _field(
+                "state",
+                "state",
+                required=True,
+                hint="State to wait for before continuing.",
+            ),
+            _field(
+                "timeout_seconds",
+                "positive_duration",
+                hint="Optional timeout; uses the Profile default when omitted.",
+            ),
+            _field(
+                "poll_interval_seconds",
+                "positive_duration",
+                hint="Optional delay between screen checks.",
+            ),
         ),
         ("state", "timeout_seconds"),
+        True,
     ),
     "click_template": ActionDefinition(
         "click_template",
@@ -95,7 +109,12 @@ ACTION_DEFINITIONS: dict[str, ActionDefinition] = {
         "pointer",
         ("region", "mouse", "button"),
         (
-            _field("region", "region", required=True),
+            _field(
+                "region",
+                "region",
+                required=True,
+                hint="Named click region from this Profile.",
+            ),
             _field(
                 "input_mode",
                 "input_mode",
@@ -103,6 +122,7 @@ ACTION_DEFINITIONS: dict[str, ActionDefinition] = {
             ),
         ),
         ("region",),
+        True,
     ),
     "hold_click": ActionDefinition(
         "hold_click",
@@ -126,10 +146,15 @@ ACTION_DEFINITIONS: dict[str, ActionDefinition] = {
         "keyboard",
         ("tap", "type", "button"),
         (
-            _field("key", "key", required=True),
-            _field("seconds", "duration"),
+            _field("key", "key", required=True, hint="Key name, such as f or enter."),
+            _field(
+                "seconds",
+                "duration",
+                hint="Optional press duration in seconds.",
+            ),
         ),
         ("key", "seconds"),
+        True,
     ),
     "press_keys": ActionDefinition(
         "press_keys",
@@ -148,10 +173,16 @@ ACTION_DEFINITIONS: dict[str, ActionDefinition] = {
         "keyboard",
         ("down", "duration", "movement"),
         (
-            _field("key", "key", required=True),
-            _field("seconds", "duration", default=1),
+            _field("key", "key", required=True, hint="Key to hold."),
+            _field(
+                "seconds",
+                "duration",
+                default=1,
+                hint="Hold duration in seconds.",
+            ),
         ),
         ("key", "seconds"),
+        True,
     ),
     "hold_keys": ActionDefinition(
         "hold_keys",
@@ -288,16 +319,31 @@ ACTION_DEFINITIONS: dict[str, ActionDefinition] = {
         "Log Message",
         "flow_timing",
         ("message", "checkpoint", "note"),
-        (_field("message", "text", required=True),),
+        (
+            _field(
+                "message",
+                "text",
+                required=True,
+                hint="Message written to the run Timeline and logs.",
+            ),
+        ),
         ("message",),
+        True,
     ),
     "stop": ActionDefinition(
         "stop",
         "Stop Run",
         "flow_timing",
         ("finish", "result", "terminate"),
-        (_field("result", "text"),),
+        (
+            _field(
+                "result",
+                "text",
+                hint="Optional terminal result; defaults to stopped.",
+            ),
+        ),
         ("result",),
+        True,
     ),
 }
 
@@ -308,7 +354,7 @@ def get_action_definition(action_type: str) -> ActionDefinition:
 
 def action_schema_payload() -> dict[str, object]:
     return {
-        "version": 1,
+        "version": 2,
         "actions": [
             ACTION_DEFINITIONS[action_type].to_dict()
             for action_type in sorted(ACTION_DEFINITIONS)

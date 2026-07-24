@@ -47,10 +47,27 @@ def mutate_action_source(source: str, mutation: dict[str, object]) -> str:
         )
 
     if operation == "update":
-        fields = mutation.get("fields")
-        if not isinstance(fields, dict) or not fields:
-            raise StructuredActionMutationError("fields must be a non-empty object")
-        return _update_action(source, actions[index], fields)
+        fields = mutation.get("fields", {})
+        unset_fields = mutation.get("unset_fields", [])
+        if not isinstance(fields, dict):
+            raise StructuredActionMutationError("fields must be an object")
+        if not isinstance(unset_fields, list) or not all(
+            isinstance(field_name, str) and field_name
+            for field_name in unset_fields
+        ):
+            raise StructuredActionMutationError(
+                "unset_fields must be a list of field names"
+            )
+        if not fields and not unset_fields:
+            raise StructuredActionMutationError(
+                "fields or unset_fields must contain a change"
+            )
+        return _update_action(
+            source,
+            actions[index],
+            fields,
+            unset_fields=tuple(unset_fields),
+        )
     if operation == "move":
         target_index = _required_index(mutation.get("target_index"))
         if target_index >= len(actions):
@@ -205,6 +222,8 @@ def _update_action(
     source: str,
     action_node: MappingNode,
     fields: dict[object, object],
+    *,
+    unset_fields: tuple[str, ...] = (),
 ) -> str:
     action_type_node = _mapping_value(action_node, "type")
     if not isinstance(action_type_node, ScalarNode):
@@ -216,17 +235,35 @@ def _update_action(
         else {"disabled"}
     )
     normalized = {str(key): value for key, value in fields.items()}
-    unexpected = sorted(set(normalized) - allowed)
+    unset = set(unset_fields)
+    unexpected = sorted((set(normalized) | unset) - allowed)
     if unexpected:
         raise StructuredActionMutationError(
             f"unsupported fields for {action_type_node.value}: "
             + ", ".join(unexpected)
         )
 
+    overlap = sorted(set(normalized) & unset)
+    if overlap:
+        raise StructuredActionMutationError(
+            "fields cannot be updated and removed together: " + ", ".join(overlap)
+        )
+
     replacements: list[tuple[int, int, str]] = []
     existing: set[str] = set()
     for key_node, value_node in action_node.value:
-        if not isinstance(key_node, ScalarNode) or key_node.value not in normalized:
+        if not isinstance(key_node, ScalarNode):
+            continue
+        if key_node.value in unset:
+            replacements.append(
+                (
+                    _line_start(source, key_node.start_mark.line),
+                    _line_start(source, value_node.end_mark.line + 1),
+                    "",
+                )
+            )
+            continue
+        if key_node.value not in normalized:
             continue
         if not isinstance(value_node, ScalarNode):
             raise StructuredActionMutationError(

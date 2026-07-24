@@ -1357,6 +1357,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("async function restoreBuilderActionHistory", app_js)
         self.assertIn('operation: "move_to_state"', app_js)
         self.assertIn("builder-drag-handle", app_js)
+        self.assertIn("function renderBuilderInspectorField", app_js)
+        self.assertIn("data-builder-action-field", app_js)
+        self.assertIn("mutation.unset_fields", app_js)
         self.assertIn("async function createProfile", app_js)
         self.assertIn("function activateWorkspace(workspace", app_js)
         self.assertIn("function scheduleNextPoll()", app_js)
@@ -1408,9 +1411,25 @@ class DashboardTests(unittest.TestCase):
                     for action in schema["actions"]
                     if action["type"] == "wait"
                 )
-                self.assertEqual(schema["version"], 1)
+                self.assertEqual(schema["version"], 2)
                 self.assertTrue(wait_definition["structured"])
                 self.assertEqual(wait_definition["fields"][0]["default"], 1)
+                self.assertEqual(
+                    {
+                        action["type"]
+                        for action in schema["actions"]
+                        if action["structured"]
+                    },
+                    {
+                        "wait",
+                        "log",
+                        "press_key",
+                        "hold_key",
+                        "click_point",
+                        "wait_for_state",
+                        "stop",
+                    },
+                )
 
                 initial = _get_json(f"{base_url}/api/profiles/demo/draft")
                 self.assertEqual(initial["version"], 0)

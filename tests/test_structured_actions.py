@@ -142,6 +142,47 @@ class StructuredActionMutationTests(unittest.TestCase):
             updated,
         )
 
+    def test_update_can_remove_an_optional_scalar_field(self) -> None:
+        with_optional_field = SOURCE.replace(
+            "        seconds: 1 # keep inline context",
+            "        seconds: 1 # keep inline context\n"
+            "        optional_note: remove-me",
+        )
+        with self.assertRaisesRegex(
+            StructuredActionMutationError,
+            "unsupported fields",
+        ):
+            mutate_action_source(
+                with_optional_field,
+                {
+                    "operation": "update",
+                    "state": "home",
+                    "index": 1,
+                    "unset_fields": ["optional_note"],
+                },
+            )
+
+        press_source = SOURCE.replace(
+            "      - type: wait\n"
+            "        seconds: 1 # keep inline context",
+            "      - type: press_key\n"
+            "        key: F\n"
+            "        seconds: 0.2 # optional duration",
+        )
+        updated = mutate_action_source(
+            press_source,
+            {
+                "operation": "update",
+                "state": "home",
+                "index": 1,
+                "unset_fields": ["seconds"],
+            },
+        )
+
+        action = yaml.safe_load(updated)["states"]["home"]["actions"][1]
+        self.assertEqual(action, {"type": "press_key", "key": "F"})
+        self.assertNotIn("optional duration", updated)
+
     def test_move_to_state_preserves_action_text_and_comments(self) -> None:
         moved = mutate_action_source(
             SOURCE,

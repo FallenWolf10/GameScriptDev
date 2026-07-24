@@ -53,8 +53,10 @@ to the same recoverable YAML Draft with a required Draft version/fingerprint;
 pending raw-editor autosaves are flushed first, and targeted YAML edits preserve
 untouched comments and ordering.
 
-Other Action forms, drag and drop, the editable Flow graph, asset editing, and
-broader problem navigation remain planned.
+The initial common Action forms (`wait`, `log`, `press_key`, `hold_key`,
+`click_point`, `wait_for_state`, and `stop`) are generated from the metadata
+contract. More complex Action forms, drag and drop, the editable Flow graph,
+asset editing, and broader problem navigation remain planned.
 
 ## Primary Users
 

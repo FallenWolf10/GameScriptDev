@@ -1132,8 +1132,19 @@ dd {
   margin-bottom: 12px;
 }
 
-#builder-inspector-fields input {
+#builder-inspector-fields input,
+#builder-inspector-fields select {
   width: 100%;
+}
+
+.builder-inspector-field {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.builder-inspector-field label {
+  margin: 0;
 }
 
 .builder-action-commands {

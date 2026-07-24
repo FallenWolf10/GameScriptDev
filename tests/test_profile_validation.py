@@ -140,6 +140,40 @@ states:
             with self.assertRaises(ProfileValidationError):
                 validate_profile(profile, profile_path.parent)
 
+    def test_rejects_blank_common_action_text_fields(self) -> None:
+        actions = (
+            ("log", "message"),
+            ("stop", "result"),
+        )
+        for action_type, field_name in actions:
+            with self.subTest(action_type=action_type):
+                profile_yaml = f"""
+version: 1
+name: Broken Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home_screen
+states:
+  home_screen:
+    actions:
+      - type: {action_type}
+        {field_name}: ""
+    terminal: true
+    result: success
+"""
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    profile_path = Path(temp_dir) / "profile.yaml"
+                    profile_path.write_text(profile_yaml, encoding="utf-8")
+
+                    profile = load_profile(profile_path)
+
+                    with self.assertRaises(ProfileValidationError):
+                        validate_profile(profile, profile_path.parent)
+
     def test_rejects_invalid_wait_for_state_duration(self) -> None:
         profile_yaml = """
 version: 1

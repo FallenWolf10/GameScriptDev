@@ -1542,6 +1542,55 @@ function actionProblems(stateName, actionIndex) {
   return (state.builderDraft?.problems || []).filter((problem) => problem.location?.startsWith(prefix));
 }
 
+function builderFieldLabel(fieldName) {
+  return fieldName
+    .split("_")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function builderFieldOptions(field) {
+  if (field.choices?.length) return field.choices;
+  if (field.kind === "state") return Object.keys(state.builderDocument?.states || {});
+  if (field.kind === "region") return Object.keys(state.builderDocument?.regions || {});
+  return null;
+}
+
+function renderBuilderInspectorField(field, action, stateName, actionIndex) {
+  const fieldId = `builder-action-field-${field.name.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const hintId = `${fieldId}-hint`;
+  const value = action[field.name] ?? "";
+  const fieldProblems = actionProblems(stateName, actionIndex)
+    .filter((problem) => problem.location?.endsWith(`.${field.name}`));
+  const describedBy = `${hintId} builder-inspector-errors`;
+  const common = `id="${fieldId}" name="${escapeHtml(field.name)}" data-builder-action-field="${escapeHtml(field.name)}" data-builder-field-kind="${escapeHtml(field.kind)}" data-builder-field-required="${field.required ? "true" : "false"}" aria-invalid="${fieldProblems.length ? "true" : "false"}" aria-describedby="${describedBy}" ${field.required ? "required" : ""}`;
+  const options = builderFieldOptions(field);
+  let control;
+  if (options) {
+    const optionValues = [
+      `<option value="">${field.required ? "Select…" : "Use default"}</option>`,
+      ...options.map((option) => `<option value="${escapeHtml(option)}" ${String(value) === String(option) ? "selected" : ""}>${escapeHtml(option)}</option>`),
+    ];
+    control = `<select ${common}>${optionValues.join("")}</select>`;
+  } else if (["duration", "positive_duration", "number", "positive_integer"].includes(field.kind)) {
+    const minimum = field.kind === "positive_duration" || field.kind === "positive_integer"
+      ? ' min="0.000001"'
+      : (field.kind === "duration" ? ' min="0"' : "");
+    const step = field.kind === "positive_integer" ? ' step="1"' : ' step="any"';
+    control = `<input ${common} type="number" inputmode="decimal"${minimum}${step} value="${escapeHtml(value)}">`;
+  } else {
+    const spellcheck = field.kind === "key" ? ' spellcheck="false" autocomplete="off"' : "";
+    control = `<input ${common} type="text"${spellcheck} value="${escapeHtml(value)}">`;
+  }
+  return `
+    <div class="builder-inspector-field">
+      <label for="${fieldId}">${escapeHtml(builderFieldLabel(field.name))}${field.required ? " *" : ""}</label>
+      ${control}
+      <span id="${hintId}" class="muted">${escapeHtml(field.hint || (field.required ? "Required." : "Optional."))}</span>
+    </div>
+  `;
+}
+
 function renderBuilderActionInspector() {
   const stateValue = state.builderDocument?.states?.[state.selectedBuilderState] || {};
   const actions = stateValue.actions || [];
@@ -1556,14 +1605,17 @@ function renderBuilderActionInspector() {
   $("builder-inspector-label").textContent = definition?.label || action.type || "Action";
   $("builder-inspector-type").textContent = action.type || "unknown";
   const fields = $("builder-inspector-fields");
-  if (definition?.structured && action.type === "wait") {
-    const fieldProblems = actionProblems(state.selectedBuilderState, index)
-      .filter((problem) => problem.location?.endsWith(".seconds"));
-    fields.innerHTML = `
-      <label for="builder-action-seconds">Seconds</label>
-      <input id="builder-action-seconds" name="seconds" type="number" min="0" step="any" value="${escapeHtml(action.seconds ?? "")}" aria-invalid="${fieldProblems.length ? "true" : "false"}" aria-describedby="builder-inspector-errors">
-      <span class="muted">${escapeHtml(definition.fields[0]?.hint || "")}</span>
-    `;
+  if (definition?.structured) {
+    fields.innerHTML = definition.fields?.length
+      ? definition.fields
+        .map((field) => renderBuilderInspectorField(
+          field,
+          action,
+          state.selectedBuilderState,
+          index,
+        ))
+        .join("")
+      : '<p class="muted">This Action has no additional settings.</p>';
   } else {
     fields.innerHTML = '<p class="muted">This Action uses the raw YAML editor for its fields. Ordering and lifecycle commands remain available here.</p>';
   }
@@ -1609,7 +1661,7 @@ function applyStructuredDraft(draft) {
 
 async function mutateBuilderAction(
   mutation,
-  { focusIndex = null, focusField = false, focusState = null } = {},
+  { focusIndex = null, focusField = null, focusState = null } = {},
 ) {
   const profileId = state.builderProfileId;
   if (!profileId || state.structuredMutationPending) return;
@@ -1635,7 +1687,7 @@ async function mutateBuilderAction(
     showNotice(`${mutation.operation[0].toUpperCase()}${mutation.operation.slice(1)} Action completed.`, draft.valid ? "good" : "error");
     window.requestAnimationFrame(() => {
       const selector = focusField
-        ? "#builder-action-seconds"
+        ? `[data-builder-action-field="${focusField}"]`
         : `[data-builder-action-index="${state.selectedBuilderActionIndex}"]`;
       document.querySelector(selector)?.focus();
     });
@@ -1891,24 +1943,39 @@ $("builder-action-palette").addEventListener("click", (event) => runCommand(asyn
       action_type: button.dataset.addBuilderAction,
       fields,
     },
-    { focusIndex: actions.length, focusField: true },
+    { focusIndex: actions.length, focusField: definition?.fields?.[0]?.name || null },
   );
 }));
 
 $("builder-action-inspector-form").addEventListener("input", (event) => {
-  if (!(event.target instanceof HTMLInputElement) || event.target.name !== "seconds") return;
+  if (
+    !(event.target instanceof HTMLInputElement)
+    && !(event.target instanceof HTMLSelectElement)
+  ) return;
+  const fieldName = event.target.dataset.builderActionField;
+  if (!fieldName) return;
   const index = state.selectedBuilderActionIndex;
   if (!Number.isInteger(index)) return;
-  const value = event.target.value === "" ? "" : Number(event.target.value);
+  const definition = actionDefinition(selectedBuilderAction()?.type);
+  const field = definition?.fields?.find((candidate) => candidate.name === fieldName);
+  if (!field) return;
+  const rawValue = event.target.value;
+  const numeric = ["duration", "positive_duration", "number", "positive_integer"].includes(field.kind);
+  const value = rawValue === "" ? "" : (numeric ? Number(rawValue) : rawValue);
+  const mutation = {
+    operation: "update",
+    state: state.selectedBuilderState,
+    index,
+  };
+  if (rawValue === "" && !field.required) {
+    mutation.unset_fields = [fieldName];
+  } else {
+    mutation.fields = { [fieldName]: value };
+  }
   window.clearTimeout(state.builderInspectorTimer);
   state.builderInspectorPending = {
-    mutation: {
-      operation: "update",
-      state: state.selectedBuilderState,
-      index,
-      fields: { seconds: value },
-    },
-    options: { focusIndex: index, focusField: true },
+    mutation,
+    options: { focusIndex: index, focusField: fieldName },
   };
   state.builderInspectorTimer = window.setTimeout(() => {
     state.builderInspectorTimer = null;
@@ -2014,8 +2081,8 @@ $("builder-problem-list").addEventListener("click", (event) => {
   state.selectedBuilderActionIndex = Number(match[2]);
   renderBuilderDocument();
   window.requestAnimationFrame(() => {
-    const target = match[3] === "seconds"
-      ? $("builder-action-seconds")
+    const target = match[3]
+      ? document.querySelector(`[data-builder-action-field="${match[3]}"]`)
       : document.querySelector(`[data-builder-action-index="${match[2]}"]`);
     target?.focus();
   });
