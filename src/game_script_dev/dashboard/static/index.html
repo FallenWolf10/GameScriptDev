@@ -231,6 +231,10 @@
               <h2 id="builder-canvas-title">State Actions</h2>
             </div>
             <div class="builder-history-actions">
+              <div class="builder-view-tabs" role="tablist" aria-label="Structured Draft view">
+                <button id="builder-state-view-tab" type="button" role="tab" aria-selected="true" aria-controls="builder-state-view">State Actions</button>
+                <button id="builder-graph-view-tab" type="button" role="tab" aria-selected="false" aria-controls="builder-graph-view">Flow</button>
+              </div>
               <button id="undo-builder-action" type="button" disabled>Undo</button>
               <button id="redo-builder-action" type="button" disabled>Redo</button>
               <span id="builder-fingerprint" class="muted">No source loaded</span>
@@ -244,6 +248,7 @@
             <p>Valid YAML drafts appear here as a readable State and Action flow.</p>
           </div>
           <div id="builder-flow" class="builder-flow" hidden>
+            <div id="builder-state-view" class="builder-state-view" role="tabpanel" aria-labelledby="builder-state-view-tab">
             <aside class="builder-tool-palette" aria-labelledby="builder-palette-title">
               <span class="eyebrow">Tool Palette</span>
               <h3 id="builder-palette-title">Actions</h3>
@@ -295,6 +300,49 @@
                 </div>
               </form>
             </aside>
+            </div>
+            <section id="builder-graph-view" class="builder-graph-view" role="tabpanel" aria-labelledby="builder-graph-view-tab" hidden>
+              <div class="builder-graph-toolbar">
+                <div>
+                  <span class="eyebrow">Flow View</span>
+                  <h3>State graph</h3>
+                </div>
+                <div>
+                  <button id="undo-builder-layout" type="button" disabled>Undo Layout</button>
+                  <button id="redo-builder-layout" type="button" disabled>Redo Layout</button>
+                  <button id="tidy-builder-flow" type="button">Tidy Flow</button>
+                </div>
+              </div>
+              <div class="builder-graph-workspace">
+                <div id="builder-flow-canvas" class="builder-flow-canvas" tabindex="0" aria-label="Editable State graph">
+                  <svg id="builder-flow-edges" class="builder-flow-edges" aria-hidden="true"></svg>
+                  <div id="builder-flow-nodes" class="builder-flow-nodes"></div>
+                </div>
+                <aside class="builder-flow-inspector" aria-labelledby="builder-flow-inspector-title">
+                  <span class="eyebrow">Context Rail</span>
+                  <h3 id="builder-flow-inspector-title">State Inspector</h3>
+                  <form id="builder-flow-inspector-form">
+                    <strong id="builder-flow-state-name">No State selected</strong>
+                    <label class="builder-check-field">
+                      <input id="builder-flow-initial" type="checkbox">
+                      <span>Initial State</span>
+                    </label>
+                    <label class="builder-check-field">
+                      <input id="builder-flow-terminal" type="checkbox">
+                      <span>Terminal State</span>
+                    </label>
+                    <label for="builder-flow-result">Terminal result</label>
+                    <input id="builder-flow-result" type="text" autocomplete="off" placeholder="success">
+                    <label for="builder-flow-success">On success</label>
+                    <select id="builder-flow-success"></select>
+                    <label for="builder-flow-failure">On failure</label>
+                    <select id="builder-flow-failure"></select>
+                    <button id="save-builder-flow-state" class="primary-button" type="submit">Apply State Settings</button>
+                  </form>
+                  <p class="muted">Node positions are Builder-only and never written to <code>profile.yaml</code>.</p>
+                </aside>
+              </div>
+            </section>
           </div>
           <details id="builder-problems-drawer" class="builder-problems-drawer">
             <summary>Problems <span id="builder-problem-count" class="badge">0</span></summary>

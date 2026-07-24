@@ -117,6 +117,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 self._send_error(HTTPStatus.CONFLICT, str(error))
             return
+        if path.startswith("/api/profiles/") and path.endswith("/flow-layout"):
+            profile_id = unquote(path.split("/")[3])
+            try:
+                self._send_json(self.state.catalog.get_flow_layout(profile_id))
+            except KeyError as error:
+                self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
         if path.startswith("/api/profiles/") and path.endswith("/target-preview-meta"):
             profile_id = unquote(path.split("/")[3])
             try:
@@ -204,6 +213,24 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/profiles/") and path.endswith("/actions"):
             self._mutate_profile_actions(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/flow/preview"):
+            self._preview_profile_flow(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/flow"):
+            self._mutate_profile_flow(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/flow-layout/tidy"):
+            self._tidy_profile_flow_layout(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/flow-layout/undo"):
+            self._restore_profile_flow_layout(path, undo=True)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/flow-layout/redo"):
+            self._restore_profile_flow_layout(path, undo=False)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/flow-layout"):
+            self._save_profile_flow_layout(path)
             return
         if path.startswith("/api/profiles/") and path.endswith("/undo"):
             self._restore_profile_actions(path, undo=True)
@@ -371,6 +398,138 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
             return
         self._send_json(preview)
+
+    def _mutate_profile_flow(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        mutation = body.get("mutation")
+        if not isinstance(mutation, dict):
+            self._send_error(HTTPStatus.BAD_REQUEST, "mutation must be an object")
+            return
+        try:
+            draft = self.state.catalog.mutate_flow(
+                profile_id,
+                mutation,
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+                expected_fingerprint=(
+                    str(body["expected_fingerprint"])
+                    if body.get("expected_fingerprint") is not None
+                    else None
+                ),
+                confirmed_preview_fingerprint=(
+                    str(body["confirmed_preview_fingerprint"])
+                    if body.get("confirmed_preview_fingerprint") is not None
+                    else None
+                ),
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except ProfileConfirmationRequired as error:
+            self._send_error(
+                HTTPStatus.PRECONDITION_REQUIRED,
+                str(error),
+                {"preview": error.preview},
+            )
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(draft)
+
+    def _preview_profile_flow(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        mutation = body.get("mutation")
+        if not isinstance(mutation, dict):
+            self._send_error(HTTPStatus.BAD_REQUEST, "mutation must be an object")
+            return
+        try:
+            preview = self.state.catalog.preview_flow_mutation(
+                profile_id,
+                mutation,
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+                expected_fingerprint=(
+                    str(body["expected_fingerprint"])
+                    if body.get("expected_fingerprint") is not None
+                    else None
+                ),
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        self._send_json(preview)
+
+    def _save_profile_flow_layout(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        try:
+            layout = self.state.catalog.save_flow_layout(
+                profile_id,
+                body.get("positions"),
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except (OSError, ValueError) as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        self._send_json(layout)
+
+    def _tidy_profile_flow_layout(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        try:
+            layout = self.state.catalog.tidy_flow_layout(
+                profile_id,
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except (OSError, ValueError) as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        self._send_json(layout)
+
+    def _restore_profile_flow_layout(self, path: str, *, undo: bool) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        try:
+            layout = self.state.catalog.restore_flow_layout(
+                profile_id,
+                undo=undo,
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except (OSError, ValueError) as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(layout)
 
     def _restore_profile_actions(self, path: str, *, undo: bool) -> None:
         profile_id = unquote(path.split("/")[3])

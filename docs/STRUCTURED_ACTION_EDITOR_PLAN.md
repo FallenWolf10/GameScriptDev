@@ -2,7 +2,8 @@
 
 ## Status
 
-Phases 1–4 implemented on `codex/structured-action-editor`.
+Phases 1–4, the drag-and-drop enhancement, and the editable existing-State
+Flow graph are implemented on `codex/structured-action-editor`.
 
 Implemented:
 
@@ -24,8 +25,11 @@ Implemented:
   as equivalent controls
 - synchronized raw YAML autosave, authoritative validation, explicit Save, revision
   retention, external-change conflict protection, and saved-version dry-run proof
-
-The editable Flow graph remains to be implemented.
+- DOM State graph with success/failure connectors, deterministic automatic
+  layout, draggable Builder-only positions, and an undoable `Tidy Flow`
+- structured success/failure Transition, initial State, terminal State, and
+  terminal-result editing through the same protected Draft
+- unreachable-State and missing-terminal-path diagnostics linked to graph nodes
 
 ## Objective
 
@@ -220,10 +224,12 @@ Required behavior:
 - no mutation occurs until a valid drop is completed
 - reduced-motion preferences are respected
 
-## Full Flow Graph Comes Later
+## Editable Flow Graph
 
-Do not begin editable Flow View until structured Action mutations are stable.
-The later graph slice should provide:
+Status: implemented for existing States after the structured Action mutation
+contract and drag-and-drop acceptance gate passed.
+
+The graph slice provides:
 
 - SVG or DOM State nodes using the existing dependency-light frontend
 - deterministic automatic layout
@@ -234,8 +240,8 @@ The later graph slice should provide:
 - missing-terminal-path detection
 - Builder-only node positions stored separately from `profile.yaml`
 
-This prevents the project from producing an attractive graph over an unsafe or
-ambiguous write path.
+State creation, rename, and deletion remain part of the broader Profile Builder
+roadmap rather than this structured Action milestone.
 
 ## Test Plan
 
@@ -291,21 +297,20 @@ Do not expand beyond the `wait` tracer until all of these pass:
 - dry-run executes the saved change
 - all existing raw-YAML and dashboard tests remain green
 
-## Recommended Branch And Review Boundary
+## Branch And Review Boundary
 
-Start implementation on:
+Implemented on:
 
 ```text
 codex/structured-action-editor
 ```
 
-The first review should contain only:
+The review contains:
 
 - the complete Action metadata contract needed by the tracer
 - versioned structured Draft mutations
-- the keyboard-first `wait` Action editor
+- the keyboard-first Action editor and common structured Action set
 - YAML-fidelity safeguards
+- accessible drag-and-drop
+- editable existing-State Flow View
 - focused unit, API, UI, and manual acceptance evidence
-
-Review that vertical slice before expanding the Action palette or beginning the
-editable Flow graph.

@@ -1670,6 +1670,41 @@ states:
 
             self.assertIn("reachable terminal state", str(captured.exception))
 
+    def test_rejects_reachable_state_without_terminal_path(self) -> None:
+        profile_yaml = """
+version: 1
+name: Trapped Branch Profile
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home
+states:
+  home:
+    on_success: done
+    on_failure: trapped
+  trapped:
+    on_success: trapped
+    on_failure: trapped
+  done:
+    terminal: true
+    result: success
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_path = Path(temp_dir) / "profile.yaml"
+            profile_path.write_text(profile_yaml, encoding="utf-8")
+            profile = load_profile(profile_path)
+
+            with self.assertRaises(ProfileValidationError) as captured:
+                validate_profile(profile, profile_path.parent)
+
+            self.assertIn(
+                "state 'trapped' has no path to a terminal state",
+                str(captured.exception),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

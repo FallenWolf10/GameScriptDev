@@ -16,6 +16,10 @@ import yaml
 
 from game_script_dev.authoring import scaffold_profile_pack
 from game_script_dev.dashboard.structured_actions import mutate_action_source
+from game_script_dev.dashboard.structured_flow import (
+    deterministic_flow_layout,
+    mutate_flow_source,
+)
 from game_script_dev.profile_loader import ProfileLoadError, load_profile
 from game_script_dev.schema import (
     ProfileValidationError,
@@ -84,6 +88,12 @@ class ProfileCatalog:
         self._write_lock = threading.RLock()
         self._undo_history: dict[str, list[str]] = {}
         self._redo_history: dict[str, list[str]] = {}
+        self._layout_undo_history: dict[
+            str, list[dict[str, dict[str, int]]]
+        ] = {}
+        self._layout_redo_history: dict[
+            str, list[dict[str, dict[str, int]]]
+        ] = {}
 
     def list_profiles(self) -> list[ProfileEntry]:
         signature = self._profile_signature()
@@ -354,6 +364,186 @@ class ProfileCatalog:
                 "draft_fingerprint": draft["draft_fingerprint"],
             }
 
+    def mutate_flow(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+        confirmed_preview_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_flow_source(source, mutation)
+            if updated == source:
+                return draft
+            preview = _structured_mutation_preview(source, updated, mutation)
+            if (
+                preview["requires_confirmation"]
+                and confirmed_preview_fingerprint != preview["updated_fingerprint"]
+            ):
+                raise ProfileConfirmationRequired(preview)
+            self._undo_history.setdefault(profile_id, []).append(source)
+            self._undo_history[profile_id] = self._undo_history[profile_id][-100:]
+            self._redo_history.pop(profile_id, None)
+            self._write_structured_draft(
+                profile_id,
+                updated,
+                base_fingerprint=str(draft["base_fingerprint"]),
+                version=version + 1,
+            )
+            return self.get_draft(profile_id)
+
+    def preview_flow_mutation(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_flow_source(source, mutation)
+            return {
+                **_structured_mutation_preview(source, updated, mutation),
+                "version": version,
+                "draft_fingerprint": draft["draft_fingerprint"],
+            }
+
+    def get_flow_layout(self, profile_id: str) -> dict[str, object]:
+        draft = self.get_draft(profile_id)
+        document = draft.get("document")
+        if not isinstance(document, dict):
+            raise ValueError(
+                "The YAML Draft must be parseable before opening Flow View"
+            )
+        defaults = deterministic_flow_layout(document)
+        record = self._read_flow_layout_record(profile_id)
+        positions = defaults
+        version = 0
+        persisted = False
+        if record is not None:
+            stored = record["positions"]
+            positions = {
+                state_name: stored.get(state_name, default_position)
+                for state_name, default_position in defaults.items()
+            }
+            version = int(record["version"])
+            persisted = True
+        return {
+            "profile_id": profile_id,
+            "version": version,
+            "positions": positions,
+            "persisted": persisted,
+            "history": {
+                "can_undo": bool(self._layout_undo_history.get(profile_id)),
+                "can_redo": bool(self._layout_redo_history.get(profile_id)),
+            },
+        }
+
+    def save_flow_layout(
+        self,
+        profile_id: str,
+        positions: object,
+        *,
+        expected_version: int | None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            current = self.get_flow_layout(profile_id)
+            if expected_version is None:
+                raise ValueError("expected_version is required")
+            if expected_version != current["version"]:
+                raise ProfileConflictError(
+                    "Flow layout changed before this edit; reload the newer layout"
+                )
+            normalized = _normalize_flow_positions(
+                positions,
+                set(current["positions"]),
+            )
+            if normalized == current["positions"]:
+                return current
+            self._layout_undo_history.setdefault(profile_id, []).append(
+                current["positions"]
+            )
+            self._layout_undo_history[profile_id] = self._layout_undo_history[
+                profile_id
+            ][-100:]
+            self._layout_redo_history.pop(profile_id, None)
+            self._write_flow_layout(
+                profile_id,
+                normalized,
+                version=int(current["version"]) + 1,
+            )
+            return self.get_flow_layout(profile_id)
+
+    def tidy_flow_layout(
+        self,
+        profile_id: str,
+        *,
+        expected_version: int | None,
+    ) -> dict[str, object]:
+        draft = self.get_draft(profile_id)
+        document = draft.get("document")
+        if not isinstance(document, dict):
+            raise ValueError(
+                "The YAML Draft must be parseable before tidying Flow View"
+            )
+        return self.save_flow_layout(
+            profile_id,
+            deterministic_flow_layout(document),
+            expected_version=expected_version,
+        )
+
+    def restore_flow_layout(
+        self,
+        profile_id: str,
+        *,
+        undo: bool,
+        expected_version: int | None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            current = self.get_flow_layout(profile_id)
+            if expected_version is None or expected_version != current["version"]:
+                raise ProfileConflictError(
+                    "Flow layout changed before this edit; reload the newer layout"
+                )
+            source = (
+                self._layout_undo_history if undo else self._layout_redo_history
+            ).setdefault(profile_id, [])
+            if not source:
+                raise ValueError(f"nothing to {'undo' if undo else 'redo'}")
+            target = source.pop()
+            destination = (
+                self._layout_redo_history if undo else self._layout_undo_history
+            )
+            destination.setdefault(profile_id, []).append(current["positions"])
+            self._write_flow_layout(
+                profile_id,
+                target,
+                version=int(current["version"]) + 1,
+            )
+            return self.get_flow_layout(profile_id)
+
     def undo_actions(
         self,
         profile_id: str,
@@ -496,6 +686,49 @@ class ProfileCatalog:
     def _draft_path(self, profile_id: str) -> Path:
         digest = hashlib.sha256(profile_id.encode("utf-8")).hexdigest()
         return self.draft_root / "profiles" / f"{digest}.json"
+
+    def _flow_layout_path(self, profile_id: str) -> Path:
+        digest = hashlib.sha256(profile_id.encode("utf-8")).hexdigest()
+        return self.draft_root / "flow-layouts" / f"{digest}.json"
+
+    def _read_flow_layout_record(
+        self,
+        profile_id: str,
+    ) -> dict[str, object] | None:
+        path = self._flow_layout_path(profile_id)
+        if not path.is_file():
+            return None
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict) or record.get("profile_id") != profile_id:
+            raise OSError(f"invalid Flow layout record for {profile_id}")
+        version = record.get("version")
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise OSError(f"invalid Flow layout version for {profile_id}")
+        record["positions"] = _normalize_flow_positions(
+            record.get("positions"),
+            None,
+        )
+        return record
+
+    def _write_flow_layout(
+        self,
+        profile_id: str,
+        positions: dict[str, dict[str, int]],
+        *,
+        version: int,
+    ) -> None:
+        _atomic_write_text(
+            self._flow_layout_path(profile_id),
+            json.dumps(
+                {
+                    "profile_id": profile_id,
+                    "version": version,
+                    "positions": positions,
+                    "updated_at_ns": time.time_ns(),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
     def _read_draft_record(self, profile_id: str) -> dict[str, object] | None:
         path = self._draft_path(profile_id)
@@ -685,6 +918,13 @@ def _problems_from_errors(errors: list[str]) -> list[dict[str, str]]:
                 unreachable_match = re.search(r"state '([^']+)' is unreachable", message)
                 if unreachable_match:
                     location = f"states.{unreachable_match.group(1)}"
+            if not location:
+                terminal_path_match = re.search(
+                    r"state '([^']+)' has no path to a terminal state",
+                    message,
+                )
+                if terminal_path_match:
+                    location = f"states.{terminal_path_match.group(1)}"
             problems.append(
                 {
                     "severity": "error",
@@ -718,12 +958,19 @@ def _structured_mutation_preview(
         and "#" in line
     ]
     operation = str(mutation.get("operation", ""))
-    requires_confirmation = bool(diff_lines) and operation in {
-        "move",
-        "move_to_state",
-        "duplicate",
-        "delete",
-    }
+    requires_confirmation = bool(diff_lines) and (
+        operation
+        in {
+            "move",
+            "move_to_state",
+            "duplicate",
+            "delete",
+        }
+        or (operation == "update_state" and any(
+            line.startswith("-") and not line.startswith("---")
+            for line in diff_lines
+        ))
+    )
     return {
         "operation": operation,
         "changed": updated != source,
@@ -732,6 +979,40 @@ def _structured_mutation_preview(
         "diff": "\n".join(diff_lines),
         "updated_fingerprint": _source_fingerprint(updated),
     }
+
+
+def _normalize_flow_positions(
+    value: object,
+    expected_states: set[str] | None,
+) -> dict[str, dict[str, int]]:
+    if not isinstance(value, dict):
+        raise ValueError("positions must be an object")
+    normalized: dict[str, dict[str, int]] = {}
+    for raw_state, raw_position in value.items():
+        state_name = str(raw_state)
+        if expected_states is not None and state_name not in expected_states:
+            raise ValueError(f"unknown State in Flow layout: {state_name}")
+        if not isinstance(raw_position, dict):
+            raise ValueError(f"Flow position for '{state_name}' must be an object")
+        position: dict[str, int] = {}
+        for axis in ("x", "y"):
+            coordinate = raw_position.get(axis)
+            if (
+                not isinstance(coordinate, int)
+                or isinstance(coordinate, bool)
+                or coordinate < 0
+                or coordinate > 100_000
+            ):
+                raise ValueError(
+                    f"Flow position {axis} for '{state_name}' must be "
+                    "an integer from 0 to 100000"
+                )
+            position[axis] = coordinate
+        normalized[state_name] = position
+    if expected_states is not None and set(normalized) != expected_states:
+        missing = ", ".join(sorted(expected_states - set(normalized)))
+        raise ValueError(f"Flow positions are missing States: {missing}")
+    return normalized
 
 
 def _required_text(value: str, field_name: str, max_length: int) -> str:

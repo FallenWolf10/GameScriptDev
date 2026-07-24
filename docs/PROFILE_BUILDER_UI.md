@@ -59,8 +59,11 @@ contract. Action Blocks can be reordered or moved between States by pointer
 drag-and-drop with a visible insertion line, in-list auto-scroll, and Escape
 cancellation; palette Actions can also be dragged into the stack. The existing
 keyboard Add, Move, and Move-to-State controls remain equivalent interaction
-paths. More complex Action forms, the editable Flow graph, asset editing, and
-broader problem navigation remain planned.
+paths. Flow View now renders existing States and success/failure connectors,
+persists draggable node positions outside `profile.yaml`, supports deterministic
+and undoable `Tidy Flow`, and edits transitions plus initial/terminal State
+settings through the protected Draft. State creation/rename/delete, more complex
+Action forms, asset editing, and broader problem navigation remain planned.
 
 Mutations that move, duplicate, or delete authored YAML now require an exact
 backend-generated diff preview and matching confirmation fingerprint. Contiguous
@@ -541,15 +544,23 @@ POST /api/profiles/{id}/validate-draft
 POST /api/profiles/{id}/save
 POST /api/profiles
 POST /api/profiles/{id}/discard-draft
-```
-
-Planned structured and asset APIs:
-
-```text
 GET  /api/profile-schema
+POST /api/profiles/{id}/actions/preview
 POST /api/profiles/{id}/actions
+POST /api/profiles/{id}/flow/preview
+POST /api/profiles/{id}/flow
 POST /api/profiles/{id}/undo
 POST /api/profiles/{id}/redo
+GET  /api/profiles/{id}/flow-layout
+POST /api/profiles/{id}/flow-layout
+POST /api/profiles/{id}/flow-layout/tidy
+POST /api/profiles/{id}/flow-layout/undo
+POST /api/profiles/{id}/flow-layout/redo
+```
+
+Planned asset APIs:
+
+```text
 POST /api/profiles/{id}/assets
 ```
 
@@ -603,8 +614,9 @@ types are added.
 
 ### Phase 1: Read-Only Profile Builder View
 
-Status: foundation implemented; graph canvas and richer invalid-source problem
-navigation remain.
+Status: implemented for valid Drafts, including the graph canvas and navigable
+State/Action validation problems. Richer recovery views for unparseable YAML
+remain.
 
 Goal: make profiles easier to understand before editing them.
 
@@ -625,8 +637,9 @@ Acceptance checks:
 
 ### Phase 2: Writable Authoring
 
-Status: raw YAML Draft editing, blank Profile creation, validation, conflict-safe
-Save, and revision retention are implemented. Structured Action editing remains.
+Status: implemented for the initial common Action set, including raw YAML Draft
+editing, blank Profile creation, structured forms, drag/reorder, validation,
+conflict-safe Save, and revision retention.
 
 Goal: edit common action lists without touching YAML manually.
 
@@ -692,6 +705,10 @@ Acceptance checks:
 - missing assets and unknown regions are caught before dry-run/live use
 
 ### Phase 5: Full State Graph Editing
+
+Status: the editable existing-State graph, Transition editing, initial/terminal
+controls, deterministic layout, Builder-only node positions, and graph
+diagnostics are implemented. Add/rename/delete State operations remain.
 
 Goal: author the whole workflow visually.
 

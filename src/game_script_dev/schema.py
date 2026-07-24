@@ -405,6 +405,30 @@ def _validate_state_graph(profile: Profile, errors: list[str]) -> None:
     ):
         errors.append("state graph must include a reachable terminal state")
 
+    if not profile.allow_infinite_run:
+        terminal_reachable = {
+            state_name
+            for state_name in reachable
+            if profile.states[state_name].terminal
+            or profile.states[state_name].on_failure == "graceful_termination"
+        }
+        changed = True
+        while changed:
+            changed = False
+            for state_name in reachable - terminal_reachable:
+                successors = [
+                    successor
+                    for successor in _state_successors(profile.states[state_name])
+                    if successor in profile.states
+                ]
+                if any(successor in terminal_reachable for successor in successors):
+                    terminal_reachable.add(state_name)
+                    changed = True
+        for state_name in sorted(reachable - terminal_reachable):
+            errors.append(
+                f"state '{state_name}' has no path to a terminal state"
+            )
+
     _validate_failure_transition_loops(profile, errors)
 
 
