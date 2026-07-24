@@ -227,10 +227,14 @@
         <section class="panel builder-readonly-view" aria-labelledby="builder-canvas-title">
           <div class="panel-heading builder-view-heading">
             <div>
-              <span class="eyebrow">Flow View</span>
-              <h2 id="builder-canvas-title">States and ordered Actions</h2>
+              <span class="eyebrow">Structured Draft</span>
+              <h2 id="builder-canvas-title">State Actions</h2>
             </div>
-            <span id="builder-fingerprint" class="muted">No source loaded</span>
+            <div class="builder-history-actions">
+              <button id="undo-builder-action" type="button" disabled>Undo</button>
+              <button id="redo-builder-action" type="button" disabled>Redo</button>
+              <span id="builder-fingerprint" class="muted">No source loaded</span>
+            </div>
           </div>
           <div id="builder-empty" class="builder-empty">
             <span class="read-only-icon" aria-hidden="true">
@@ -240,23 +244,58 @@
             <p>Valid YAML drafts appear here as a readable State and Action flow.</p>
           </div>
           <div id="builder-flow" class="builder-flow" hidden>
-            <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
-            <section class="builder-state-detail" aria-live="polite">
-              <div class="builder-state-detail-heading">
-                <div>
-                  <span class="eyebrow">State View</span>
-                  <h2 id="builder-state-name">No State selected</h2>
+            <aside class="builder-tool-palette" aria-labelledby="builder-palette-title">
+              <span class="eyebrow">Tool Palette</span>
+              <h3 id="builder-palette-title">Actions</h3>
+              <label for="builder-action-search">Search Actions</label>
+              <input id="builder-action-search" type="search" placeholder="Search by name or type" autocomplete="off">
+              <div id="builder-action-palette" class="builder-action-palette" role="list"></div>
+            </aside>
+            <section class="builder-state-workspace" aria-live="polite">
+              <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
+              <section class="builder-state-detail">
+                <div class="builder-state-detail-heading">
+                  <div>
+                    <span class="eyebrow">Action Stack</span>
+                    <h2 id="builder-state-name">No State selected</h2>
+                  </div>
+                  <span id="builder-state-kind" class="badge">State</span>
                 </div>
-                <span id="builder-state-kind" class="badge">State</span>
-              </div>
-              <dl id="builder-state-transitions" class="builder-transition-list"></dl>
-              <h3>Required Anchors</h3>
-              <ul id="builder-anchor-list" class="builder-anchor-list"></ul>
-              <h3>Ordered Actions</h3>
-              <ol id="builder-action-list" class="builder-action-list"></ol>
+                <dl id="builder-state-transitions" class="builder-transition-list"></dl>
+                <details>
+                  <summary>Required Anchors</summary>
+                  <ul id="builder-anchor-list" class="builder-anchor-list"></ul>
+                </details>
+                <h3>Ordered Actions</h3>
+                <ol id="builder-action-list" class="builder-action-list"></ol>
+              </section>
             </section>
+            <aside class="builder-action-inspector" aria-labelledby="builder-inspector-title">
+              <span class="eyebrow">Context Rail</span>
+              <h3 id="builder-inspector-title">Action Inspector</h3>
+              <div id="builder-action-inspector-empty" class="muted">Select an Action to edit its settings.</div>
+              <form id="builder-action-inspector-form" hidden>
+                <div class="builder-inspector-heading">
+                  <strong id="builder-inspector-label">Action</strong>
+                  <code id="builder-inspector-type">type</code>
+                </div>
+                <div id="builder-inspector-fields"></div>
+                <div id="builder-inspector-errors" class="builder-inline-errors" role="status" aria-live="polite"></div>
+                <div class="builder-action-commands" aria-label="Selected Action commands">
+                  <button id="move-builder-action-up" type="button">Move Up</button>
+                  <button id="move-builder-action-down" type="button">Move Down</button>
+                  <button id="duplicate-builder-action" type="button">Duplicate</button>
+                  <button id="toggle-builder-action" type="button">Disable</button>
+                  <button id="delete-builder-action" type="button">Delete</button>
+                </div>
+              </form>
+            </aside>
           </div>
-          <p class="builder-readonly-message">Flow editing is still read only. Use the YAML Draft editor below to make changes without leaving the application.</p>
+          <details id="builder-problems-drawer" class="builder-problems-drawer">
+            <summary>Problems <span id="builder-problem-count" class="badge">0</span></summary>
+            <ul id="builder-problem-list"></ul>
+          </details>
+          <p class="builder-readonly-message">The <code>wait</code> Action is editable here. Other Actions remain visible and fully editable in the synchronized YAML Draft.</p>
         </section>
         <aside class="panel builder-notes-panel">
           <div class="panel-heading"><h2>Pack Notes</h2><span class="badge">Read only</span></div>

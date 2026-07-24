@@ -1310,6 +1310,11 @@ class DashboardTests(unittest.TestCase):
             "profile-pack-detail",
             "builder-state-list",
             "builder-action-list",
+            "builder-action-palette",
+            "builder-action-inspector-form",
+            "builder-problems-drawer",
+            "undo-builder-action",
+            "redo-builder-action",
             "create-profile-button",
             "create-profile-dialog",
             "create-profile-form",
@@ -1346,6 +1351,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("/structured`)", app_js)
         self.assertIn("async function persistBuilderDraft", app_js)
         self.assertIn("async function saveBuilderProfile", app_js)
+        self.assertIn("async function mutateBuilderAction", app_js)
+        self.assertIn("async function restoreBuilderActionHistory", app_js)
         self.assertIn("async function createProfile", app_js)
         self.assertIn("function activateWorkspace(workspace", app_js)
         self.assertIn("function scheduleNextPoll()", app_js)
@@ -1374,6 +1381,164 @@ class DashboardTests(unittest.TestCase):
         module, args = relaunch.call_args.args[:2]
         self.assertEqual(module, "game_script_dev.dashboard")
         self.assertNotIn("--run-as-admin", args)
+
+    def test_server_exposes_action_schema_and_versioned_mutations(self) -> None:
+        source_with_comments = LONG_WAIT_PROFILE_YAML.replace(
+            "    actions:\n",
+            "    # Keep State guidance.\n    actions:\n",
+        ).replace(
+            "        seconds: 2",
+            "        seconds: 2 # tune carefully",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, source_with_comments)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                schema = _get_json(f"{base_url}/api/profile-schema")
+                wait_definition = next(
+                    action
+                    for action in schema["actions"]
+                    if action["type"] == "wait"
+                )
+                self.assertEqual(schema["version"], 1)
+                self.assertTrue(wait_definition["structured"])
+                self.assertEqual(wait_definition["fields"][0]["default"], 1)
+
+                initial = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(initial["version"], 0)
+                with self.assertRaises(HTTPError) as unversioned:
+                    _post_json(
+                        f"{base_url}/api/profiles/demo/actions",
+                        {
+                            "mutation": {
+                                "operation": "delete",
+                                "state": "home",
+                                "index": 0,
+                            },
+                        },
+                    )
+                self.assertEqual(unversioned.exception.code, 400)
+                updated = _post_json(
+                    f"{base_url}/api/profiles/demo/actions",
+                    {
+                        "expected_version": initial["version"],
+                        "expected_fingerprint": initial["draft_fingerprint"],
+                        "mutation": {
+                            "operation": "update",
+                            "state": "home",
+                            "index": 0,
+                            "fields": {"seconds": -1},
+                        },
+                    },
+                )
+                self.assertEqual(updated["version"], 1)
+                self.assertFalse(updated["valid"])
+                self.assertTrue(updated["history"]["can_undo"])
+                self.assertIn("# Keep State guidance.", updated["source"])
+                self.assertIn("seconds: -1 # tune carefully", updated["source"])
+                self.assertEqual(
+                    updated["problems"][0]["location"],
+                    "states.home.actions[0].seconds",
+                )
+                validated = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": updated["source"],
+                        "base_fingerprint": updated["base_fingerprint"],
+                        "expected_version": updated["version"],
+                    },
+                )
+                self.assertEqual(validated["version"], updated["version"])
+                self.assertTrue(validated["history"]["can_undo"])
+
+                undone = _post_json(
+                    f"{base_url}/api/profiles/demo/undo",
+                    {"expected_version": updated["version"]},
+                )
+                self.assertTrue(undone["valid"], undone["errors"])
+                self.assertIn("seconds: 2 # tune carefully", undone["source"])
+                self.assertTrue(undone["history"]["can_redo"])
+
+                redone = _post_json(
+                    f"{base_url}/api/profiles/demo/redo",
+                    {"expected_version": undone["version"]},
+                )
+                self.assertFalse(redone["valid"])
+
+                with self.assertRaises(HTTPError) as stale:
+                    _post_json(
+                        f"{base_url}/api/profiles/demo/actions",
+                        {
+                            "expected_version": updated["version"],
+                            "mutation": {
+                                "operation": "delete",
+                                "state": "home",
+                                "index": 0,
+                            },
+                        },
+                    )
+                self.assertEqual(stale.exception.code, 409)
+                current = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(current["source"], redone["source"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_saved_structured_wait_edit_is_used_by_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                edited = _post_json(
+                    f"{base_url}/api/profiles/demo/actions",
+                    {
+                        "expected_version": draft["version"],
+                        "mutation": {
+                            "operation": "update",
+                            "state": "home",
+                            "index": 0,
+                            "fields": {"seconds": 0.01},
+                        },
+                    },
+                )
+                self.assertTrue(edited["valid"], edited["errors"])
+                _post_json(f"{base_url}/api/profiles/demo/save", {})
+                self.assertIn(
+                    "seconds: 0.01",
+                    profile_path.read_text(encoding="utf-8"),
+                )
+
+                run = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    current = _get_json(f"{base_url}/api/runs/{run['id']}")
+                    if current["status"] in {"completed", "failed", "interrupted"}:
+                        break
+                    time.sleep(0.02)
+                self.assertEqual(current["status"], "completed")
+                review = _get_json(f"{base_url}/api/runs/{run['id']}/review")
+                wait_event = next(
+                    event
+                    for event in review["timeline"]
+                    if event["event"] == "action_completed"
+                )
+                self.assertEqual(wait_event["action_type"], "wait")
+                self.assertIn("0.01", wait_event["action_summary"])
+            finally:
+                server.shutdown()
+                server.server_close()
 
 
 def _write_profile(

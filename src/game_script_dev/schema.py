@@ -5,29 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from game_script_dev.action_metadata import SUPPORTED_CONTINUOUS_INPUT_ACTION_TYPES
+from game_script_dev.action_metadata import (
+    ACTION_DEFINITIONS,
+    SUPPORTED_CONTINUOUS_INPUT_ACTION_TYPES,
+)
 
 SUPPORTED_ANCHOR_TYPES = {"template", "text"}
-SUPPORTED_ACTION_TYPES = {
-    "wait_for_state",
-    "click_template",
-    "click_point",
-    "hold_click",
-    "press_key",
-    "press_keys",
-    "hold_key",
-    "hold_keys",
-    "repeat_key",
-    "hold_key_while_repeating_key",
-    "move_mouse",
-    "hold_mouse_button_and_move",
-    "scroll_mouse",
-    "start_continuous_input",
-    "stop_continuous_input",
-    "wait",
-    "log",
-    "stop",
-}
+SUPPORTED_ACTION_TYPES = set(ACTION_DEFINITIONS)
 SUPPORTED_MOUSE_BUTTONS = {"left", "right"}
 SUPPORTED_SCROLL_DIRECTIONS = {"up", "down"}
 SUPPORTED_KEY_NAMES = {
@@ -118,6 +102,7 @@ class Anchor:
 class Action:
     type: str
     data: dict[str, Any] = field(default_factory=dict)
+    disabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -483,6 +468,8 @@ def _validate_continuous_input_lifecycle(
 
         active = dict(active_items)
         for index, action in enumerate(state.actions):
+            if action.disabled:
+                continue
             _expire_continuous_inputs(active)
             name = action.data.get("name")
             if not isinstance(name, str) or not name.strip():
@@ -711,10 +698,18 @@ def _actions_from_list(raw: Any) -> list[Action]:
         if not isinstance(item, dict):
             raise ValueError("action must be a mapping")
         action_type = _string(item, "type")
+        disabled = item.get("disabled", False)
+        if not isinstance(disabled, bool):
+            raise ValueError("action disabled must be a boolean")
         actions.append(
             Action(
                 type=action_type,
-                data={k: v for k, v in item.items() if k != "type"},
+                data={
+                    k: v
+                    for k, v in item.items()
+                    if k not in {"type", "disabled"}
+                },
+                disabled=disabled,
             )
         )
     return actions
@@ -749,6 +744,9 @@ def _validate_actions(
         action_context = f"{context}[{index}].{action.type}"
         if action.type not in SUPPORTED_ACTION_TYPES:
             errors.append(f"{action_context} uses unknown action type")
+            continue
+        if action.disabled:
+            continue
         if action.type == "wait_for_state":
             state_name = action.data.get("state")
             if state_name not in states:

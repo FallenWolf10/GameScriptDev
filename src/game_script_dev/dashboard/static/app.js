@@ -15,8 +15,14 @@ const state = {
   builderDraft: null,
   builderProfileId: null,
   selectedBuilderState: null,
+  selectedBuilderActionIndex: null,
+  actionSchema: null,
   builderAutosaveTimer: null,
+  builderAutosavePromise: null,
   builderAutosavePending: false,
+  builderInspectorTimer: null,
+  builderInspectorPending: null,
+  structuredMutationPending: false,
   createProfileIdTouched: false,
   createProfileNameTouched: false,
   pollTimer: null,
@@ -1125,19 +1131,22 @@ async function refreshBuilderProfile() {
     state.builderSource = null;
     state.builderDraft = null;
     state.builderProfileId = null;
+    state.selectedBuilderActionIndex = null;
     renderBuilderDocument();
     renderBuilderDraft();
     return;
   }
   const profileId = state.selectedProfileId;
   try {
-    const [source, draft] = await Promise.all([
+    const [source, draft, actionSchema] = await Promise.all([
       api(`/api/profiles/${encodeURIComponent(profileId)}/source`),
       api(`/api/profiles/${encodeURIComponent(profileId)}/draft`),
+      state.actionSchema ? Promise.resolve(state.actionSchema) : api("/api/profile-schema"),
     ]);
     if (profileId !== state.selectedProfileId) return;
     state.builderSource = source;
     state.builderDraft = draft;
+    state.actionSchema = actionSchema;
     state.builderDocument = draft.document || null;
     if (!state.builderDocument) {
       try {
@@ -1154,6 +1163,11 @@ async function refreshBuilderProfile() {
     state.selectedBuilderState = states.includes(state.selectedBuilderState)
       ? state.selectedBuilderState
       : (states.includes(initialState) ? initialState : (states[0] || null));
+    const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
+    state.selectedBuilderActionIndex = Number.isInteger(state.selectedBuilderActionIndex)
+      && state.selectedBuilderActionIndex < actions.length
+      ? state.selectedBuilderActionIndex
+      : (actions.length ? 0 : null);
   } catch (error) {
     if (profileId !== state.selectedProfileId) return;
     state.builderSource = null;
@@ -1161,6 +1175,7 @@ async function refreshBuilderProfile() {
     state.builderDocument = null;
     state.builderProfileId = profileId;
     state.selectedBuilderState = null;
+    state.selectedBuilderActionIndex = null;
     $("builder-empty").querySelector("h2").textContent = "Saved source could not be displayed";
     $("builder-empty").querySelector("p").textContent = error.message;
   }
@@ -1236,6 +1251,15 @@ function renderBuilderDraft() {
   $("reload-builder-source").disabled = !hasProfile
     || state.builderAutosavePending
     || (!draft?.exists && !draft?.dirty && !draft?.conflict);
+  $("undo-builder-action").disabled = !hasProfile
+    || state.builderAutosavePending
+    || state.structuredMutationPending
+    || !draft?.history?.can_undo;
+  $("redo-builder-action").disabled = !hasProfile
+    || state.builderAutosavePending
+    || state.structuredMutationPending
+    || !draft?.history?.can_redo;
+  renderBuilderProblems();
 }
 
 function queueBuilderDraftAutosave() {
@@ -1254,7 +1278,11 @@ function queueBuilderDraftAutosave() {
   renderBuilderDraft();
   state.builderAutosaveTimer = window.setTimeout(() => {
     state.builderAutosaveTimer = null;
-    void persistBuilderDraft({ showResult: false });
+    const promise = persistBuilderDraft({ showResult: false });
+    state.builderAutosavePromise = promise;
+    void promise.finally(() => {
+      if (state.builderAutosavePromise === promise) state.builderAutosavePromise = null;
+    });
   }, 600);
 }
 
@@ -1263,12 +1291,19 @@ async function persistBuilderDraft({ showResult = false } = {}) {
   if (!profileId || !state.builderSource) return null;
   const source = $("builder-yaml-editor").value;
   const baseFingerprint = state.builderDraft?.base_fingerprint || state.builderSource.fingerprint;
+  const expectedVersion = state.builderDraft?.version;
+  const expectedFingerprint = state.builderDraft?.draft_fingerprint;
   state.builderAutosavePending = true;
   renderBuilderDraft();
   try {
     const draft = await api(`/api/profiles/${encodeURIComponent(profileId)}/draft`, {
       method: "POST",
-      body: JSON.stringify({ source, base_fingerprint: baseFingerprint }),
+      body: JSON.stringify({
+        source,
+        base_fingerprint: baseFingerprint,
+        expected_version: expectedVersion,
+        expected_fingerprint: expectedFingerprint,
+      }),
     });
     if (profileId !== state.builderProfileId) return draft;
     state.builderDraft = draft;
@@ -1307,13 +1342,21 @@ async function persistBuilderDraft({ showResult = false } = {}) {
   }
 }
 
-async function flushBuilderAutosave() {
-  if (!state.builderAutosaveTimer) return;
-  window.clearTimeout(state.builderAutosaveTimer);
-  state.builderAutosaveTimer = null;
-  const draft = await persistBuilderDraft({ showResult: false });
-  if (!draft) {
-    throw new Error("The draft could not be autosaved, so the Profile selection was not changed.");
+async function flushBuilderAutosave({ includeInspector = true } = {}) {
+  if (includeInspector) await flushBuilderInspectorEdit();
+  if (state.builderAutosaveTimer) {
+    window.clearTimeout(state.builderAutosaveTimer);
+    state.builderAutosaveTimer = null;
+    const draft = await persistBuilderDraft({ showResult: false });
+    if (!draft) {
+      throw new Error("The draft could not be autosaved, so the Profile selection was not changed.");
+    }
+  }
+  if (state.builderAutosavePromise) {
+    const draft = await state.builderAutosavePromise;
+    if (!draft) {
+      throw new Error("The draft could not be autosaved, so structured editing was cancelled.");
+    }
   }
 }
 
@@ -1370,7 +1413,10 @@ async function discardBuilderDraft() {
   if (!profileId) return;
   if (!window.confirm("Discard the recoverable draft and reload the saved profile.yaml?")) return;
   window.clearTimeout(state.builderAutosaveTimer);
+  window.clearTimeout(state.builderInspectorTimer);
   state.builderAutosaveTimer = null;
+  state.builderInspectorTimer = null;
+  state.builderInspectorPending = null;
   const draft = await api(`/api/profiles/${encodeURIComponent(profileId)}/discard-draft`, {
     method: "POST",
     body: "{}",
@@ -1434,20 +1480,205 @@ function renderBuilderState() {
 
   const actions = $("builder-action-list");
   const actionValues = stateValue.actions || [];
+  if (
+    !Number.isInteger(state.selectedBuilderActionIndex)
+    || state.selectedBuilderActionIndex >= actionValues.length
+  ) {
+    state.selectedBuilderActionIndex = actionValues.length ? 0 : null;
+  }
   actions.innerHTML = actionValues.length
-    ? actionValues.map((action, index) => `<li><strong>${index + 1}. ${escapeHtml(action.type || "action")}</strong><span>${escapeHtml(formatActionSummary(action))}</span></li>`).join("")
-    : '<li class="muted">No Actions</li>';
+    ? actionValues.map((action, index) => {
+      const definition = actionDefinition(action.type);
+      const problems = actionProblems(stateName, index);
+      const selected = index === state.selectedBuilderActionIndex;
+      const status = problems.length
+        ? `<span class="builder-action-status">${problems.length} error${problems.length === 1 ? "" : "s"}</span>`
+        : "";
+      return `<li><button type="button" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</button></li>`;
+    }).join("")
+    : '<li class="muted">No Actions. Add Wait from the Tool Palette.</li>';
+  renderBuilderActionPalette();
+  renderBuilderActionInspector();
 }
 
-function formatActionSummary(action) {
-  const fields = Object.entries(action || {})
-    .filter(([key]) => key !== "type")
-    .slice(0, 4)
+function actionDefinition(actionType) {
+  return state.actionSchema?.actions?.find((definition) => definition.type === actionType) || null;
+}
+
+function formatActionSummary(action, definition = null) {
+  const summaryFields = definition?.summary_fields || [];
+  const entries = summaryFields.length
+    ? summaryFields.filter((key) => Object.hasOwn(action || {}, key)).map((key) => [key, action[key]])
+    : Object.entries(action || {}).filter(([key]) => !["type", "disabled"].includes(key)).slice(0, 4);
+  const fields = entries
     .map(([key, value]) => {
       const rendered = typeof value === "object" ? JSON.stringify(value) : String(value);
       return `${key}=${rendered}`;
     });
+  if (action?.disabled) fields.unshift("Disabled");
   return fields.join(" · ") || "No additional settings";
+}
+
+function renderBuilderActionPalette() {
+  const target = $("builder-action-palette");
+  const query = $("builder-action-search").value.trim().toLowerCase();
+  const definitions = (state.actionSchema?.actions || [])
+    .filter((definition) => definition.structured)
+    .filter((definition) => {
+      const searchable = [
+        definition.label,
+        definition.type,
+        ...(definition.keywords || []),
+      ].join(" ").toLowerCase();
+      return !query || searchable.includes(query);
+    });
+  target.innerHTML = definitions.length
+    ? definitions.map((definition) => `<button type="button" data-add-builder-action="${escapeHtml(definition.type)}" role="listitem" ${state.structuredMutationPending ? "disabled" : ""}><strong>${escapeHtml(definition.label)}</strong><span>${escapeHtml(definition.type)}</span></button>`).join("")
+    : '<span class="muted">No matching structured Actions.</span>';
+}
+
+function actionProblems(stateName, actionIndex) {
+  const prefix = `states.${stateName}.actions[${actionIndex}]`;
+  return (state.builderDraft?.problems || []).filter((problem) => problem.location?.startsWith(prefix));
+}
+
+function renderBuilderActionInspector() {
+  const stateValue = state.builderDocument?.states?.[state.selectedBuilderState] || {};
+  const actions = stateValue.actions || [];
+  const index = state.selectedBuilderActionIndex;
+  const action = Number.isInteger(index) ? actions[index] : null;
+  $("builder-action-inspector-empty").hidden = Boolean(action);
+  const form = $("builder-action-inspector-form");
+  form.hidden = !action;
+  if (!action) return;
+
+  const definition = actionDefinition(action.type);
+  $("builder-inspector-label").textContent = definition?.label || action.type || "Action";
+  $("builder-inspector-type").textContent = action.type || "unknown";
+  const fields = $("builder-inspector-fields");
+  if (definition?.structured && action.type === "wait") {
+    const fieldProblems = actionProblems(state.selectedBuilderState, index)
+      .filter((problem) => problem.location?.endsWith(".seconds"));
+    fields.innerHTML = `
+      <label for="builder-action-seconds">Seconds</label>
+      <input id="builder-action-seconds" name="seconds" type="number" min="0" step="any" value="${escapeHtml(action.seconds ?? "")}" aria-invalid="${fieldProblems.length ? "true" : "false"}" aria-describedby="builder-inspector-errors">
+      <span class="muted">${escapeHtml(definition.fields[0]?.hint || "")}</span>
+    `;
+  } else {
+    fields.innerHTML = '<p class="muted">This Action uses the raw YAML editor for its fields. Ordering and lifecycle commands remain available here.</p>';
+  }
+
+  const problems = actionProblems(state.selectedBuilderState, index);
+  $("builder-inspector-errors").innerHTML = problems
+    .map((problem) => `<div>${escapeHtml(problem.message)}</div>`)
+    .join("");
+  const pending = state.structuredMutationPending || state.builderAutosavePending;
+  $("move-builder-action-up").disabled = pending || index <= 0;
+  $("move-builder-action-down").disabled = pending || index >= actions.length - 1;
+  $("duplicate-builder-action").disabled = pending;
+  $("toggle-builder-action").disabled = pending;
+  $("toggle-builder-action").textContent = action.disabled ? "Enable" : "Disable";
+  $("delete-builder-action").disabled = pending;
+}
+
+function renderBuilderProblems() {
+  const problems = state.builderDraft?.problems || [];
+  $("builder-problem-count").textContent = String(problems.length);
+  $("builder-problem-count").className = `badge ${problems.length ? "bad" : "good"}`;
+  $("builder-problem-list").innerHTML = problems.length
+    ? problems.map((problem, index) => `<li><button type="button" data-builder-problem-index="${index}">${escapeHtml(problem.location ? `${problem.location}: ${problem.message}` : problem.message)}</button></li>`).join("")
+    : '<li class="muted">No Draft Validation problems.</li>';
+}
+
+function applyStructuredDraft(draft) {
+  state.builderDraft = draft;
+  if (draft.document) state.builderDocument = draft.document;
+  renderBuilderDocument();
+  renderBuilderDraft();
+}
+
+async function mutateBuilderAction(mutation, { focusIndex = null, focusField = false } = {}) {
+  const profileId = state.builderProfileId;
+  if (!profileId || state.structuredMutationPending) return;
+  await flushBuilderInspectorEdit();
+  await flushBuilderAutosave({ includeInspector: false });
+  state.structuredMutationPending = true;
+  renderBuilderDraft();
+  renderBuilderActionPalette();
+  renderBuilderActionInspector();
+  try {
+    const draft = await api(`/api/profiles/${encodeURIComponent(profileId)}/actions`, {
+      method: "POST",
+      body: JSON.stringify({
+        expected_version: state.builderDraft?.version,
+        expected_fingerprint: state.builderDraft?.draft_fingerprint,
+        mutation,
+      }),
+    });
+    if (profileId !== state.builderProfileId) return;
+    state.selectedBuilderActionIndex = focusIndex;
+    applyStructuredDraft(draft);
+    showNotice(`${mutation.operation[0].toUpperCase()}${mutation.operation.slice(1)} Action completed.`, draft.valid ? "good" : "error");
+    window.requestAnimationFrame(() => {
+      const selector = focusField
+        ? "#builder-action-seconds"
+        : `[data-builder-action-index="${state.selectedBuilderActionIndex}"]`;
+      document.querySelector(selector)?.focus();
+    });
+  } catch (error) {
+    if (error.status === 409) await refreshBuilderProfile();
+    throw error;
+  } finally {
+    if (profileId === state.builderProfileId) {
+      state.structuredMutationPending = false;
+      renderBuilderDraft();
+      renderBuilderActionPalette();
+      renderBuilderActionInspector();
+    }
+  }
+}
+
+async function restoreBuilderActionHistory(direction) {
+  const profileId = state.builderProfileId;
+  if (!profileId || state.structuredMutationPending) return;
+  await flushBuilderAutosave();
+  state.structuredMutationPending = true;
+  renderBuilderDraft();
+  try {
+    const draft = await api(`/api/profiles/${encodeURIComponent(profileId)}/${direction}`, {
+      method: "POST",
+      body: JSON.stringify({
+        expected_version: state.builderDraft?.version,
+        expected_fingerprint: state.builderDraft?.draft_fingerprint,
+      }),
+    });
+    if (profileId !== state.builderProfileId) return;
+    applyStructuredDraft(draft);
+    showNotice(`${direction === "undo" ? "Undo" : "Redo"} completed.`, "good");
+  } finally {
+    if (profileId === state.builderProfileId) {
+      state.structuredMutationPending = false;
+      renderBuilderDraft();
+      renderBuilderActionPalette();
+      renderBuilderActionInspector();
+    }
+  }
+}
+
+function selectedBuilderAction() {
+  const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
+  return Number.isInteger(state.selectedBuilderActionIndex)
+    ? actions[state.selectedBuilderActionIndex]
+    : null;
+}
+
+async function flushBuilderInspectorEdit() {
+  if (!state.builderInspectorPending) return;
+  window.clearTimeout(state.builderInspectorTimer);
+  state.builderInspectorTimer = null;
+  const pending = state.builderInspectorPending;
+  state.builderInspectorPending = null;
+  await mutateBuilderAction(pending.mutation, pending.options);
 }
 
 function profileIdFromText(value) {
@@ -1570,6 +1801,9 @@ $("builder-yaml-editor").addEventListener("input", queueBuilderDraftAutosave);
 $("validate-builder-draft").addEventListener("click", () => runCommand(() => validateBuilderDraft()));
 $("save-builder-profile").addEventListener("click", () => runCommand(() => saveBuilderProfile()));
 $("reload-builder-source").addEventListener("click", () => runCommand(() => discardBuilderDraft()));
+$("undo-builder-action").addEventListener("click", () => runCommand(() => restoreBuilderActionHistory("undo")));
+$("redo-builder-action").addEventListener("click", () => runCommand(() => restoreBuilderActionHistory("redo")));
+$("builder-action-search").addEventListener("input", renderBuilderActionPalette);
 $("settings-refresh-button").addEventListener("click", () => runCommand(async () => {
   await Promise.all([refreshRuntimeStatus(), refreshStartupChecks()]);
   showNotice("Diagnostics refreshed.", "good");
@@ -1611,7 +1845,146 @@ $("builder-state-list").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-builder-state]");
   if (!button) return;
   state.selectedBuilderState = button.dataset.builderState;
+  const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
+  state.selectedBuilderActionIndex = actions.length ? 0 : null;
   renderBuilderDocument();
+});
+
+$("builder-action-list").addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("button[data-builder-action-index]");
+  if (!button) return;
+  state.selectedBuilderActionIndex = Number(button.dataset.builderActionIndex);
+  renderBuilderState();
+});
+
+$("builder-action-palette").addEventListener("click", (event) => runCommand(async () => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("button[data-add-builder-action]");
+  if (!button || !state.selectedBuilderState) return;
+  const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
+  const definition = actionDefinition(button.dataset.addBuilderAction);
+  const fields = Object.fromEntries(
+    (definition?.fields || [])
+      .filter((field) => field.default !== undefined)
+      .map((field) => [field.name, field.default]),
+  );
+  await mutateBuilderAction(
+    {
+      operation: "insert",
+      state: state.selectedBuilderState,
+      index: actions.length,
+      action_type: button.dataset.addBuilderAction,
+      fields,
+    },
+    { focusIndex: actions.length, focusField: true },
+  );
+}));
+
+$("builder-action-inspector-form").addEventListener("input", (event) => {
+  if (!(event.target instanceof HTMLInputElement) || event.target.name !== "seconds") return;
+  const index = state.selectedBuilderActionIndex;
+  if (!Number.isInteger(index)) return;
+  const value = event.target.value === "" ? "" : Number(event.target.value);
+  window.clearTimeout(state.builderInspectorTimer);
+  state.builderInspectorPending = {
+    mutation: {
+      operation: "update",
+      state: state.selectedBuilderState,
+      index,
+      fields: { seconds: value },
+    },
+    options: { focusIndex: index, focusField: true },
+  };
+  state.builderInspectorTimer = window.setTimeout(() => {
+    state.builderInspectorTimer = null;
+    void runCommand(() => flushBuilderInspectorEdit());
+  }, 400);
+});
+
+$("move-builder-action-up").addEventListener("click", () => runCommand(() => {
+  const index = state.selectedBuilderActionIndex;
+  return mutateBuilderAction(
+    {
+      operation: "move",
+      state: state.selectedBuilderState,
+      index,
+      target_index: index - 1,
+    },
+    { focusIndex: index - 1 },
+  );
+}));
+
+$("move-builder-action-down").addEventListener("click", () => runCommand(() => {
+  const index = state.selectedBuilderActionIndex;
+  return mutateBuilderAction(
+    {
+      operation: "move",
+      state: state.selectedBuilderState,
+      index,
+      target_index: index + 1,
+    },
+    { focusIndex: index + 1 },
+  );
+}));
+
+$("duplicate-builder-action").addEventListener("click", () => runCommand(() => {
+  const index = state.selectedBuilderActionIndex;
+  return mutateBuilderAction(
+    {
+      operation: "duplicate",
+      state: state.selectedBuilderState,
+      index,
+    },
+    { focusIndex: index + 1 },
+  );
+}));
+
+$("toggle-builder-action").addEventListener("click", () => runCommand(() => {
+  const action = selectedBuilderAction();
+  const index = state.selectedBuilderActionIndex;
+  return mutateBuilderAction(
+    {
+      operation: action?.disabled ? "enable" : "disable",
+      state: state.selectedBuilderState,
+      index,
+    },
+    { focusIndex: index },
+  );
+}));
+
+$("delete-builder-action").addEventListener("click", () => runCommand(() => {
+  const action = selectedBuilderAction();
+  const index = state.selectedBuilderActionIndex;
+  const hasNestedSettings = Object.values(action || {}).some((value) => value && typeof value === "object");
+  if (hasNestedSettings && !window.confirm("Delete this Action and its nested settings?")) return null;
+  const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
+  return mutateBuilderAction(
+    {
+      operation: "delete",
+      state: state.selectedBuilderState,
+      index,
+    },
+    { focusIndex: actions.length > 1 ? Math.min(index, actions.length - 2) : null },
+  );
+}));
+
+$("builder-problem-list").addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("button[data-builder-problem-index]");
+  if (!button) return;
+  const problem = state.builderDraft?.problems?.[Number(button.dataset.builderProblemIndex)];
+  const match = problem?.location?.match(/^states\.([^.]+)\.actions\[(\d+)\](?:\.(.+))?$/);
+  if (!match) return;
+  state.selectedBuilderState = match[1];
+  state.selectedBuilderActionIndex = Number(match[2]);
+  renderBuilderDocument();
+  window.requestAnimationFrame(() => {
+    const target = match[3] === "seconds"
+      ? $("builder-action-seconds")
+      : document.querySelector(`[data-builder-action-index="${match[2]}"]`);
+    target?.focus();
+  });
 });
 
 $("runtime-admin-button").addEventListener("click", () => runCommand(async () => {

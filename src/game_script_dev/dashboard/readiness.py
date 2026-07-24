@@ -169,7 +169,8 @@ def _uses_text_anchors(profile: Profile) -> bool:
 
 def uses_pointer_actions(actions: list[Action]) -> bool:
     return any(
-        action.type
+        not action.disabled
+        and action.type
         in {
             "click_point",
             "click_template",
@@ -208,7 +209,8 @@ def _background_input_privilege_blocker(
 def _uses_live_input(profile: Profile) -> bool:
     for state in profile.states.values():
         if any(
-            action.type
+            not action.disabled
+            and action.type
             in {
                 "click_point",
                 "click_template",
@@ -226,7 +228,8 @@ def _uses_live_input(profile: Profile) -> bool:
             return True
     for interruption in profile.interruptions:
         if any(
-            action.type
+            not action.disabled
+            and action.type
             in {
                 "click_point",
                 "click_template",

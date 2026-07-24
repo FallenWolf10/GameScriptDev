@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from game_script_dev.action_metadata import action_schema_payload
 from game_script_dev.dashboard.profile_catalog import (
     InvalidProfileDraftError,
     ProfileCatalog,
@@ -67,6 +68,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+        if path == "/api/profile-schema":
+            self._send_json(action_schema_payload())
+            return
         if path == "/api/profiles":
             self._send_json(
                 {
@@ -194,6 +198,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/profiles/") and path.endswith("/draft"):
             self._save_profile_draft(path)
             return
+        if path.startswith("/api/profiles/") and path.endswith("/actions"):
+            self._mutate_profile_actions(path)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/undo"):
+            self._restore_profile_actions(path, undo=True)
+            return
+        if path.startswith("/api/profiles/") and path.endswith("/redo"):
+            self._restore_profile_actions(path, undo=False)
+            return
         if path.startswith("/api/profiles/") and path.endswith("/validate-draft"):
             self._validate_profile_draft(path)
             return
@@ -253,6 +266,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.BAD_REQUEST, "source must be text")
             return
         base_fingerprint = body.get("base_fingerprint")
+        expected_fingerprint = body.get("expected_fingerprint")
         try:
             draft = self.state.catalog.save_draft(
                 profile_id,
@@ -260,12 +274,85 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 base_fingerprint=(
                     str(base_fingerprint) if base_fingerprint is not None else None
                 ),
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+                expected_fingerprint=(
+                    str(expected_fingerprint)
+                    if expected_fingerprint is not None
+                    else None
+                ),
             )
         except KeyError as error:
             self._send_error(HTTPStatus.NOT_FOUND, str(error))
             return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
         except ValueError as error:
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(draft)
+
+    def _mutate_profile_actions(self, path: str) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        mutation = body.get("mutation")
+        if not isinstance(mutation, dict):
+            self._send_error(HTTPStatus.BAD_REQUEST, "mutation must be an object")
+            return
+        try:
+            draft = self.state.catalog.mutate_actions(
+                profile_id,
+                mutation,
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+                expected_fingerprint=(
+                    str(body["expected_fingerprint"])
+                    if body.get("expected_fingerprint") is not None
+                    else None
+                ),
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(draft)
+
+    def _restore_profile_actions(self, path: str, *, undo: bool) -> None:
+        profile_id = unquote(path.split("/")[3])
+        body = self._read_json_body()
+        method = (
+            self.state.catalog.undo_actions
+            if undo
+            else self.state.catalog.redo_actions
+        )
+        try:
+            draft = method(
+                profile_id,
+                expected_version=body.get("expected_version"),  # type: ignore[arg-type]
+                expected_fingerprint=(
+                    str(body["expected_fingerprint"])
+                    if body.get("expected_fingerprint") is not None
+                    else None
+                ),
+            )
+        except KeyError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except ProfileConflictError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
             return
         except OSError as error:
             self._send_error(HTTPStatus.CONFLICT, str(error))

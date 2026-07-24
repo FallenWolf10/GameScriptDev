@@ -3,11 +3,13 @@ from __future__ import annotations
 import unittest
 
 from game_script_dev.action_metadata import (
+    ACTION_DEFINITIONS,
     CONTINUOUS_INPUT_ACTION_DEFINITIONS,
     SCROLL_MOUSE_CONTINUOUS_FIELDS,
     SUPPORTED_CONTINUOUS_INPUT_ACTION_TYPES,
     get_continuous_input_action_definition,
 )
+from game_script_dev.schema import SUPPORTED_ACTION_TYPES
 
 
 class ActionMetadataTests(unittest.TestCase):
@@ -50,6 +52,24 @@ class ActionMetadataTests(unittest.TestCase):
                 for definition in CONTINUOUS_INPUT_ACTION_DEFINITIONS.values()
             },
         )
+
+    def test_builder_registry_covers_every_schema_action(self) -> None:
+        self.assertEqual(set(ACTION_DEFINITIONS), SUPPORTED_ACTION_TYPES)
+        self.assertEqual(
+            set(ACTION_DEFINITIONS),
+            {definition.action_type for definition in ACTION_DEFINITIONS.values()},
+        )
+
+    def test_wait_definition_exposes_structured_editor_contract(self) -> None:
+        definition = ACTION_DEFINITIONS["wait"]
+
+        self.assertTrue(definition.structured)
+        self.assertEqual(definition.category, "flow_timing")
+        self.assertIn("delay", definition.keywords)
+        self.assertEqual(definition.summary_fields, ("seconds",))
+        self.assertEqual(definition.fields[0].name, "seconds")
+        self.assertTrue(definition.fields[0].required)
+        self.assertEqual(definition.fields[0].default, 1)
 
 
 if __name__ == "__main__":

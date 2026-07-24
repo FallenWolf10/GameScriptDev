@@ -45,9 +45,16 @@ explicit Save, atomic `profile.yaml` replacement, external-change conflict
 rejection, and retained revision backups. Invalid YAML remains recoverable and
 never replaces the Saved Profile Version.
 
-The visual State and Action flow remains read only. It reflects a valid Draft
-when possible and still needs the full graph canvas, structured field editing,
-drag and drop, asset editing, and stronger problem navigation described below.
+The first structured Action tracer is implemented. The State View exposes a
+metadata-driven `wait` palette entry, ordered Action Blocks, a `seconds`
+Inspector, keyboard Move/Duplicate/Enable/Delete commands, inline validation,
+a navigable Problems Drawer, and session undo/redo. Every mutation is applied
+to the same recoverable YAML Draft with a required Draft version/fingerprint;
+pending raw-editor autosaves are flushed first, and targeted YAML edits preserve
+untouched comments and ordering.
+
+Other Action forms, drag and drop, the editable Flow graph, asset editing, and
+broader problem navigation remain planned.
 
 ## Primary Users
 
@@ -501,7 +508,7 @@ existing Python schema and pack checks.
 
 Builder edits update a recoverable draft without replacing `profile.yaml`.
 Drafts may be incomplete or invalid and are persisted under application data.
-Session undo and redo remain planned. Explicit Save validates the complete
+Structured Action mutations have session undo and redo. Explicit Save validates the complete
 draft, creates revision history, and atomically replaces the saved profile;
 external file changes produce a conflict instead of being overwritten silently.
 
@@ -528,6 +535,10 @@ POST /api/profiles/{id}/discard-draft
 Planned structured and asset APIs:
 
 ```text
+GET  /api/profile-schema
+POST /api/profiles/{id}/actions
+POST /api/profiles/{id}/undo
+POST /api/profiles/{id}/redo
 POST /api/profiles/{id}/assets
 ```
 

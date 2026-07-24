@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from game_script_dev.authoring import scaffold_profile_pack
+from game_script_dev.dashboard.structured_actions import mutate_action_source
 from game_script_dev.profile_loader import ProfileLoadError, load_profile
 from game_script_dev.schema import (
     ProfileValidationError,
@@ -72,6 +73,8 @@ class ProfileCatalog:
         self._cached_signature: tuple[tuple[str, str], ...] | None = None
         self._cached_paths_by_id: dict[str, Path] | None = None
         self._write_lock = threading.RLock()
+        self._undo_history: dict[str, list[str]] = {}
+        self._redo_history: dict[str, list[str]] = {}
 
     def list_profiles(self) -> list[ProfileEntry]:
         signature = self._profile_signature()
@@ -198,6 +201,7 @@ class ProfileCatalog:
         record = self._read_draft_record(profile_id)
         exists = record is not None
         source = str(record["source"]) if record is not None else str(saved["source"])
+        version = int(record.get("version", 0)) if record is not None else 0
         base_fingerprint = (
             str(record["base_fingerprint"])
             if record is not None
@@ -207,6 +211,8 @@ class ProfileCatalog:
         return {
             "profile_id": profile_id,
             "source": source,
+            "version": version,
+            "draft_fingerprint": _source_fingerprint(source),
             "base_fingerprint": base_fingerprint,
             "saved_fingerprint": saved["fingerprint"],
             "exists": exists,
@@ -214,7 +220,12 @@ class ProfileCatalog:
             "conflict": base_fingerprint != saved["fingerprint"],
             "valid": validation["valid"],
             "errors": validation["errors"],
+            "problems": validation["problems"],
             "document": validation["document"],
+            "history": {
+                "can_undo": bool(self._undo_history.get(profile_id)),
+                "can_redo": bool(self._redo_history.get(profile_id)),
+            },
         }
 
     def save_draft(
@@ -223,6 +234,8 @@ class ProfileCatalog:
         source: str,
         *,
         base_fingerprint: str | None = None,
+        expected_version: int | None = None,
+        expected_fingerprint: str | None = None,
     ) -> dict[str, object]:
         if not isinstance(source, str):
             raise ValueError("source must be text")
@@ -231,6 +244,16 @@ class ProfileCatalog:
         with self._write_lock:
             saved = self.profile_source(profile_id)
             existing = self._read_draft_record(profile_id)
+            current_source = (
+                str(existing["source"]) if existing is not None else str(saved["source"])
+            )
+            current_version = int(existing.get("version", 0)) if existing else 0
+            _assert_expected_draft(
+                current_source,
+                current_version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+            )
             if base_fingerprint is None:
                 base_fingerprint = (
                     str(existing["base_fingerprint"])
@@ -239,22 +262,145 @@ class ProfileCatalog:
                 )
             if not re.fullmatch(r"[0-9a-f]{64}", str(base_fingerprint)):
                 raise ValueError("base_fingerprint must be a SHA-256 fingerprint")
+            if source == current_source:
+                return self.get_draft(profile_id)
             record = {
                 "profile_id": profile_id,
                 "source": source,
                 "base_fingerprint": str(base_fingerprint),
+                "version": current_version + 1,
                 "updated_at_ns": time.time_ns(),
             }
             _atomic_write_text(
                 self._draft_path(profile_id),
                 json.dumps(record, ensure_ascii=False),
             )
+            self._undo_history.pop(profile_id, None)
+            self._redo_history.pop(profile_id, None)
             return self.get_draft(profile_id)
+
+    def mutate_actions(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_action_source(source, mutation)
+            if updated == source:
+                return draft
+            self._undo_history.setdefault(profile_id, []).append(source)
+            self._undo_history[profile_id] = self._undo_history[profile_id][-100:]
+            self._redo_history.pop(profile_id, None)
+            self._write_structured_draft(
+                profile_id,
+                updated,
+                base_fingerprint=str(draft["base_fingerprint"]),
+                version=version + 1,
+            )
+            return self.get_draft(profile_id)
+
+    def undo_actions(
+        self,
+        profile_id: str,
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        return self._restore_action_history(
+            profile_id,
+            undo=True,
+            expected_version=expected_version,
+            expected_fingerprint=expected_fingerprint,
+        )
+
+    def redo_actions(
+        self,
+        profile_id: str,
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        return self._restore_action_history(
+            profile_id,
+            undo=False,
+            expected_version=expected_version,
+            expected_fingerprint=expected_fingerprint,
+        )
+
+    def _restore_action_history(
+        self,
+        profile_id: str,
+        *,
+        undo: bool,
+        expected_version: int | None,
+        expected_fingerprint: str | None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            source_history = (
+                self._undo_history if undo else self._redo_history
+            ).setdefault(profile_id, [])
+            if not source_history:
+                raise ValueError(f"nothing to {'undo' if undo else 'redo'}")
+            target = source_history.pop()
+            destination = self._redo_history if undo else self._undo_history
+            destination.setdefault(profile_id, []).append(source)
+            self._write_structured_draft(
+                profile_id,
+                target,
+                base_fingerprint=str(draft["base_fingerprint"]),
+                version=version + 1,
+            )
+            return self.get_draft(profile_id)
+
+    def _write_structured_draft(
+        self,
+        profile_id: str,
+        source: str,
+        *,
+        base_fingerprint: str,
+        version: int,
+    ) -> None:
+        record = {
+            "profile_id": profile_id,
+            "source": source,
+            "base_fingerprint": base_fingerprint,
+            "version": version,
+            "updated_at_ns": time.time_ns(),
+        }
+        _atomic_write_text(
+            self._draft_path(profile_id),
+            json.dumps(record, ensure_ascii=False),
+        )
 
     def discard_draft(self, profile_id: str) -> dict[str, object]:
         self.get_profile_path(profile_id)
         with self._write_lock:
             self._draft_path(profile_id).unlink(missing_ok=True)
+            self._undo_history.pop(profile_id, None)
+            self._redo_history.pop(profile_id, None)
         return self.get_draft(profile_id)
 
     def validate_source(self, profile_id: str, source: str) -> dict[str, object]:
@@ -275,6 +421,7 @@ class ProfileCatalog:
         return {
             "valid": not errors,
             "errors": errors,
+            "problems": _problems_from_errors(errors),
             "document": _json_safe(document) if document is not None else None,
         }
 
@@ -299,6 +446,8 @@ class ProfileCatalog:
                 self._retain_revision(profile_id, str(saved["source"]))
                 _atomic_write_text(profile_path, source)
             self._draft_path(profile_id).unlink(missing_ok=True)
+            self._undo_history.pop(profile_id, None)
+            self._redo_history.pop(profile_id, None)
             self._invalidate_cache()
             return self.validate_profile(profile_id)
 
@@ -315,6 +464,9 @@ class ProfileCatalog:
             raise OSError(f"invalid recoverable draft record for {profile_id}")
         if not isinstance(record.get("source"), str):
             raise OSError(f"invalid recoverable draft source for {profile_id}")
+        version = record.get("version", 0)
+        if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+            raise OSError(f"invalid recoverable draft version for {profile_id}")
         return record
 
     def _retain_revision(self, profile_id: str, source: str) -> None:
@@ -414,6 +566,67 @@ def _read_notes(profile_dir: Path) -> str | None:
 
 def _source_fingerprint(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _assert_expected_draft(
+    source: str,
+    version: int,
+    *,
+    expected_version: int | None,
+    expected_fingerprint: str | None,
+    required: bool = False,
+) -> None:
+    if required and expected_version is None and expected_fingerprint is None:
+        raise ValueError(
+            "expected_version or expected_fingerprint is required"
+        )
+    if expected_version is not None:
+        if (
+            not isinstance(expected_version, int)
+            or isinstance(expected_version, bool)
+            or expected_version < 0
+        ):
+            raise ValueError("expected_version must be a non-negative integer")
+        if expected_version != version:
+            raise ProfileConflictError(
+                "Profile Draft changed before this edit; reload the newer Draft"
+            )
+    if expected_fingerprint is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_fingerprint):
+            raise ValueError(
+                "expected_fingerprint must be a SHA-256 fingerprint"
+            )
+        if expected_fingerprint != _source_fingerprint(source):
+            raise ProfileConflictError(
+                "Profile Draft changed before this edit; reload the newer Draft"
+            )
+
+
+def _problems_from_errors(errors: list[str]) -> list[dict[str, str]]:
+    problems: list[dict[str, str]] = []
+    for combined in errors:
+        for message in combined.split("; "):
+            location = ""
+            match = re.search(
+                r"state '([^']+)' actions\[(\d+)\]\.([a-zA-Z0-9_]+)"
+                r"(?:\.([a-zA-Z0-9_]+))?",
+                message,
+            )
+            if match:
+                state_name, index, action_type, field_name = match.groups()
+                location = f"states.{state_name}.actions[{index}]"
+                if field_name:
+                    location += f".{field_name}"
+                elif action_type:
+                    location += f".{action_type}"
+            problems.append(
+                {
+                    "severity": "error",
+                    "message": message,
+                    "location": location,
+                }
+            )
+    return problems
 
 
 def _required_text(value: str, field_name: str, max_length: int) -> str:
