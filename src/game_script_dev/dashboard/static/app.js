@@ -23,6 +23,10 @@ const state = {
   builderInspectorTimer: null,
   builderInspectorPending: null,
   structuredMutationPending: false,
+  builderDrag: null,
+  builderDropSlot: null,
+  builderPointerDrag: null,
+  builderSuppressActionClick: false,
   createProfileIdTouched: false,
   createProfileNameTouched: false,
   pollTimer: null,
@@ -1498,7 +1502,7 @@ function renderBuilderState() {
       const status = problems.length
         ? `<span class="builder-action-status">${problems.length} error${problems.length === 1 ? "" : "s"}</span>`
         : "";
-      return `<li><button type="button" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}"><span class="builder-drag-handle" aria-hidden="true"><svg viewBox="0 0 12 18" width="12" height="18" fill="currentColor"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg></span><span class="builder-action-copy"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</span></button></li>`;
+      return `<li><button type="button" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}" aria-grabbed="false"><span class="builder-drag-handle" aria-hidden="true"><svg viewBox="0 0 12 18" width="12" height="18" fill="currentColor"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg></span><span class="builder-action-copy"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</span></button></li>`;
     }).join("")
     : '<li class="muted">No Actions. Add Wait from the Tool Palette.</li>';
   renderBuilderActionPalette();
@@ -1537,7 +1541,7 @@ function renderBuilderActionPalette() {
       return !query || searchable.includes(query);
     });
   target.innerHTML = definitions.length
-    ? definitions.map((definition) => `<button type="button" data-add-builder-action="${escapeHtml(definition.type)}" role="listitem" ${state.structuredMutationPending ? "disabled" : ""}><strong>${escapeHtml(definition.label)}</strong><span>${escapeHtml(definition.type)}</span></button>`).join("")
+    ? definitions.map((definition) => `<button type="button" draggable="true" data-add-builder-action="${escapeHtml(definition.type)}" role="listitem" aria-grabbed="false" ${state.structuredMutationPending ? "disabled" : ""}><strong>${escapeHtml(definition.label)}</strong><span>${escapeHtml(definition.type)}</span></button>`).join("")
     : '<span class="muted">No matching structured Actions.</span>';
 }
 
@@ -1786,6 +1790,123 @@ function selectedBuilderAction() {
     : null;
 }
 
+function defaultBuilderActionFields(actionType) {
+  const definition = actionDefinition(actionType);
+  return Object.fromEntries(
+    (definition?.fields || [])
+      .filter((field) => field.default !== undefined)
+      .map((field) => [field.name, field.default]),
+  );
+}
+
+function insertBuilderAction(actionType, index) {
+  const definition = actionDefinition(actionType);
+  return mutateBuilderAction(
+    {
+      operation: "insert",
+      state: state.selectedBuilderState,
+      index,
+      action_type: actionType,
+      fields: defaultBuilderActionFields(actionType),
+    },
+    {
+      focusIndex: index,
+      focusField: definition?.fields?.[0]?.name || null,
+    },
+  );
+}
+
+function clearBuilderDrag({ restoreFocus = false } = {}) {
+  const drag = state.builderDrag;
+  document.querySelector("#builder-drop-indicator")?.remove();
+  document.querySelectorAll(".builder-state-node.drag-target")
+    .forEach((node) => node.classList.remove("drag-target"));
+  document.querySelectorAll('[aria-grabbed="true"]')
+    .forEach((node) => node.setAttribute("aria-grabbed", "false"));
+  state.builderDrag = null;
+  state.builderDropSlot = null;
+  if (restoreFocus && drag) {
+    window.requestAnimationFrame(() => {
+      const selector = drag.kind === "palette"
+        ? `[data-add-builder-action="${drag.actionType}"]`
+        : `[data-builder-action-index="${drag.index}"]`;
+      document.querySelector(selector)?.focus();
+    });
+  }
+}
+
+function showBuilderDropIndicator(slot) {
+  document.querySelector("#builder-drop-indicator")?.remove();
+  const list = $("builder-action-list");
+  const indicator = document.createElement("li");
+  indicator.id = "builder-drop-indicator";
+  indicator.className = "builder-drop-indicator";
+  indicator.setAttribute("aria-hidden", "true");
+  const actionItems = [...list.children]
+    .filter((item) => item.id !== "builder-drop-indicator");
+  list.insertBefore(indicator, actionItems[slot] || null);
+  state.builderDropSlot = slot;
+}
+
+function builderDropSlot(event) {
+  const block = event.target.closest?.("[data-builder-action-index]");
+  const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
+  if (!block) return actions.length;
+  const index = Number(block.dataset.builderActionIndex);
+  const bounds = block.getBoundingClientRect();
+  return event.clientY < bounds.top + bounds.height / 2 ? index : index + 1;
+}
+
+function autoScrollBuilderActionList(clientY) {
+  const list = $("builder-action-list");
+  const bounds = list.getBoundingClientRect();
+  const edge = 32;
+  if (clientY < bounds.top + edge) list.scrollTop -= 18;
+  if (clientY > bounds.bottom - edge) list.scrollTop += 18;
+}
+
+function dropBuilderActionAtSlot(drag, slot) {
+  if (drag.kind === "palette") {
+    void runCommand(() => insertBuilderAction(drag.actionType, slot));
+    return;
+  }
+  if (drag.state !== state.selectedBuilderState) return;
+  const targetIndex = drag.index < slot ? slot - 1 : slot;
+  if (targetIndex === drag.index) {
+    window.requestAnimationFrame(() => {
+      document.querySelector(`[data-builder-action-index="${drag.index}"]`)?.focus();
+    });
+    return;
+  }
+  void runCommand(() => mutateBuilderAction(
+    {
+      operation: "move",
+      state: drag.state,
+      index: drag.index,
+      target_index: targetIndex,
+    },
+    { focusIndex: targetIndex },
+  ));
+}
+
+function dropBuilderActionOnState(drag, targetState) {
+  if (drag.kind !== "action" || targetState === drag.state) return;
+  const targetActions = state.builderDocument?.states?.[targetState]?.actions || [];
+  void runCommand(() => mutateBuilderAction(
+    {
+      operation: "move_to_state",
+      state: drag.state,
+      index: drag.index,
+      target_state: targetState,
+      target_index: targetActions.length,
+    },
+    {
+      focusState: targetState,
+      focusIndex: targetActions.length,
+    },
+  ));
+}
+
 async function flushBuilderInspectorEdit() {
   if (!state.builderInspectorPending) return;
   window.clearTimeout(state.builderInspectorTimer);
@@ -1965,6 +2086,11 @@ $("builder-state-list").addEventListener("click", (event) => {
 });
 
 $("builder-action-list").addEventListener("click", (event) => {
+  if (state.builderSuppressActionClick) {
+    state.builderSuppressActionClick = false;
+    event.preventDefault();
+    return;
+  }
   if (!(event.target instanceof Element)) return;
   const button = event.target.closest("button[data-builder-action-index]");
   if (!button) return;
@@ -1972,28 +2098,183 @@ $("builder-action-list").addEventListener("click", (event) => {
   renderBuilderState();
 });
 
+$("builder-action-palette").addEventListener("dragstart", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("button[data-add-builder-action]");
+  if (!button || button.disabled || !state.selectedBuilderState) {
+    event.preventDefault();
+    return;
+  }
+  state.builderDrag = {
+    kind: "palette",
+    actionType: button.dataset.addBuilderAction,
+  };
+  button.setAttribute("aria-grabbed", "true");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/plain", button.dataset.addBuilderAction);
+  }
+});
+
+$("builder-action-list").addEventListener("dragstart", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("button[data-builder-action-index]");
+  if (!button || state.structuredMutationPending) {
+    event.preventDefault();
+    return;
+  }
+  state.builderDrag = {
+    kind: "action",
+    state: state.selectedBuilderState,
+    index: Number(button.dataset.builderActionIndex),
+  };
+  button.setAttribute("aria-grabbed", "true");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(
+      "text/plain",
+      `${state.selectedBuilderState}:${button.dataset.builderActionIndex}`,
+    );
+  }
+});
+
+$("builder-action-list").addEventListener("dragover", (event) => {
+  if (!state.builderDrag || state.structuredMutationPending) return;
+  event.preventDefault();
+  const slot = builderDropSlot(event);
+  showBuilderDropIndicator(slot);
+  autoScrollBuilderActionList(event.clientY);
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = state.builderDrag.kind === "palette" ? "copy" : "move";
+  }
+});
+
+$("builder-action-list").addEventListener("drop", (event) => {
+  const drag = state.builderDrag;
+  if (!drag || state.structuredMutationPending) return;
+  event.preventDefault();
+  const slot = state.builderDropSlot ?? builderDropSlot(event);
+  clearBuilderDrag();
+  dropBuilderActionAtSlot(drag, slot);
+});
+
+$("builder-action-list").addEventListener("dragend", () => clearBuilderDrag());
+$("builder-action-palette").addEventListener("dragend", () => clearBuilderDrag());
+
+$("builder-action-list").addEventListener("pointerdown", (event) => {
+  if (!(event.target instanceof Element) || event.button !== 0) return;
+  const handle = event.target.closest(".builder-drag-handle");
+  const button = handle?.closest("button[data-builder-action-index]");
+  if (!handle || !button || state.structuredMutationPending) return;
+  event.preventDefault();
+  state.builderDrag = {
+    kind: "action",
+    state: state.selectedBuilderState,
+    index: Number(button.dataset.builderActionIndex),
+  };
+  state.builderPointerDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false,
+    targetState: null,
+  };
+  button.setAttribute("aria-grabbed", "true");
+  handle.setPointerCapture?.(event.pointerId);
+});
+
+document.addEventListener("pointermove", (event) => {
+  const pointer = state.builderPointerDrag;
+  if (!pointer || pointer.pointerId !== event.pointerId || !state.builderDrag) return;
+  const distance = Math.hypot(
+    event.clientX - pointer.startX,
+    event.clientY - pointer.startY,
+  );
+  if (!pointer.active && distance < 5) return;
+  pointer.active = true;
+  event.preventDefault();
+  const target = document.elementFromPoint(event.clientX, event.clientY);
+  const list = target?.closest?.("#builder-action-list");
+  if (list) {
+    pointer.targetState = null;
+    document.querySelectorAll(".builder-state-node.drag-target")
+      .forEach((node) => node.classList.remove("drag-target"));
+    showBuilderDropIndicator(builderDropSlot({
+      target,
+      clientY: event.clientY,
+    }));
+    autoScrollBuilderActionList(event.clientY);
+    return;
+  }
+  document.querySelector("#builder-drop-indicator")?.remove();
+  state.builderDropSlot = null;
+  const stateButton = target?.closest?.("button[data-builder-state]");
+  const targetState = stateButton?.dataset.builderState;
+  const validState = Boolean(targetState && targetState !== state.builderDrag.state);
+  pointer.targetState = validState ? targetState : null;
+  document.querySelectorAll(".builder-state-node.drag-target")
+    .forEach((node) => node.classList.remove("drag-target"));
+  if (validState) stateButton.classList.add("drag-target");
+});
+
+document.addEventListener("pointerup", (event) => {
+  const pointer = state.builderPointerDrag;
+  if (!pointer || pointer.pointerId !== event.pointerId) return;
+  const drag = state.builderDrag;
+  const slot = state.builderDropSlot;
+  const targetState = pointer.targetState;
+  const active = pointer.active;
+  state.builderPointerDrag = null;
+  clearBuilderDrag();
+  if (!active || !drag) return;
+  state.builderSuppressActionClick = true;
+  window.setTimeout(() => {
+    state.builderSuppressActionClick = false;
+  }, 0);
+  if (targetState) {
+    dropBuilderActionOnState(drag, targetState);
+  } else if (slot !== null) {
+    dropBuilderActionAtSlot(drag, slot);
+  }
+});
+
+$("builder-state-list").addEventListener("dragover", (event) => {
+  if (!(event.target instanceof Element) || state.builderDrag?.kind !== "action") return;
+  const button = event.target.closest("button[data-builder-state]");
+  if (!button || button.dataset.builderState === state.builderDrag.state) return;
+  event.preventDefault();
+  document.querySelectorAll(".builder-state-node.drag-target")
+    .forEach((node) => node.classList.remove("drag-target"));
+  button.classList.add("drag-target");
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+});
+
+$("builder-state-list").addEventListener("drop", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const drag = state.builderDrag;
+  const button = event.target.closest("button[data-builder-state]");
+  if (!button || drag?.kind !== "action" || button.dataset.builderState === drag.state) return;
+  event.preventDefault();
+  const targetState = button.dataset.builderState;
+  clearBuilderDrag();
+  dropBuilderActionOnState(drag, targetState);
+});
+
 $("builder-action-palette").addEventListener("click", (event) => runCommand(async () => {
   if (!(event.target instanceof Element)) return;
   const button = event.target.closest("button[data-add-builder-action]");
   if (!button || !state.selectedBuilderState) return;
   const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
-  const definition = actionDefinition(button.dataset.addBuilderAction);
-  const fields = Object.fromEntries(
-    (definition?.fields || [])
-      .filter((field) => field.default !== undefined)
-      .map((field) => [field.name, field.default]),
-  );
-  await mutateBuilderAction(
-    {
-      operation: "insert",
-      state: state.selectedBuilderState,
-      index: actions.length,
-      action_type: button.dataset.addBuilderAction,
-      fields,
-    },
-    { focusIndex: actions.length, focusField: definition?.fields?.[0]?.name || null },
-  );
+  await insertBuilderAction(button.dataset.addBuilderAction, actions.length);
 }));
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !state.builderDrag) return;
+  event.preventDefault();
+  state.builderPointerDrag = null;
+  clearBuilderDrag({ restoreFocus: true });
+  showNotice("Action drag cancelled.", "good");
+});
 
 $("builder-action-inspector-form").addEventListener("input", (event) => {
   if (

@@ -19,10 +19,13 @@ Implemented:
 - backend-enforced diff confirmation for mutations that move, duplicate, or
   remove authored YAML lines
 - Action- and State-level problem badges with navigable structured locations
+- pointer and native palette drag-and-drop with an explicit insertion line,
+  in-list auto-scroll, Escape cancellation, and the existing keyboard commands
+  as equivalent controls
 - synchronized raw YAML autosave, authoritative validation, explicit Save, revision
   retention, external-change conflict protection, and saved-version dry-run proof
 
-Drag-and-drop enhancement and the editable Flow graph remain to be implemented.
+The editable Flow graph remains to be implemented.
 
 ## Objective
 
@@ -204,6 +207,8 @@ not retained across restart.
 ## Drag-And-Drop Enhancement
 
 Add drag and drop only after keyboard insertion and reordering are reliable.
+
+Status: implemented and verified in the Windows Operator Application.
 
 Required behavior:
 

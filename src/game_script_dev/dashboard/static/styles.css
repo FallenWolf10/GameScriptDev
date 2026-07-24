@@ -1071,6 +1071,12 @@ dd {
   padding-left: 28px;
 }
 
+.builder-action-list {
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .builder-anchor-list li,
 .builder-action-list li {
   margin-bottom: 7px;
@@ -1093,6 +1099,11 @@ dd {
   min-height: 0;
   padding: 9px 10px;
   text-align: left;
+  cursor: grab;
+}
+
+.builder-action-block:active {
+  cursor: grabbing;
 }
 
 .builder-action-block[aria-current="true"] {
@@ -1115,6 +1126,22 @@ dd {
   display: inline-flex;
   margin-top: 1px;
   color: var(--muted);
+}
+
+.builder-action-list .builder-drop-indicator {
+  height: 3px;
+  min-height: 3px;
+  margin: 5px 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.builder-state-node.drag-target {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .builder-action-copy strong {

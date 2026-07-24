@@ -55,8 +55,12 @@ untouched comments and ordering.
 
 The initial common Action forms (`wait`, `log`, `press_key`, `hold_key`,
 `click_point`, `wait_for_state`, and `stop`) are generated from the metadata
-contract. More complex Action forms, drag and drop, the editable Flow graph,
-asset editing, and broader problem navigation remain planned.
+contract. Action Blocks can be reordered or moved between States by pointer
+drag-and-drop with a visible insertion line, in-list auto-scroll, and Escape
+cancellation; palette Actions can also be dragged into the stack. The existing
+keyboard Add, Move, and Move-to-State controls remain equivalent interaction
+paths. More complex Action forms, the editable Flow graph, asset editing, and
+broader problem navigation remain planned.
 
 Mutations that move, duplicate, or delete authored YAML now require an exact
 backend-generated diff preview and matching confirmation fingerprint. Contiguous
