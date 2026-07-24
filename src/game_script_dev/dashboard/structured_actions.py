@@ -58,6 +58,26 @@ def mutate_action_source(source: str, mutation: dict[str, object]) -> str:
                 f"target Action index {target_index} is outside State '{state_name}'"
             )
         return _move_action(source, location, index, target_index)
+    if operation == "move_to_state":
+        target_state = _required_text(mutation, "target_state")
+        target_index = _optional_index(mutation.get("target_index"))
+        if target_state == state_name:
+            if target_index is None:
+                raise StructuredActionMutationError(
+                    "target_index is required when moving within the same State"
+                )
+            if target_index >= len(actions):
+                raise StructuredActionMutationError(
+                    f"target Action index {target_index} is outside State '{state_name}'"
+                )
+            return _move_action(source, location, index, target_index)
+        return _move_action_to_state(
+            source,
+            location,
+            index,
+            target_state,
+            target_index,
+        )
     if operation == "duplicate":
         return _duplicate_action(source, location, index)
     if operation in {"disable", "enable"}:
@@ -250,6 +270,85 @@ def _move_action(
     block = blocks.pop(index)
     blocks.insert(target_index, block)
     return source[: spans[0][0]] + "".join(blocks) + source[spans[-1][1] :]
+
+
+def _move_action_to_state(
+    source: str,
+    location: ActionLocation,
+    index: int,
+    target_state: str,
+    target_index: int | None,
+) -> str:
+    nodes = _action_nodes(location)
+    spans = _action_spans(source, location, nodes)
+    start, end = spans[index]
+    block = source[start:end]
+    source_indent = _line_indent(source, nodes[index].start_mark.line)
+
+    without_action = _delete_action(source, location, index)
+    updated_root = _compose_mapping(without_action)
+    target_location = _locate_actions(updated_root, target_state)
+    target_nodes = _action_nodes(target_location)
+    insertion_index = len(target_nodes) if target_index is None else target_index
+    if insertion_index > len(target_nodes):
+        raise StructuredActionMutationError(
+            f"Action index {insertion_index} is outside State '{target_state}'"
+        )
+    return _insert_action_block(
+        without_action,
+        target_location,
+        block,
+        source_indent,
+        insertion_index,
+    )
+
+
+def _insert_action_block(
+    source: str,
+    location: ActionLocation,
+    block: str,
+    source_indent: int,
+    index: int,
+) -> str:
+    action_nodes = _action_nodes(location)
+    if action_nodes:
+        target_indent = _line_indent(source, action_nodes[0].start_mark.line)
+        rendered = _reindent_block(block, source_indent, target_indent)
+        insertion = (
+            _line_start(source, action_nodes[index].start_mark.line)
+            if index < len(action_nodes)
+            else _line_start(source, location.actions_node.end_mark.line)
+        )
+        return source[:insertion] + rendered + source[insertion:]
+
+    child_indent = location.state_node.start_mark.column
+    rendered = _reindent_block(block, source_indent, child_indent + 2)
+    if location.actions_node is None:
+        insertion = _line_start(source, location.state_node.end_mark.line)
+        addition = " " * child_indent + "actions:\n" + rendered
+        return source[:insertion] + addition + source[insertion:]
+
+    replacement = "\n" + rendered.rstrip("\n")
+    start = location.actions_node.start_mark.index
+    end = location.actions_node.end_mark.index
+    return source[:start] + replacement + source[end:]
+
+
+def _reindent_block(block: str, source_indent: int, target_indent: int) -> str:
+    source_prefix = " " * source_indent
+    target_prefix = " " * target_indent
+    lines: list[str] = []
+    for line in block.splitlines(keepends=True):
+        if line.strip() and not line.startswith(source_prefix):
+            raise StructuredActionMutationError(
+                "Action indentation could not be preserved safely"
+            )
+        lines.append(
+            target_prefix + line[source_indent:]
+            if line.strip()
+            else line
+        )
+    return "".join(lines)
 
 
 def _duplicate_action(source: str, location: ActionLocation, index: int) -> str:

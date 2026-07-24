@@ -1494,7 +1494,7 @@ function renderBuilderState() {
       const status = problems.length
         ? `<span class="builder-action-status">${problems.length} error${problems.length === 1 ? "" : "s"}</span>`
         : "";
-      return `<li><button type="button" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</button></li>`;
+      return `<li><button type="button" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}"><span class="builder-drag-handle" aria-hidden="true"><svg viewBox="0 0 12 18" width="12" height="18" fill="currentColor"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg></span><span class="builder-action-copy"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</span></button></li>`;
     }).join("")
     : '<li class="muted">No Actions. Add Wait from the Tool Palette.</li>';
   renderBuilderActionPalette();
@@ -1579,6 +1579,16 @@ function renderBuilderActionInspector() {
   $("toggle-builder-action").disabled = pending;
   $("toggle-builder-action").textContent = action.disabled ? "Enable" : "Disable";
   $("delete-builder-action").disabled = pending;
+  const moveStateSelect = $("move-builder-action-state");
+  const otherStates = Object.keys(state.builderDocument?.states || {})
+    .filter((candidate) => candidate !== state.selectedBuilderState);
+  const previousTarget = moveStateSelect.value;
+  moveStateSelect.innerHTML = otherStates.length
+    ? otherStates.map((candidate) => `<option value="${escapeHtml(candidate)}">${escapeHtml(candidate)}</option>`).join("")
+    : '<option value="">No other State</option>';
+  if (otherStates.includes(previousTarget)) moveStateSelect.value = previousTarget;
+  moveStateSelect.disabled = pending || !otherStates.length;
+  $("move-builder-action-state-button").disabled = pending || !otherStates.length;
 }
 
 function renderBuilderProblems() {
@@ -1597,7 +1607,10 @@ function applyStructuredDraft(draft) {
   renderBuilderDraft();
 }
 
-async function mutateBuilderAction(mutation, { focusIndex = null, focusField = false } = {}) {
+async function mutateBuilderAction(
+  mutation,
+  { focusIndex = null, focusField = false, focusState = null } = {},
+) {
   const profileId = state.builderProfileId;
   if (!profileId || state.structuredMutationPending) return;
   await flushBuilderInspectorEdit();
@@ -1616,6 +1629,7 @@ async function mutateBuilderAction(mutation, { focusIndex = null, focusField = f
       }),
     });
     if (profileId !== state.builderProfileId) return;
+    if (focusState) state.selectedBuilderState = focusState;
     state.selectedBuilderActionIndex = focusIndex;
     applyStructuredDraft(draft);
     showNotice(`${mutation.operation[0].toUpperCase()}${mutation.operation.slice(1)} Action completed.`, draft.valid ? "good" : "error");
@@ -1950,6 +1964,26 @@ $("toggle-builder-action").addEventListener("click", () => runCommand(() => {
       index,
     },
     { focusIndex: index },
+  );
+}));
+
+$("move-builder-action-state-button").addEventListener("click", () => runCommand(() => {
+  const index = state.selectedBuilderActionIndex;
+  const targetState = $("move-builder-action-state").value;
+  if (!Number.isInteger(index) || !targetState) return null;
+  const targetActions = state.builderDocument?.states?.[targetState]?.actions || [];
+  return mutateBuilderAction(
+    {
+      operation: "move_to_state",
+      state: state.selectedBuilderState,
+      index,
+      target_state: targetState,
+      target_index: targetActions.length,
+    },
+    {
+      focusState: targetState,
+      focusIndex: targetActions.length,
+    },
   );
 }));
 

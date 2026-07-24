@@ -1312,6 +1312,8 @@ class DashboardTests(unittest.TestCase):
             "builder-action-list",
             "builder-action-palette",
             "builder-action-inspector-form",
+            "move-builder-action-state",
+            "move-builder-action-state-button",
             "builder-problems-drawer",
             "undo-builder-action",
             "redo-builder-action",
@@ -1353,6 +1355,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("async function saveBuilderProfile", app_js)
         self.assertIn("async function mutateBuilderAction", app_js)
         self.assertIn("async function restoreBuilderActionHistory", app_js)
+        self.assertIn('operation: "move_to_state"', app_js)
+        self.assertIn("builder-drag-handle", app_js)
         self.assertIn("async function createProfile", app_js)
         self.assertIn("function activateWorkspace(workspace", app_js)
         self.assertIn("function scheduleNextPoll()", app_js)

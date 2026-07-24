@@ -1080,7 +1080,10 @@ dd {
 }
 
 .builder-action-block {
-  display: block;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   width: 100%;
   min-height: 0;
   padding: 9px 10px;
@@ -1097,14 +1100,25 @@ dd {
   opacity: 0.62;
 }
 
-.builder-action-block strong {
+.builder-action-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.builder-action-block .builder-drag-handle {
+  display: inline-flex;
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+.builder-action-copy strong {
   font-family: var(--mono);
   font-size: 11px;
 }
 
-.builder-action-block span {
+.builder-action-copy > span {
   display: block;
-  margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
 }
@@ -1132,6 +1146,23 @@ dd {
 .builder-action-commands button {
   min-height: 34px;
   padding: 6px 8px;
+}
+
+.builder-move-state-field {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+}
+
+.builder-move-state-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.builder-move-state-field select {
+  min-width: 0;
+  width: 100%;
 }
 
 .builder-inline-errors {

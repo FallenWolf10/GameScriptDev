@@ -142,6 +142,29 @@ class StructuredActionMutationTests(unittest.TestCase):
             updated,
         )
 
+    def test_move_to_state_preserves_action_text_and_comments(self) -> None:
+        moved = mutate_action_source(
+            SOURCE,
+            {
+                "operation": "move_to_state",
+                "state": "home",
+                "index": 1,
+                "target_state": "done",
+                "target_index": 0,
+            },
+        )
+
+        document = yaml.safe_load(moved)
+        self.assertEqual(
+            [action["type"] for action in document["states"]["home"]["actions"]],
+            ["log", "log"],
+        )
+        self.assertEqual(
+            document["states"]["done"]["actions"],
+            [{"type": "wait", "seconds": 1}],
+        )
+        self.assertIn("seconds: 1 # keep inline context", moved)
+
     def test_insert_supports_missing_and_empty_action_lists(self) -> None:
         missing = SOURCE.replace(
             "    actions:\n"

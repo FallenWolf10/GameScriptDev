@@ -47,8 +47,8 @@ never replaces the Saved Profile Version.
 
 The first structured Action tracer is implemented. The State View exposes a
 metadata-driven `wait` palette entry, ordered Action Blocks, a `seconds`
-Inspector, keyboard Move/Duplicate/Enable/Delete commands, inline validation,
-a navigable Problems Drawer, and session undo/redo. Every mutation is applied
+Inspector, keyboard reorder/cross-State Move/Duplicate/Enable/Delete commands,
+inline validation, a navigable Problems Drawer, and session undo/redo. Every mutation is applied
 to the same recoverable YAML Draft with a required Draft version/fingerprint;
 pending raw-editor autosaves are flushed first, and targeted YAML edits preserve
 untouched comments and ordering.

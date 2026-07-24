@@ -11,6 +11,7 @@ Implemented:
 - comment-preserving targeted YAML edits for Action lists and scalar fields
 - session undo and redo with stale-Draft conflict rejection
 - keyboard-operable `wait` palette, Action Stack, Inspector, and Problems Drawer
+- Action Block drag handles and a keyboard-operable cross-State move command
 - synchronized raw YAML autosave, authoritative validation, explicit Save, revision
   retention, external-change conflict protection, and saved-version dry-run proof
 
