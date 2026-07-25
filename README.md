@@ -201,6 +201,17 @@ diagnostics, and served its embedded interface assets. It must still be
 exercised on the full supported Windows/DPI matrix before it is treated as a
 distributable release.
 
+After building, run the developer-version EXE from the repository root so the
+workspace and log paths resolve to this checkout:
+
+```powershell
+.\dist\GameScriptDev\GameScriptDev.exe --workspace . --logs logs
+```
+
+Keep the adjacent `dist/GameScriptDev/_internal/` folder with the EXE. This
+one-folder build is a developer packaging proof, not an argument-free end-user
+installation.
+
 The Local Demo Target pack uses `target.input_mode: foreground` because Tk
 windows do not reliably accept direct background mouse messages. Live input is
 sent only after the runner refocuses and verifies the matched demo window.
