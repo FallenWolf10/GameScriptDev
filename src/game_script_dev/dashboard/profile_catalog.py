@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -14,6 +15,11 @@ from pathlib import Path
 import yaml
 
 from game_script_dev.authoring import scaffold_profile_pack
+from game_script_dev.dashboard.structured_actions import mutate_action_source
+from game_script_dev.dashboard.structured_flow import (
+    deterministic_flow_layout,
+    mutate_flow_source,
+)
 from game_script_dev.profile_loader import ProfileLoadError, load_profile
 from game_script_dev.schema import (
     ProfileValidationError,
@@ -24,6 +30,14 @@ from game_script_dev.schema import (
 
 class ProfileConflictError(RuntimeError):
     """Raised when a save would overwrite a newer saved Profile."""
+
+
+class ProfileConfirmationRequired(RuntimeError):
+    def __init__(self, preview: dict[str, object]) -> None:
+        super().__init__(
+            "Confirm the structured Draft diff before applying this mutation"
+        )
+        self.preview = preview
 
 
 class InvalidProfileDraftError(ValueError):
@@ -72,6 +86,14 @@ class ProfileCatalog:
         self._cached_signature: tuple[tuple[str, str], ...] | None = None
         self._cached_paths_by_id: dict[str, Path] | None = None
         self._write_lock = threading.RLock()
+        self._undo_history: dict[str, list[str]] = {}
+        self._redo_history: dict[str, list[str]] = {}
+        self._layout_undo_history: dict[
+            str, list[dict[str, dict[str, int]]]
+        ] = {}
+        self._layout_redo_history: dict[
+            str, list[dict[str, dict[str, int]]]
+        ] = {}
 
     def list_profiles(self) -> list[ProfileEntry]:
         signature = self._profile_signature()
@@ -198,6 +220,7 @@ class ProfileCatalog:
         record = self._read_draft_record(profile_id)
         exists = record is not None
         source = str(record["source"]) if record is not None else str(saved["source"])
+        version = int(record.get("version", 0)) if record is not None else 0
         base_fingerprint = (
             str(record["base_fingerprint"])
             if record is not None
@@ -207,6 +230,8 @@ class ProfileCatalog:
         return {
             "profile_id": profile_id,
             "source": source,
+            "version": version,
+            "draft_fingerprint": _source_fingerprint(source),
             "base_fingerprint": base_fingerprint,
             "saved_fingerprint": saved["fingerprint"],
             "exists": exists,
@@ -214,7 +239,12 @@ class ProfileCatalog:
             "conflict": base_fingerprint != saved["fingerprint"],
             "valid": validation["valid"],
             "errors": validation["errors"],
+            "problems": validation["problems"],
             "document": validation["document"],
+            "history": {
+                "can_undo": bool(self._undo_history.get(profile_id)),
+                "can_redo": bool(self._redo_history.get(profile_id)),
+            },
         }
 
     def save_draft(
@@ -223,6 +253,8 @@ class ProfileCatalog:
         source: str,
         *,
         base_fingerprint: str | None = None,
+        expected_version: int | None = None,
+        expected_fingerprint: str | None = None,
     ) -> dict[str, object]:
         if not isinstance(source, str):
             raise ValueError("source must be text")
@@ -231,6 +263,16 @@ class ProfileCatalog:
         with self._write_lock:
             saved = self.profile_source(profile_id)
             existing = self._read_draft_record(profile_id)
+            current_source = (
+                str(existing["source"]) if existing is not None else str(saved["source"])
+            )
+            current_version = int(existing.get("version", 0)) if existing else 0
+            _assert_expected_draft(
+                current_source,
+                current_version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+            )
             if base_fingerprint is None:
                 base_fingerprint = (
                     str(existing["base_fingerprint"])
@@ -239,22 +281,358 @@ class ProfileCatalog:
                 )
             if not re.fullmatch(r"[0-9a-f]{64}", str(base_fingerprint)):
                 raise ValueError("base_fingerprint must be a SHA-256 fingerprint")
+            if source == current_source:
+                return self.get_draft(profile_id)
             record = {
                 "profile_id": profile_id,
                 "source": source,
                 "base_fingerprint": str(base_fingerprint),
+                "version": current_version + 1,
                 "updated_at_ns": time.time_ns(),
             }
             _atomic_write_text(
                 self._draft_path(profile_id),
                 json.dumps(record, ensure_ascii=False),
             )
+            self._undo_history.pop(profile_id, None)
+            self._redo_history.pop(profile_id, None)
             return self.get_draft(profile_id)
+
+    def mutate_actions(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+        confirmed_preview_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_action_source(source, mutation)
+            if updated == source:
+                return draft
+            preview = _structured_mutation_preview(source, updated, mutation)
+            if (
+                preview["requires_confirmation"]
+                and confirmed_preview_fingerprint != preview["updated_fingerprint"]
+            ):
+                raise ProfileConfirmationRequired(preview)
+            self._undo_history.setdefault(profile_id, []).append(source)
+            self._undo_history[profile_id] = self._undo_history[profile_id][-100:]
+            self._redo_history.pop(profile_id, None)
+            self._write_structured_draft(
+                profile_id,
+                updated,
+                base_fingerprint=str(draft["base_fingerprint"]),
+                version=version + 1,
+            )
+            return self.get_draft(profile_id)
+
+    def preview_action_mutation(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_action_source(source, mutation)
+            return {
+                **_structured_mutation_preview(source, updated, mutation),
+                "version": version,
+                "draft_fingerprint": draft["draft_fingerprint"],
+            }
+
+    def mutate_flow(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+        confirmed_preview_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_flow_source(source, mutation)
+            if updated == source:
+                return draft
+            preview = _structured_mutation_preview(source, updated, mutation)
+            if (
+                preview["requires_confirmation"]
+                and confirmed_preview_fingerprint != preview["updated_fingerprint"]
+            ):
+                raise ProfileConfirmationRequired(preview)
+            self._undo_history.setdefault(profile_id, []).append(source)
+            self._undo_history[profile_id] = self._undo_history[profile_id][-100:]
+            self._redo_history.pop(profile_id, None)
+            self._write_structured_draft(
+                profile_id,
+                updated,
+                base_fingerprint=str(draft["base_fingerprint"]),
+                version=version + 1,
+            )
+            return self.get_draft(profile_id)
+
+    def preview_flow_mutation(
+        self,
+        profile_id: str,
+        mutation: dict[str, object],
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            updated = mutate_flow_source(source, mutation)
+            return {
+                **_structured_mutation_preview(source, updated, mutation),
+                "version": version,
+                "draft_fingerprint": draft["draft_fingerprint"],
+            }
+
+    def get_flow_layout(self, profile_id: str) -> dict[str, object]:
+        draft = self.get_draft(profile_id)
+        document = draft.get("document")
+        if not isinstance(document, dict):
+            raise ValueError(
+                "The YAML Draft must be parseable before opening Flow View"
+            )
+        defaults = deterministic_flow_layout(document)
+        record = self._read_flow_layout_record(profile_id)
+        positions = defaults
+        version = 0
+        persisted = False
+        if record is not None:
+            stored = record["positions"]
+            positions = {
+                state_name: stored.get(state_name, default_position)
+                for state_name, default_position in defaults.items()
+            }
+            version = int(record["version"])
+            persisted = True
+        return {
+            "profile_id": profile_id,
+            "version": version,
+            "positions": positions,
+            "persisted": persisted,
+            "history": {
+                "can_undo": bool(self._layout_undo_history.get(profile_id)),
+                "can_redo": bool(self._layout_redo_history.get(profile_id)),
+            },
+        }
+
+    def save_flow_layout(
+        self,
+        profile_id: str,
+        positions: object,
+        *,
+        expected_version: int | None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            current = self.get_flow_layout(profile_id)
+            if expected_version is None:
+                raise ValueError("expected_version is required")
+            if expected_version != current["version"]:
+                raise ProfileConflictError(
+                    "Flow layout changed before this edit; reload the newer layout"
+                )
+            normalized = _normalize_flow_positions(
+                positions,
+                set(current["positions"]),
+            )
+            if normalized == current["positions"]:
+                return current
+            self._layout_undo_history.setdefault(profile_id, []).append(
+                current["positions"]
+            )
+            self._layout_undo_history[profile_id] = self._layout_undo_history[
+                profile_id
+            ][-100:]
+            self._layout_redo_history.pop(profile_id, None)
+            self._write_flow_layout(
+                profile_id,
+                normalized,
+                version=int(current["version"]) + 1,
+            )
+            return self.get_flow_layout(profile_id)
+
+    def tidy_flow_layout(
+        self,
+        profile_id: str,
+        *,
+        expected_version: int | None,
+    ) -> dict[str, object]:
+        draft = self.get_draft(profile_id)
+        document = draft.get("document")
+        if not isinstance(document, dict):
+            raise ValueError(
+                "The YAML Draft must be parseable before tidying Flow View"
+            )
+        return self.save_flow_layout(
+            profile_id,
+            deterministic_flow_layout(document),
+            expected_version=expected_version,
+        )
+
+    def restore_flow_layout(
+        self,
+        profile_id: str,
+        *,
+        undo: bool,
+        expected_version: int | None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            current = self.get_flow_layout(profile_id)
+            if expected_version is None or expected_version != current["version"]:
+                raise ProfileConflictError(
+                    "Flow layout changed before this edit; reload the newer layout"
+                )
+            source = (
+                self._layout_undo_history if undo else self._layout_redo_history
+            ).setdefault(profile_id, [])
+            if not source:
+                raise ValueError(f"nothing to {'undo' if undo else 'redo'}")
+            target = source.pop()
+            destination = (
+                self._layout_redo_history if undo else self._layout_undo_history
+            )
+            destination.setdefault(profile_id, []).append(current["positions"])
+            self._write_flow_layout(
+                profile_id,
+                target,
+                version=int(current["version"]) + 1,
+            )
+            return self.get_flow_layout(profile_id)
+
+    def undo_actions(
+        self,
+        profile_id: str,
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        return self._restore_action_history(
+            profile_id,
+            undo=True,
+            expected_version=expected_version,
+            expected_fingerprint=expected_fingerprint,
+        )
+
+    def redo_actions(
+        self,
+        profile_id: str,
+        *,
+        expected_version: int | None,
+        expected_fingerprint: str | None = None,
+    ) -> dict[str, object]:
+        return self._restore_action_history(
+            profile_id,
+            undo=False,
+            expected_version=expected_version,
+            expected_fingerprint=expected_fingerprint,
+        )
+
+    def _restore_action_history(
+        self,
+        profile_id: str,
+        *,
+        undo: bool,
+        expected_version: int | None,
+        expected_fingerprint: str | None,
+    ) -> dict[str, object]:
+        with self._write_lock:
+            draft = self.get_draft(profile_id)
+            source = str(draft["source"])
+            version = int(draft["version"])
+            _assert_expected_draft(
+                source,
+                version,
+                expected_version=expected_version,
+                expected_fingerprint=expected_fingerprint,
+                required=True,
+            )
+            source_history = (
+                self._undo_history if undo else self._redo_history
+            ).setdefault(profile_id, [])
+            if not source_history:
+                raise ValueError(f"nothing to {'undo' if undo else 'redo'}")
+            target = source_history.pop()
+            destination = self._redo_history if undo else self._undo_history
+            destination.setdefault(profile_id, []).append(source)
+            self._write_structured_draft(
+                profile_id,
+                target,
+                base_fingerprint=str(draft["base_fingerprint"]),
+                version=version + 1,
+            )
+            return self.get_draft(profile_id)
+
+    def _write_structured_draft(
+        self,
+        profile_id: str,
+        source: str,
+        *,
+        base_fingerprint: str,
+        version: int,
+    ) -> None:
+        record = {
+            "profile_id": profile_id,
+            "source": source,
+            "base_fingerprint": base_fingerprint,
+            "version": version,
+            "updated_at_ns": time.time_ns(),
+        }
+        _atomic_write_text(
+            self._draft_path(profile_id),
+            json.dumps(record, ensure_ascii=False),
+        )
 
     def discard_draft(self, profile_id: str) -> dict[str, object]:
         self.get_profile_path(profile_id)
         with self._write_lock:
             self._draft_path(profile_id).unlink(missing_ok=True)
+            self._undo_history.pop(profile_id, None)
+            self._redo_history.pop(profile_id, None)
         return self.get_draft(profile_id)
 
     def validate_source(self, profile_id: str, source: str) -> dict[str, object]:
@@ -275,6 +653,7 @@ class ProfileCatalog:
         return {
             "valid": not errors,
             "errors": errors,
+            "problems": _problems_from_errors(errors),
             "document": _json_safe(document) if document is not None else None,
         }
 
@@ -299,12 +678,57 @@ class ProfileCatalog:
                 self._retain_revision(profile_id, str(saved["source"]))
                 _atomic_write_text(profile_path, source)
             self._draft_path(profile_id).unlink(missing_ok=True)
+            self._undo_history.pop(profile_id, None)
+            self._redo_history.pop(profile_id, None)
             self._invalidate_cache()
             return self.validate_profile(profile_id)
 
     def _draft_path(self, profile_id: str) -> Path:
         digest = hashlib.sha256(profile_id.encode("utf-8")).hexdigest()
         return self.draft_root / "profiles" / f"{digest}.json"
+
+    def _flow_layout_path(self, profile_id: str) -> Path:
+        digest = hashlib.sha256(profile_id.encode("utf-8")).hexdigest()
+        return self.draft_root / "flow-layouts" / f"{digest}.json"
+
+    def _read_flow_layout_record(
+        self,
+        profile_id: str,
+    ) -> dict[str, object] | None:
+        path = self._flow_layout_path(profile_id)
+        if not path.is_file():
+            return None
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict) or record.get("profile_id") != profile_id:
+            raise OSError(f"invalid Flow layout record for {profile_id}")
+        version = record.get("version")
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise OSError(f"invalid Flow layout version for {profile_id}")
+        record["positions"] = _normalize_flow_positions(
+            record.get("positions"),
+            None,
+        )
+        return record
+
+    def _write_flow_layout(
+        self,
+        profile_id: str,
+        positions: dict[str, dict[str, int]],
+        *,
+        version: int,
+    ) -> None:
+        _atomic_write_text(
+            self._flow_layout_path(profile_id),
+            json.dumps(
+                {
+                    "profile_id": profile_id,
+                    "version": version,
+                    "positions": positions,
+                    "updated_at_ns": time.time_ns(),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
     def _read_draft_record(self, profile_id: str) -> dict[str, object] | None:
         path = self._draft_path(profile_id)
@@ -315,6 +739,9 @@ class ProfileCatalog:
             raise OSError(f"invalid recoverable draft record for {profile_id}")
         if not isinstance(record.get("source"), str):
             raise OSError(f"invalid recoverable draft source for {profile_id}")
+        version = record.get("version", 0)
+        if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+            raise OSError(f"invalid recoverable draft version for {profile_id}")
         return record
 
     def _retain_revision(self, profile_id: str, source: str) -> None:
@@ -414,6 +841,178 @@ def _read_notes(profile_dir: Path) -> str | None:
 
 def _source_fingerprint(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _assert_expected_draft(
+    source: str,
+    version: int,
+    *,
+    expected_version: int | None,
+    expected_fingerprint: str | None,
+    required: bool = False,
+) -> None:
+    if required and expected_version is None and expected_fingerprint is None:
+        raise ValueError(
+            "expected_version or expected_fingerprint is required"
+        )
+    if expected_version is not None:
+        if (
+            not isinstance(expected_version, int)
+            or isinstance(expected_version, bool)
+            or expected_version < 0
+        ):
+            raise ValueError("expected_version must be a non-negative integer")
+        if expected_version != version:
+            raise ProfileConflictError(
+                "Profile Draft changed before this edit; reload the newer Draft"
+            )
+    if expected_fingerprint is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_fingerprint):
+            raise ValueError(
+                "expected_fingerprint must be a SHA-256 fingerprint"
+            )
+        if expected_fingerprint != _source_fingerprint(source):
+            raise ProfileConflictError(
+                "Profile Draft changed before this edit; reload the newer Draft"
+            )
+
+
+def _problems_from_errors(errors: list[str]) -> list[dict[str, str]]:
+    problems: list[dict[str, str]] = []
+    for combined in errors:
+        for message in combined.split("; "):
+            location = ""
+            match = re.search(
+                r"state '([^']+)' actions\[(\d+)\]\.([a-zA-Z0-9_]+)"
+                r"(?:\.([a-zA-Z0-9_]+))?",
+                message,
+            )
+            if match:
+                state_name, index, action_type, field_name = match.groups()
+                location = f"states.{state_name}.actions[{index}]"
+                if field_name:
+                    location += f".{field_name}"
+                elif action_type:
+                    location += f".{action_type}"
+            if not location:
+                transition_match = re.search(
+                    r"state '([^']+)' (on_success|on_failure)",
+                    message,
+                )
+                if transition_match:
+                    state_name, field_name = transition_match.groups()
+                    location = f"states.{state_name}.{field_name}"
+            if not location:
+                required_transition_match = re.search(
+                    r"state '([^']+)' must define (on_success|on_failure)",
+                    message,
+                )
+                if required_transition_match:
+                    state_name, field_name = required_transition_match.groups()
+                    location = f"states.{state_name}.{field_name}"
+            if not location:
+                terminal_match = re.search(r"terminal state '([^']+)'", message)
+                if terminal_match:
+                    location = f"states.{terminal_match.group(1)}.result"
+            if not location:
+                unreachable_match = re.search(r"state '([^']+)' is unreachable", message)
+                if unreachable_match:
+                    location = f"states.{unreachable_match.group(1)}"
+            if not location:
+                terminal_path_match = re.search(
+                    r"state '([^']+)' has no path to a terminal state",
+                    message,
+                )
+                if terminal_path_match:
+                    location = f"states.{terminal_path_match.group(1)}"
+            problems.append(
+                {
+                    "severity": "error",
+                    "message": message,
+                    "location": location,
+                }
+            )
+    return problems
+
+
+def _structured_mutation_preview(
+    source: str,
+    updated: str,
+    mutation: dict[str, object],
+) -> dict[str, object]:
+    diff_lines = list(
+        difflib.unified_diff(
+            source.splitlines(),
+            updated.splitlines(),
+            fromfile="Draft before",
+            tofile="Draft after",
+            lineterm="",
+            n=3,
+        )
+    )
+    changed_comment_lines = [
+        line
+        for line in diff_lines
+        if line.startswith(("+", "-"))
+        and not line.startswith(("+++", "---"))
+        and "#" in line
+    ]
+    operation = str(mutation.get("operation", ""))
+    requires_confirmation = bool(diff_lines) and (
+        operation
+        in {
+            "move",
+            "move_to_state",
+            "duplicate",
+            "delete",
+        }
+        or (operation == "update_state" and any(
+            line.startswith("-") and not line.startswith("---")
+            for line in diff_lines
+        ))
+    )
+    return {
+        "operation": operation,
+        "changed": updated != source,
+        "requires_confirmation": requires_confirmation,
+        "comment_changes": bool(changed_comment_lines),
+        "diff": "\n".join(diff_lines),
+        "updated_fingerprint": _source_fingerprint(updated),
+    }
+
+
+def _normalize_flow_positions(
+    value: object,
+    expected_states: set[str] | None,
+) -> dict[str, dict[str, int]]:
+    if not isinstance(value, dict):
+        raise ValueError("positions must be an object")
+    normalized: dict[str, dict[str, int]] = {}
+    for raw_state, raw_position in value.items():
+        state_name = str(raw_state)
+        if expected_states is not None and state_name not in expected_states:
+            raise ValueError(f"unknown State in Flow layout: {state_name}")
+        if not isinstance(raw_position, dict):
+            raise ValueError(f"Flow position for '{state_name}' must be an object")
+        position: dict[str, int] = {}
+        for axis in ("x", "y"):
+            coordinate = raw_position.get(axis)
+            if (
+                not isinstance(coordinate, int)
+                or isinstance(coordinate, bool)
+                or coordinate < 0
+                or coordinate > 100_000
+            ):
+                raise ValueError(
+                    f"Flow position {axis} for '{state_name}' must be "
+                    "an integer from 0 to 100000"
+                )
+            position[axis] = coordinate
+        normalized[state_name] = position
+    if expected_states is not None and set(normalized) != expected_states:
+        missing = ", ".join(sorted(expected_states - set(normalized)))
+        raise ValueError(f"Flow positions are missing States: {missing}")
+    return normalized
 
 
 def _required_text(value: str, field_name: str, max_length: int) -> str:

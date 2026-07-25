@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import yaml
+
+from game_script_dev.dashboard.structured_actions import (
+    StructuredActionMutationError,
+    mutate_action_source,
+)
+from game_script_dev.schema import (
+    ProfileValidationError,
+    profile_from_mapping,
+    validate_profile,
+)
+
+
+SOURCE = """\
+version: 1
+name: Structured Actions
+target:
+  process_name: demo.exe
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: home
+states:
+  home:
+    # State context must survive.
+    actions:
+      - type: log
+        message: Before
+      # This comment belongs with the wait.
+      - type: wait
+        seconds: 1 # keep inline context
+      - type: log
+        message: After
+    on_success: done
+  done:
+    terminal: true
+    result: success
+"""
+
+
+class StructuredActionMutationTests(unittest.TestCase):
+    def test_insert_update_move_duplicate_disable_and_delete(self) -> None:
+        inserted = mutate_action_source(
+            SOURCE,
+            {
+                "operation": "insert",
+                "state": "home",
+                "index": 1,
+                "action_type": "wait",
+                "fields": {"seconds": 0.5},
+            },
+        )
+        document = yaml.safe_load(inserted)
+        self.assertEqual(document["states"]["home"]["actions"][1]["seconds"], 0.5)
+        self.assertIn("# State context must survive.", inserted)
+
+        updated = mutate_action_source(
+            inserted,
+            {
+                "operation": "update",
+                "state": "home",
+                "index": 1,
+                "fields": {"seconds": 2.25},
+            },
+        )
+        self.assertIn("seconds: 2.25", updated)
+
+        moved = mutate_action_source(
+            updated,
+            {
+                "operation": "move",
+                "state": "home",
+                "index": 1,
+                "target_index": 0,
+            },
+        )
+        self.assertEqual(
+            yaml.safe_load(moved)["states"]["home"]["actions"][0]["seconds"],
+            2.25,
+        )
+        self.assertLess(
+            moved.index("seconds: 2.25"),
+            moved.index("# This comment belongs with the wait."),
+        )
+        self.assertLess(
+            moved.index("# This comment belongs with the wait."),
+            moved.index("seconds: 1 # keep inline context"),
+        )
+
+        duplicated = mutate_action_source(
+            moved,
+            {
+                "operation": "duplicate",
+                "state": "home",
+                "index": 0,
+            },
+        )
+        self.assertEqual(
+            len(yaml.safe_load(duplicated)["states"]["home"]["actions"]),
+            5,
+        )
+
+        disabled = mutate_action_source(
+            duplicated,
+            {
+                "operation": "disable",
+                "state": "home",
+                "index": 0,
+            },
+        )
+        self.assertTrue(
+            yaml.safe_load(disabled)["states"]["home"]["actions"][0]["disabled"]
+        )
+
+        deleted = mutate_action_source(
+            disabled,
+            {
+                "operation": "delete",
+                "state": "home",
+                "index": 0,
+            },
+        )
+        self.assertEqual(
+            len(yaml.safe_load(deleted)["states"]["home"]["actions"]),
+            4,
+        )
+        self.assertIn("# This comment belongs with the wait.", deleted)
+
+    def test_update_preserves_inline_comment_and_unrelated_formatting(self) -> None:
+        updated = mutate_action_source(
+            SOURCE,
+            {
+                "operation": "update",
+                "state": "home",
+                "index": 1,
+                "fields": {"seconds": 3},
+            },
+        )
+
+        self.assertIn("seconds: 3 # keep inline context", updated)
+        self.assertEqual(
+            SOURCE.replace("seconds: 1", "seconds: 3"),
+            updated,
+        )
+
+    def test_update_can_remove_an_optional_scalar_field(self) -> None:
+        with_optional_field = SOURCE.replace(
+            "        seconds: 1 # keep inline context",
+            "        seconds: 1 # keep inline context\n"
+            "        optional_note: remove-me",
+        )
+        with self.assertRaisesRegex(
+            StructuredActionMutationError,
+            "unsupported fields",
+        ):
+            mutate_action_source(
+                with_optional_field,
+                {
+                    "operation": "update",
+                    "state": "home",
+                    "index": 1,
+                    "unset_fields": ["optional_note"],
+                },
+            )
+
+        press_source = SOURCE.replace(
+            "      - type: wait\n"
+            "        seconds: 1 # keep inline context",
+            "      - type: press_key\n"
+            "        key: F\n"
+            "        seconds: 0.2 # optional duration",
+        )
+        updated = mutate_action_source(
+            press_source,
+            {
+                "operation": "update",
+                "state": "home",
+                "index": 1,
+                "unset_fields": ["seconds"],
+            },
+        )
+
+        action = yaml.safe_load(updated)["states"]["home"]["actions"][1]
+        self.assertEqual(action, {"type": "press_key", "key": "F"})
+        self.assertNotIn("optional duration", updated)
+
+    def test_move_to_state_preserves_action_text_and_comments(self) -> None:
+        moved = mutate_action_source(
+            SOURCE,
+            {
+                "operation": "move_to_state",
+                "state": "home",
+                "index": 1,
+                "target_state": "done",
+                "target_index": 0,
+            },
+        )
+
+        document = yaml.safe_load(moved)
+        self.assertEqual(
+            [action["type"] for action in document["states"]["home"]["actions"]],
+            ["log", "log"],
+        )
+        self.assertEqual(
+            document["states"]["done"]["actions"],
+            [{"type": "wait", "seconds": 1}],
+        )
+        self.assertIn("seconds: 1 # keep inline context", moved)
+        done_section = moved.split("  done:", maxsplit=1)[1]
+        self.assertLess(
+            done_section.index("# This comment belongs with the wait."),
+            done_section.index("- type: wait"),
+        )
+
+    def test_insert_supports_missing_and_empty_action_lists(self) -> None:
+        missing = SOURCE.replace(
+            "    actions:\n"
+            "      - type: log\n"
+            "        message: Before\n"
+            "      # This comment belongs with the wait.\n"
+            "      - type: wait\n"
+            "        seconds: 1 # keep inline context\n"
+            "      - type: log\n"
+            "        message: After\n",
+            "",
+        )
+        inserted_missing = mutate_action_source(
+            missing,
+            {
+                "operation": "insert",
+                "state": "home",
+                "action_type": "wait",
+                "fields": {"seconds": 1},
+            },
+        )
+        self.assertEqual(
+            yaml.safe_load(inserted_missing)["states"]["home"]["actions"],
+            [{"type": "wait", "seconds": 1}],
+        )
+
+        empty = SOURCE.replace(
+            "    actions:\n"
+            "      - type: log\n"
+            "        message: Before\n"
+            "      # This comment belongs with the wait.\n"
+            "      - type: wait\n"
+            "        seconds: 1 # keep inline context\n"
+            "      - type: log\n"
+            "        message: After\n",
+            "    actions: []\n",
+        )
+        inserted_empty = mutate_action_source(
+            empty,
+            {
+                "operation": "insert",
+                "state": "home",
+                "action_type": "wait",
+                "fields": {"seconds": 1},
+            },
+        )
+        self.assertEqual(
+            yaml.safe_load(inserted_empty)["states"]["home"]["actions"],
+            [{"type": "wait", "seconds": 1}],
+        )
+
+    def test_rejects_unknown_states_indexes_and_fields(self) -> None:
+        invalid_mutations = [
+            {"operation": "delete", "state": "missing", "index": 0},
+            {"operation": "delete", "state": "home", "index": 99},
+            {
+                "operation": "insert",
+                "state": "home",
+                "action_type": "wait",
+                "fields": {"mystery": 1},
+            },
+        ]
+        for mutation in invalid_mutations:
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(StructuredActionMutationError):
+                    mutate_action_source(SOURCE, mutation)
+
+    def test_delete_only_action_leaves_an_empty_list(self) -> None:
+        single = SOURCE.replace(
+            "      - type: log\n"
+            "        message: Before\n"
+            "      # This comment belongs with the wait.\n",
+            "",
+        ).replace(
+            "      - type: log\n"
+            "        message: After\n",
+            "",
+        )
+
+        deleted = mutate_action_source(
+            single,
+            {"operation": "delete", "state": "home", "index": 0},
+        )
+
+        self.assertEqual(
+            yaml.safe_load(deleted)["states"]["home"]["actions"],
+            [],
+        )
+
+    def test_disabled_action_is_excluded_from_authoritative_validation(self) -> None:
+        document = yaml.safe_load(SOURCE)
+        document["states"]["home"]["actions"][1]["seconds"] = -1
+        document["states"]["home"]["actions"][1]["disabled"] = True
+        profile = profile_from_mapping(document)
+
+        with TemporaryDirectory() as temp_dir:
+            validate_profile(profile, Path(temp_dir))
+
+        self.assertTrue(profile.states["home"].actions[1].disabled)
+
+    def test_disabled_unknown_action_is_still_rejected(self) -> None:
+        document = yaml.safe_load(SOURCE)
+        document["states"]["home"]["actions"][1] = {
+            "type": "unknown_action",
+            "disabled": True,
+        }
+        profile = profile_from_mapping(document)
+
+        with TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(
+                ProfileValidationError,
+                "uses unknown action type",
+            ):
+                validate_profile(profile, Path(temp_dir))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -227,10 +227,18 @@
         <section class="panel builder-readonly-view" aria-labelledby="builder-canvas-title">
           <div class="panel-heading builder-view-heading">
             <div>
-              <span class="eyebrow">Flow View</span>
-              <h2 id="builder-canvas-title">States and ordered Actions</h2>
+              <span class="eyebrow">Structured Draft</span>
+              <h2 id="builder-canvas-title">State Actions</h2>
             </div>
-            <span id="builder-fingerprint" class="muted">No source loaded</span>
+            <div class="builder-history-actions">
+              <div class="builder-view-tabs" role="tablist" aria-label="Structured Draft view">
+                <button id="builder-state-view-tab" type="button" role="tab" aria-selected="true" aria-controls="builder-state-view">State Actions</button>
+                <button id="builder-graph-view-tab" type="button" role="tab" aria-selected="false" aria-controls="builder-graph-view">Flow</button>
+              </div>
+              <button id="undo-builder-action" type="button" disabled>Undo</button>
+              <button id="redo-builder-action" type="button" disabled>Redo</button>
+              <span id="builder-fingerprint" class="muted">No source loaded</span>
+            </div>
           </div>
           <div id="builder-empty" class="builder-empty">
             <span class="read-only-icon" aria-hidden="true">
@@ -240,23 +248,128 @@
             <p>Valid YAML drafts appear here as a readable State and Action flow.</p>
           </div>
           <div id="builder-flow" class="builder-flow" hidden>
-            <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
-            <section class="builder-state-detail" aria-live="polite">
-              <div class="builder-state-detail-heading">
-                <div>
-                  <span class="eyebrow">State View</span>
-                  <h2 id="builder-state-name">No State selected</h2>
+            <div id="builder-state-view" class="builder-state-view" role="tabpanel" aria-labelledby="builder-state-view-tab">
+            <aside class="builder-tool-palette" aria-labelledby="builder-palette-title">
+              <span class="eyebrow">Tool Palette</span>
+              <h3 id="builder-palette-title">Actions</h3>
+              <label for="builder-action-search">Search Actions</label>
+              <input id="builder-action-search" type="search" placeholder="Search by name or type" autocomplete="off">
+              <div id="builder-action-palette" class="builder-action-palette" role="list"></div>
+            </aside>
+            <section class="builder-state-workspace" aria-live="polite">
+              <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
+              <section class="builder-state-detail">
+                <div class="builder-state-detail-heading">
+                  <div>
+                    <span class="eyebrow">Action Stack</span>
+                    <h2 id="builder-state-name">No State selected</h2>
+                  </div>
+                  <span id="builder-state-kind" class="badge">State</span>
                 </div>
-                <span id="builder-state-kind" class="badge">State</span>
+                <dl id="builder-state-transitions" class="builder-transition-list"></dl>
+                <details>
+                  <summary>Required Anchors</summary>
+                  <ul id="builder-anchor-list" class="builder-anchor-list"></ul>
+                </details>
+                <h3>Ordered Actions</h3>
+                <ol id="builder-action-list" class="builder-action-list"></ol>
+              </section>
+            </section>
+            <aside class="builder-action-inspector" aria-labelledby="builder-inspector-title">
+              <figure class="builder-context-preview" aria-labelledby="builder-context-preview-title">
+                <div class="builder-context-preview-heading">
+                  <div>
+                    <span class="eyebrow">Saved Profile</span>
+                    <h3 id="builder-context-preview-title">Target Preview</h3>
+                  </div>
+                  <button id="refresh-builder-target-preview" type="button">Refresh</button>
+                </div>
+                <div id="builder-target-preview-frame" class="builder-context-preview-frame">
+                  <span id="builder-target-preview-empty" class="muted">Refresh to inspect the saved Profile target.</span>
+                  <img id="builder-target-preview-image" alt="Saved Profile target window screenshot" hidden>
+                </div>
+                <figcaption id="builder-target-preview-meta" class="muted">Structured Draft changes do not alter this Saved Profile preview.</figcaption>
+              </figure>
+              <span class="eyebrow">Context Rail</span>
+              <h3 id="builder-inspector-title">Action Inspector</h3>
+              <div id="builder-action-inspector-empty" class="muted">Select an Action to edit its settings.</div>
+              <form id="builder-action-inspector-form" hidden>
+                <div class="builder-inspector-heading">
+                  <strong id="builder-inspector-label">Action</strong>
+                  <code id="builder-inspector-type">type</code>
+                </div>
+                <div id="builder-inspector-fields"></div>
+                <div id="builder-inspector-errors" class="builder-inline-errors" role="status" aria-live="polite"></div>
+                <div class="builder-action-commands" aria-label="Selected Action commands">
+                  <button id="move-builder-action-up" type="button">Move Up</button>
+                  <button id="move-builder-action-down" type="button">Move Down</button>
+                  <button id="duplicate-builder-action" type="button">Duplicate</button>
+                  <button id="toggle-builder-action" type="button">Disable</button>
+                  <button id="delete-builder-action" type="button">Delete</button>
+                  <label class="builder-move-state-field" for="move-builder-action-state">
+                    <span>Move to State</span>
+                    <select id="move-builder-action-state"></select>
+                  </label>
+                  <button id="move-builder-action-state-button" type="button">Move</button>
+                </div>
+              </form>
+            </aside>
+            </div>
+            <section id="builder-graph-view" class="builder-graph-view" role="tabpanel" aria-labelledby="builder-graph-view-tab" hidden>
+              <div class="builder-graph-toolbar">
+                <div>
+                  <span class="eyebrow">Flow View</span>
+                  <h3>State graph</h3>
+                </div>
+                <div>
+                  <button id="undo-builder-layout" type="button" disabled>Undo Layout</button>
+                  <button id="redo-builder-layout" type="button" disabled>Redo Layout</button>
+                  <button id="tidy-builder-flow" type="button">Tidy Flow</button>
+                </div>
               </div>
-              <dl id="builder-state-transitions" class="builder-transition-list"></dl>
-              <h3>Required Anchors</h3>
-              <ul id="builder-anchor-list" class="builder-anchor-list"></ul>
-              <h3>Ordered Actions</h3>
-              <ol id="builder-action-list" class="builder-action-list"></ol>
+              <div class="builder-graph-workspace">
+                <div id="builder-flow-canvas" class="builder-flow-canvas" tabindex="0" aria-label="Editable State graph">
+                  <svg id="builder-flow-edges" class="builder-flow-edges" aria-hidden="true"></svg>
+                  <div id="builder-flow-nodes" class="builder-flow-nodes"></div>
+                </div>
+                <aside class="builder-flow-inspector" aria-labelledby="builder-flow-inspector-title">
+                  <span class="eyebrow">Context Rail</span>
+                  <h3 id="builder-flow-inspector-title">State Inspector</h3>
+                  <form id="builder-flow-inspector-form">
+                    <strong id="builder-flow-state-name">No State selected</strong>
+                    <label class="builder-check-field">
+                      <input id="builder-flow-initial" type="checkbox">
+                      <span>Initial State</span>
+                    </label>
+                    <label class="builder-check-field">
+                      <input id="builder-flow-terminal" type="checkbox">
+                      <span>Terminal State</span>
+                    </label>
+                    <label for="builder-flow-result">Terminal result</label>
+                    <input id="builder-flow-result" type="text" autocomplete="off" placeholder="success">
+                    <label for="builder-flow-success">On success</label>
+                    <select id="builder-flow-success"></select>
+                    <label for="builder-flow-failure">On failure</label>
+                    <select id="builder-flow-failure"></select>
+                    <button id="save-builder-flow-state" class="primary-button" type="submit">Apply State Settings</button>
+                  </form>
+                  <fieldset class="builder-node-nudge">
+                    <legend>Move selected node</legend>
+                    <button id="move-builder-node-up" type="button" aria-label="Move selected State node up">↑</button>
+                    <button id="move-builder-node-left" type="button" aria-label="Move selected State node left">←</button>
+                    <button id="move-builder-node-down" type="button" aria-label="Move selected State node down">↓</button>
+                    <button id="move-builder-node-right" type="button" aria-label="Move selected State node right">→</button>
+                  </fieldset>
+                  <p class="muted">Node positions are Builder-only and never written to <code>profile.yaml</code>.</p>
+                </aside>
+              </div>
             </section>
           </div>
-          <p class="builder-readonly-message">Flow editing is still read only. Use the YAML Draft editor below to make changes without leaving the application.</p>
+          <details id="builder-problems-drawer" class="builder-problems-drawer">
+            <summary>Problems <span id="builder-problem-count" class="badge">0</span></summary>
+            <ul id="builder-problem-list"></ul>
+          </details>
+          <p class="builder-readonly-message">Common Actions are editable through metadata-driven forms. Complex Actions remain visible and fully editable in the synchronized YAML Draft.</p>
         </section>
         <aside class="panel builder-notes-panel">
           <div class="panel-heading"><h2>Pack Notes</h2><span class="badge">Read only</span></div>
@@ -341,6 +454,22 @@
         <div class="dialog-actions">
           <button id="cancel-live-button" value="cancel" type="submit" autofocus>Cancel</button>
           <button id="confirm-live-button" value="confirm" class="primary-button" type="submit">Start Live Run</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="builder-diff-dialog" aria-labelledby="builder-diff-title" aria-describedby="builder-diff-description">
+      <form method="dialog" class="dialog-body builder-diff-body">
+        <div>
+          <span class="eyebrow">Draft Safety</span>
+          <h2 id="builder-diff-title">Review structured YAML changes</h2>
+        </div>
+        <p id="builder-diff-description">This operation moves, duplicates, or removes authored YAML lines. Review the exact Draft diff before continuing.</p>
+        <p id="builder-diff-comment-warning" class="dialog-warning" hidden>Comments are included in the changed lines and will move, duplicate, or be removed with the Action.</p>
+        <pre id="builder-diff-preview" class="builder-diff-preview" tabindex="0"></pre>
+        <div class="dialog-actions">
+          <button id="cancel-builder-diff" value="cancel" type="submit" autofocus>Cancel</button>
+          <button id="confirm-builder-diff" value="confirm" class="primary-button" type="submit">Apply Draft Change</button>
         </div>
       </form>
     </dialog>

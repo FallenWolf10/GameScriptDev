@@ -9,13 +9,480 @@ class ActionFieldDefinition:
     kind: str
     required: bool = False
     choices: tuple[str, ...] = ()
+    default: object | None = None
+    hint: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "name": self.name,
+            "kind": self.kind,
+            "required": self.required,
+        }
+        if self.choices:
+            payload["choices"] = list(self.choices)
+        if self.default is not None:
+            payload["default"] = self.default
+        if self.hint:
+            payload["hint"] = self.hint
+        return payload
 
 
 @dataclass(frozen=True)
 class ActionDefinition:
     action_type: str
     label: str
+    category: str = "advanced"
+    keywords: tuple[str, ...] = ()
     fields: tuple[ActionFieldDefinition, ...] = field(default_factory=tuple)
+    summary_fields: tuple[str, ...] = ()
+    structured: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "type": self.action_type,
+            "label": self.label,
+            "category": self.category,
+            "keywords": list(self.keywords),
+            "fields": [definition.to_dict() for definition in self.fields],
+            "summary_fields": list(self.summary_fields),
+            "structured": self.structured,
+        }
+
+
+def _field(
+    name: str,
+    kind: str,
+    *,
+    required: bool = False,
+    choices: tuple[str, ...] = (),
+    default: object | None = None,
+    hint: str = "",
+) -> ActionFieldDefinition:
+    return ActionFieldDefinition(
+        name=name,
+        kind=kind,
+        required=required,
+        choices=choices,
+        default=default,
+        hint=hint,
+    )
+
+
+ACTION_DEFINITIONS: dict[str, ActionDefinition] = {
+    "wait_for_state": ActionDefinition(
+        "wait_for_state",
+        "Wait for State",
+        "flow_timing",
+        ("screen", "detect", "poll", "transition"),
+        (
+            _field(
+                "state",
+                "state",
+                required=True,
+                hint="State to wait for before continuing.",
+            ),
+            _field(
+                "timeout_seconds",
+                "positive_duration",
+                hint="Optional timeout; uses the Profile default when omitted.",
+            ),
+            _field(
+                "poll_interval_seconds",
+                "positive_duration",
+                hint="Optional delay between screen checks.",
+            ),
+        ),
+        ("state", "timeout_seconds"),
+        True,
+    ),
+    "click_template": ActionDefinition(
+        "click_template",
+        "Click Template",
+        "pointer",
+        ("image", "asset", "button"),
+        (
+            _field(
+                "target",
+                "asset",
+                required=True,
+                hint="Template asset path relative to this Profile Pack.",
+            ),
+        ),
+        ("target",),
+    ),
+    "click_point": ActionDefinition(
+        "click_point",
+        "Click Point",
+        "pointer",
+        ("region", "mouse", "button"),
+        (
+            _field(
+                "region",
+                "region",
+                required=True,
+                hint="Named click region from this Profile.",
+            ),
+            _field(
+                "input_mode",
+                "input_mode",
+                choices=("background_window_messages", "foreground"),
+                hint="Optional input adapter override for this click.",
+            ),
+        ),
+        ("region",),
+        True,
+    ),
+    "hold_click": ActionDefinition(
+        "hold_click",
+        "Hold Click",
+        "pointer",
+        ("region", "mouse", "drag"),
+        (
+            _field(
+                "region",
+                "region",
+                required=True,
+                hint="Named region where the mouse button is held.",
+            ),
+            _field(
+                "seconds",
+                "duration",
+                required=True,
+                hint="Finite non-negative hold duration in seconds.",
+            ),
+            _field(
+                "input_mode",
+                "input_mode",
+                choices=("background_window_messages", "foreground"),
+                hint="Optional input adapter override for this hold.",
+            ),
+        ),
+        ("region", "seconds"),
+    ),
+    "press_key": ActionDefinition(
+        "press_key",
+        "Press Key",
+        "keyboard",
+        ("tap", "type", "button"),
+        (
+            _field("key", "key", required=True, hint="Key name, such as f or enter."),
+            _field(
+                "seconds",
+                "duration",
+                hint="Optional press duration in seconds.",
+            ),
+        ),
+        ("key", "seconds"),
+        True,
+    ),
+    "press_keys": ActionDefinition(
+        "press_keys",
+        "Press Keys",
+        "keyboard",
+        ("shortcut", "combo", "tap"),
+        (
+            _field(
+                "keys",
+                "keys",
+                required=True,
+                hint="Ordered key names pressed together.",
+            ),
+            _field(
+                "seconds",
+                "duration",
+                hint="Optional press duration in seconds.",
+            ),
+        ),
+        ("keys", "seconds"),
+    ),
+    "hold_key": ActionDefinition(
+        "hold_key",
+        "Hold Key",
+        "keyboard",
+        ("down", "duration", "movement"),
+        (
+            _field("key", "key", required=True, hint="Key to hold."),
+            _field(
+                "seconds",
+                "duration",
+                default=1,
+                hint="Hold duration in seconds.",
+            ),
+        ),
+        ("key", "seconds"),
+        True,
+    ),
+    "hold_keys": ActionDefinition(
+        "hold_keys",
+        "Hold Keys",
+        "keyboard",
+        ("shortcut", "combo", "duration"),
+        (
+            _field(
+                "keys",
+                "keys",
+                required=True,
+                hint="Key names held together.",
+            ),
+            _field(
+                "seconds",
+                "duration",
+                default=1,
+                hint="Hold duration in seconds.",
+            ),
+        ),
+        ("keys", "seconds"),
+    ),
+    "repeat_key": ActionDefinition(
+        "repeat_key",
+        "Repeat Key",
+        "keyboard",
+        ("tap", "loop", "interval"),
+        (
+            _field("key", "key", required=True, hint="Key to tap repeatedly."),
+            _field(
+                "repeat_for_seconds",
+                "duration",
+                required=True,
+                hint="Total time spent repeating the key.",
+            ),
+            _field(
+                "repeat_every_seconds",
+                "positive_duration",
+                required=True,
+                hint="Positive interval between key taps.",
+            ),
+            _field(
+                "tap_duration_seconds",
+                "duration",
+                hint="Optional duration of each key tap.",
+            ),
+        ),
+        ("key", "repeat_for_seconds", "repeat_every_seconds"),
+    ),
+    "hold_key_while_repeating_key": ActionDefinition(
+        "hold_key_while_repeating_key",
+        "Hold Key While Repeating Key",
+        "keyboard",
+        ("overlap", "tap", "movement", "loop"),
+        (
+            _field("hold_key", "key", required=True, hint="Key held continuously."),
+            _field(
+                "hold_seconds",
+                "duration",
+                required=True,
+                hint="Total duration of the held key.",
+            ),
+            _field("tap_key", "key", required=True, hint="Key tapped while holding."),
+            _field(
+                "tap_every_seconds",
+                "positive_duration",
+                required=True,
+                hint="Positive interval between taps.",
+            ),
+            _field(
+                "tap_duration_seconds",
+                "duration",
+                hint="Optional duration of each tap.",
+            ),
+        ),
+        ("hold_key", "tap_key", "hold_seconds"),
+    ),
+    "move_mouse": ActionDefinition(
+        "move_mouse",
+        "Move Mouse",
+        "pointer",
+        ("relative", "camera", "look"),
+        (
+            _field("dx", "number", required=True, hint="Horizontal relative movement."),
+            _field("dy", "number", required=True, hint="Vertical relative movement."),
+            _field(
+                "seconds",
+                "duration",
+                hint="Optional duration used to interpolate the movement.",
+            ),
+            _field(
+                "input_mode",
+                "input_mode",
+                choices=("foreground",),
+                hint="Mouse movement currently requires foreground input.",
+            ),
+        ),
+        ("dx", "dy", "seconds"),
+    ),
+    "hold_mouse_button_and_move": ActionDefinition(
+        "hold_mouse_button_and_move",
+        "Hold Mouse Button and Move",
+        "pointer",
+        ("drag", "camera", "look"),
+        (
+            _field(
+                "button",
+                "mouse_button",
+                required=True,
+                choices=("left", "right"),
+                hint="Mouse button held during movement.",
+            ),
+            _field("dx", "number", required=True, hint="Horizontal relative movement."),
+            _field("dy", "number", required=True, hint="Vertical relative movement."),
+            _field(
+                "seconds",
+                "duration",
+                hint="Optional duration used to interpolate the drag.",
+            ),
+            _field(
+                "input_mode",
+                "input_mode",
+                choices=("foreground",),
+                hint="Mouse dragging currently requires foreground input.",
+            ),
+        ),
+        ("button", "dx", "dy", "seconds"),
+    ),
+    "scroll_mouse": ActionDefinition(
+        "scroll_mouse",
+        "Scroll Mouse",
+        "pointer",
+        ("wheel", "up", "down"),
+        (
+            _field(
+                "direction",
+                "scroll_direction",
+                required=True,
+                choices=("up", "down"),
+                hint="Direction of the mouse wheel movement.",
+            ),
+            _field(
+                "steps",
+                "positive_integer",
+                default=1,
+                hint="Positive number of wheel steps.",
+            ),
+            _field(
+                "input_mode",
+                "input_mode",
+                choices=("foreground",),
+                hint="Mouse scrolling currently requires foreground input.",
+            ),
+        ),
+        ("direction", "steps"),
+    ),
+    "start_continuous_input": ActionDefinition(
+        "start_continuous_input",
+        "Start Continuous Input",
+        "continuous_input",
+        ("background", "repeat", "sequence", "parallel"),
+        (
+            _field(
+                "name",
+                "text",
+                required=True,
+                hint="Unique name used to stop this continuous input later.",
+            ),
+            _field(
+                "action",
+                "continuous_action",
+                required=True,
+                choices=(
+                    "click_point",
+                    "hold_click",
+                    "scroll_mouse",
+                    "press_key",
+                    "press_keys",
+                    "hold_key",
+                    "hold_keys",
+                    "repeat_key",
+                    "hold_key_while_repeating_key",
+                    "sequence",
+                ),
+                hint="Continuous input implementation to start.",
+            ),
+            _field(
+                "stop_after_seconds",
+                "positive_duration",
+                hint="Optional automatic stop time.",
+            ),
+        ),
+        ("name", "action", "stop_after_seconds"),
+    ),
+    "stop_continuous_input": ActionDefinition(
+        "stop_continuous_input",
+        "Stop Continuous Input",
+        "continuous_input",
+        ("end", "cancel", "background"),
+        (
+            _field(
+                "name",
+                "text",
+                required=True,
+                hint="Name of the active continuous input to stop.",
+            ),
+        ),
+        ("name",),
+    ),
+    "wait": ActionDefinition(
+        "wait",
+        "Wait",
+        "flow_timing",
+        ("pause", "delay", "sleep", "timing"),
+        (
+            _field(
+                "seconds",
+                "duration",
+                required=True,
+                default=1,
+                hint="A finite non-negative number of seconds.",
+            ),
+        ),
+        ("seconds",),
+        True,
+    ),
+    "log": ActionDefinition(
+        "log",
+        "Log Message",
+        "flow_timing",
+        ("message", "checkpoint", "note"),
+        (
+            _field(
+                "message",
+                "text",
+                required=True,
+                hint="Message written to the run Timeline and logs.",
+            ),
+        ),
+        ("message",),
+        True,
+    ),
+    "stop": ActionDefinition(
+        "stop",
+        "Stop Run",
+        "flow_timing",
+        ("finish", "result", "terminate"),
+        (
+            _field(
+                "result",
+                "text",
+                hint="Optional terminal result; defaults to stopped.",
+            ),
+        ),
+        ("result",),
+        True,
+    ),
+}
+
+
+def get_action_definition(action_type: str) -> ActionDefinition:
+    return ACTION_DEFINITIONS[action_type]
+
+
+def action_schema_payload() -> dict[str, object]:
+    return {
+        "version": 2,
+        "actions": [
+            ACTION_DEFINITIONS[action_type].to_dict()
+            for action_type in sorted(ACTION_DEFINITIONS)
+        ],
+    }
 
 
 SCROLL_MOUSE_CONTINUOUS_FIELDS: tuple[ActionFieldDefinition, ...] = (

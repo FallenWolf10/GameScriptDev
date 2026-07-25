@@ -376,6 +376,16 @@ class Engine:
         screenshot: Screenshot,
     ) -> str | None:
         for index, action in enumerate(state.actions, start=1):
+            if action.disabled:
+                self._emit(
+                    "action_skipped",
+                    state=state.name,
+                    action_index=index,
+                    action_type=action.type,
+                    action_summary=self._action_summary(action),
+                    reason="disabled",
+                )
+                continue
             self._check_stop_requested()
             summary = self._action_summary(action)
             self._emit(

@@ -303,15 +303,17 @@ Acceptance checks:
 - Generated YAML remains readable and reviewable.
 - Profile builder writes are constrained to the selected profile pack folder.
 
-Status: Phase 1 foundation and the first Phase 2 writable slice are implemented.
+Status: Phase 1 and the initial common-Action Phase 2 slice are implemented.
 The Build workspace loads a selected Profile through fingerprinted source and
 structured-profile endpoints, then shows its state list, transitions, required
 anchors, ordered Actions, source path, pack status, and notes. Authors can create
 a blank Profile, edit recoverable raw-YAML Drafts, validate them, and Save with
-external-change conflict protection and retained revision backups. The visual
-State and Action flow remains read only. The full graph canvas, structured Action
-editing, drag-and-drop authoring, and creation/asset tools remain planned in
-`docs/PROFILE_BUILDER_UI.md`.
+external-change conflict protection and retained revision backups. Common
+Actions have structured forms, keyboard and pointer ordering, and diff-protected
+YAML mutations. Flow View edits existing-State transitions and initial/terminal
+settings, while storing draggable graph positions outside `profile.yaml`.
+State creation/rename/delete, region/anchor tools, asset editing, and advanced
+Actions remain planned in `docs/PROFILE_BUILDER_UI.md`.
 
 ## Completed Sections
 

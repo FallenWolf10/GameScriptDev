@@ -3,11 +3,13 @@ from __future__ import annotations
 import unittest
 
 from game_script_dev.action_metadata import (
+    ACTION_DEFINITIONS,
     CONTINUOUS_INPUT_ACTION_DEFINITIONS,
     SCROLL_MOUSE_CONTINUOUS_FIELDS,
     SUPPORTED_CONTINUOUS_INPUT_ACTION_TYPES,
     get_continuous_input_action_definition,
 )
+from game_script_dev.schema import SUPPORTED_ACTION_TYPES
 
 
 class ActionMetadataTests(unittest.TestCase):
@@ -49,6 +51,60 @@ class ActionMetadataTests(unittest.TestCase):
                 definition.action_type
                 for definition in CONTINUOUS_INPUT_ACTION_DEFINITIONS.values()
             },
+        )
+
+    def test_builder_registry_covers_every_schema_action(self) -> None:
+        self.assertEqual(set(ACTION_DEFINITIONS), SUPPORTED_ACTION_TYPES)
+        self.assertEqual(
+            set(ACTION_DEFINITIONS),
+            {definition.action_type for definition in ACTION_DEFINITIONS.values()},
+        )
+
+    def test_every_builder_definition_exposes_complete_editor_metadata(self) -> None:
+        for action_type, definition in ACTION_DEFINITIONS.items():
+            with self.subTest(action_type=action_type):
+                self.assertTrue(definition.label)
+                self.assertTrue(definition.category)
+                self.assertTrue(definition.keywords)
+                if definition.fields:
+                    self.assertTrue(definition.summary_fields)
+                self.assertEqual(
+                    len({field.name for field in definition.fields}),
+                    len(definition.fields),
+                )
+                for field in definition.fields:
+                    self.assertTrue(field.kind)
+                    self.assertTrue(field.hint)
+
+    def test_wait_definition_exposes_structured_editor_contract(self) -> None:
+        definition = ACTION_DEFINITIONS["wait"]
+
+        self.assertTrue(definition.structured)
+        self.assertEqual(definition.category, "flow_timing")
+        self.assertIn("delay", definition.keywords)
+        self.assertEqual(definition.summary_fields, ("seconds",))
+        self.assertEqual(definition.fields[0].name, "seconds")
+        self.assertTrue(definition.fields[0].required)
+        self.assertEqual(definition.fields[0].default, 1)
+
+    def test_initial_common_actions_expose_structured_forms(self) -> None:
+        expected = {
+            "wait",
+            "log",
+            "press_key",
+            "hold_key",
+            "click_point",
+            "wait_for_state",
+            "stop",
+        }
+
+        self.assertEqual(
+            {
+                action_type
+                for action_type, definition in ACTION_DEFINITIONS.items()
+                if definition.structured
+            },
+            expected,
         )
 
 

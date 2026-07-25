@@ -719,6 +719,13 @@ class DashboardTests(unittest.TestCase):
                 recovered = _get_json(f"{base_url}/api/profiles/demo/draft")
                 self.assertEqual(recovered["source"], invalid_source)
                 self.assertTrue(recovered["exists"])
+                restarted_catalog = ProfileCatalog(
+                    root / "profiles",
+                    draft_root=root / "drafts",
+                )
+                restarted_draft = restarted_catalog.get_draft("demo")
+                self.assertEqual(restarted_draft["source"], invalid_source)
+                self.assertFalse(restarted_draft["valid"])
 
                 with self.assertRaises(HTTPError) as invalid_save:
                     _post_json(f"{base_url}/api/profiles/demo/save", {})
@@ -993,7 +1000,7 @@ class DashboardTests(unittest.TestCase):
     def test_server_requires_and_accepts_per_attempt_live_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            _write_profile(root)
+            profile_path = _write_profile(root)
             server = create_server("127.0.0.1", 0, root, root / "logs")
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -1001,6 +1008,27 @@ class DashboardTests(unittest.TestCase):
                 base_url = f"http://127.0.0.1:{server.server_port}"
                 registry = server.dashboard_state.runs  # type: ignore[attr-defined]
                 registry._last_dry_run_success["demo"] = True  # type: ignore[attr-defined]
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                draft_only_source = PROFILE_YAML.replace(
+                    "result: success",
+                    "result: draft_only",
+                )
+                _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": draft_only_source,
+                        "base_fingerprint": source["fingerprint"],
+                    },
+                )
+                observed_results: list[str] = []
+
+                class CapturingSavedProfileEngine:
+                    def __init__(self, *, profile, **_kwargs) -> None:
+                        observed_results.append(profile.states["done"].result)
+
+                    def run(self) -> str:
+                        return observed_results[-1]
+
                 with patch(
                     "game_script_dev.dashboard.server.DashboardRequestHandler._readiness"
                 ) as readiness:
@@ -1016,16 +1044,32 @@ class DashboardTests(unittest.TestCase):
                         )
                     self.assertEqual(missing_confirmation.exception.code, 400)
 
-                    response = _post_json(
-                        f"{base_url}/api/runs",
-                        {
-                            "profile_id": "demo",
-                            "mode": "live",
-                            "confirmation": LIVE_CONFIRMATION_VALUE,
-                        },
-                    )
+                    with patch(
+                        "game_script_dev.dashboard.run_registry.Engine",
+                        CapturingSavedProfileEngine,
+                    ):
+                        response = _post_json(
+                            f"{base_url}/api/runs",
+                            {
+                                "profile_id": "demo",
+                                "mode": "live",
+                                "confirmation": LIVE_CONFIRMATION_VALUE,
+                            },
+                        )
+                        _wait_for_server_run(base_url, response["id"])
 
                 self.assertEqual(response["mode"], "live")
+                completed = _get_json(f"{base_url}/api/runs/{response['id']}")
+                self.assertEqual(observed_results, ["success"])
+                self.assertEqual(completed["final_result"], "success")
+                self.assertEqual(
+                    profile_path.read_text(encoding="utf-8"),
+                    PROFILE_YAML,
+                )
+                self.assertEqual(
+                    _get_json(f"{base_url}/api/profiles/demo/draft")["source"],
+                    draft_only_source,
+                )
             finally:
                 server.shutdown()
                 server.server_close()
@@ -1310,6 +1354,32 @@ class DashboardTests(unittest.TestCase):
             "profile-pack-detail",
             "builder-state-list",
             "builder-action-list",
+            "builder-action-palette",
+            "builder-action-inspector-form",
+            "builder-target-preview-image",
+            "builder-target-preview-meta",
+            "refresh-builder-target-preview",
+            "builder-diff-dialog",
+            "builder-diff-preview",
+            "confirm-builder-diff",
+            "move-builder-action-state",
+            "move-builder-action-state-button",
+            "builder-problems-drawer",
+            "undo-builder-action",
+            "redo-builder-action",
+            "builder-state-view-tab",
+            "builder-graph-view-tab",
+            "builder-flow-canvas",
+            "builder-flow-edges",
+            "builder-flow-nodes",
+            "builder-flow-inspector-form",
+            "tidy-builder-flow",
+            "undo-builder-layout",
+            "redo-builder-layout",
+            "move-builder-node-up",
+            "move-builder-node-left",
+            "move-builder-node-down",
+            "move-builder-node-right",
             "create-profile-button",
             "create-profile-dialog",
             "create-profile-form",
@@ -1346,6 +1416,34 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("/structured`)", app_js)
         self.assertIn("async function persistBuilderDraft", app_js)
         self.assertIn("async function saveBuilderProfile", app_js)
+        self.assertIn("async function mutateBuilderAction", app_js)
+        self.assertIn("async function restoreBuilderActionHistory", app_js)
+        self.assertIn('operation: "move_to_state"', app_js)
+        self.assertIn("builder-drag-handle", app_js)
+        self.assertIn("function renderBuilderInspectorField", app_js)
+        self.assertIn("data-builder-action-field", app_js)
+        self.assertIn("mutation.unset_fields", app_js)
+        self.assertIn("function confirmBuilderDiff", app_js)
+        self.assertIn("/actions/preview", app_js)
+        self.assertIn("function stateProblems", app_js)
+        self.assertIn("function showBuilderDropIndicator", app_js)
+        self.assertIn("function autoScrollBuilderActionList", app_js)
+        self.assertIn("function renderBuilderFlowGraph", app_js)
+        self.assertIn("async function mutateBuilderFlow", app_js)
+        self.assertIn("async function tidyBuilderFlowLayout", app_js)
+        self.assertIn("async function refreshBuilderTargetPreview", app_js)
+        self.assertIn("async function nudgeBuilderFlowNode", app_js)
+        self.assertIn("function builderProblemSummary", app_js)
+        self.assertIn("/flow-layout", app_js)
+        self.assertIn('operation: "update_state"', app_js)
+        self.assertIn('"dragstart"', app_js)
+        self.assertIn('"dragover"', app_js)
+        self.assertIn('"drop"', app_js)
+        self.assertIn('event.key !== "Escape"', app_js)
+        self.assertIn("builder-drop-indicator", styles)
+        self.assertIn("builder-state-node.drag-target", styles)
+        self.assertIn(".builder-flow-node", styles)
+        self.assertIn(".builder-flow-edge.success", styles)
         self.assertIn("async function createProfile", app_js)
         self.assertIn("function activateWorkspace(workspace", app_js)
         self.assertIn("function scheduleNextPoll()", app_js)
@@ -1374,6 +1472,399 @@ class DashboardTests(unittest.TestCase):
         module, args = relaunch.call_args.args[:2]
         self.assertEqual(module, "game_script_dev.dashboard")
         self.assertNotIn("--run-as-admin", args)
+
+    def test_server_exposes_action_schema_and_versioned_mutations(self) -> None:
+        source_with_comments = LONG_WAIT_PROFILE_YAML.replace(
+            "    actions:\n",
+            "    # Keep State guidance.\n    actions:\n",
+        ).replace(
+            "        seconds: 2",
+            "        seconds: 2 # tune carefully",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, source_with_comments)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                schema = _get_json(f"{base_url}/api/profile-schema")
+                wait_definition = next(
+                    action
+                    for action in schema["actions"]
+                    if action["type"] == "wait"
+                )
+                self.assertEqual(schema["version"], 2)
+                self.assertTrue(wait_definition["structured"])
+                self.assertEqual(wait_definition["fields"][0]["default"], 1)
+                self.assertEqual(
+                    {
+                        action["type"]
+                        for action in schema["actions"]
+                        if action["structured"]
+                    },
+                    {
+                        "wait",
+                        "log",
+                        "press_key",
+                        "hold_key",
+                        "click_point",
+                        "wait_for_state",
+                        "stop",
+                    },
+                )
+
+                initial = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(initial["version"], 0)
+                with self.assertRaises(HTTPError) as unversioned:
+                    _post_json(
+                        f"{base_url}/api/profiles/demo/actions",
+                        {
+                            "mutation": {
+                                "operation": "delete",
+                                "state": "home",
+                                "index": 0,
+                            },
+                        },
+                    )
+                self.assertEqual(unversioned.exception.code, 400)
+                updated = _post_json(
+                    f"{base_url}/api/profiles/demo/actions",
+                    {
+                        "expected_version": initial["version"],
+                        "expected_fingerprint": initial["draft_fingerprint"],
+                        "mutation": {
+                            "operation": "update",
+                            "state": "home",
+                            "index": 0,
+                            "fields": {"seconds": -1},
+                        },
+                    },
+                )
+                self.assertEqual(updated["version"], 1)
+                self.assertFalse(updated["valid"])
+                self.assertTrue(updated["history"]["can_undo"])
+                self.assertIn("# Keep State guidance.", updated["source"])
+                self.assertIn("seconds: -1 # tune carefully", updated["source"])
+                self.assertEqual(
+                    updated["problems"][0]["location"],
+                    "states.home.actions[0].seconds",
+                )
+                validated = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": updated["source"],
+                        "base_fingerprint": updated["base_fingerprint"],
+                        "expected_version": updated["version"],
+                    },
+                )
+                self.assertEqual(validated["version"], updated["version"])
+                self.assertTrue(validated["history"]["can_undo"])
+
+                undone = _post_json(
+                    f"{base_url}/api/profiles/demo/undo",
+                    {"expected_version": updated["version"]},
+                )
+                self.assertTrue(undone["valid"], undone["errors"])
+                self.assertIn("seconds: 2 # tune carefully", undone["source"])
+                self.assertTrue(undone["history"]["can_redo"])
+
+                redone = _post_json(
+                    f"{base_url}/api/profiles/demo/redo",
+                    {"expected_version": undone["version"]},
+                )
+                self.assertFalse(redone["valid"])
+
+                with self.assertRaises(HTTPError) as stale:
+                    _post_json(
+                        f"{base_url}/api/profiles/demo/actions",
+                        {
+                            "expected_version": updated["version"],
+                            "mutation": {
+                                "operation": "delete",
+                                "state": "home",
+                                "index": 0,
+                            },
+                        },
+                    )
+                self.assertEqual(stale.exception.code, 409)
+                current = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(current["source"], redone["source"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_saved_structured_wait_edit_is_used_by_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                edited = _post_json(
+                    f"{base_url}/api/profiles/demo/actions",
+                    {
+                        "expected_version": draft["version"],
+                        "mutation": {
+                            "operation": "update",
+                            "state": "home",
+                            "index": 0,
+                            "fields": {"seconds": 0.01},
+                        },
+                    },
+                )
+                self.assertTrue(edited["valid"], edited["errors"])
+                _post_json(f"{base_url}/api/profiles/demo/save", {})
+                self.assertIn(
+                    "seconds: 0.01",
+                    profile_path.read_text(encoding="utf-8"),
+                )
+
+                run = _post_json(
+                    f"{base_url}/api/runs",
+                    {"profile_id": "demo", "mode": "dry-run"},
+                )
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    current = _get_json(f"{base_url}/api/runs/{run['id']}")
+                    if current["status"] in {"completed", "failed", "interrupted"}:
+                        break
+                    time.sleep(0.02)
+                self.assertEqual(current["status"], "completed")
+                review = _get_json(f"{base_url}/api/runs/{run['id']}/review")
+                wait_event = next(
+                    event
+                    for event in review["timeline"]
+                    if event["event"] == "action_completed"
+                )
+                self.assertEqual(wait_event["action_type"], "wait")
+                self.assertIn("0.01", wait_event["action_summary"])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_structured_mutation_preview_requires_matching_confirmation(self) -> None:
+        source = LONG_WAIT_PROFILE_YAML.replace(
+            "      - type: wait",
+            "      # Keep timing context.\n      - type: wait",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root, source)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                request = {
+                    "expected_version": draft["version"],
+                    "expected_fingerprint": draft["draft_fingerprint"],
+                    "mutation": {
+                        "operation": "delete",
+                        "state": "home",
+                        "index": 0,
+                    },
+                }
+                preview = _post_json(
+                    f"{base_url}/api/profiles/demo/actions/preview",
+                    request,
+                )
+                self.assertTrue(preview["requires_confirmation"])
+                self.assertTrue(preview["comment_changes"])
+                self.assertIn("-      # Keep timing context.", preview["diff"])
+
+                with self.assertRaises(HTTPError) as unconfirmed:
+                    _post_json(
+                        f"{base_url}/api/profiles/demo/actions",
+                        request,
+                    )
+                self.assertEqual(unconfirmed.exception.code, 428)
+                unchanged = _get_json(f"{base_url}/api/profiles/demo/draft")
+                self.assertEqual(unchanged["version"], draft["version"])
+
+                confirmed = _post_json(
+                    f"{base_url}/api/profiles/demo/actions",
+                    {
+                        **request,
+                        "confirmed_preview_fingerprint": preview[
+                            "updated_fingerprint"
+                        ],
+                    },
+                )
+                self.assertEqual(confirmed["document"]["states"]["home"]["actions"], [])
+                self.assertNotIn("# Keep timing context.", confirmed["source"])
+                self.assertEqual(profile_path.read_text(encoding="utf-8"), source)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_state_validation_problem_has_a_navigable_location(self) -> None:
+        source = PROFILE_YAML.replace("    result: success", '    result: ""')
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_profile(root, PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                invalid = _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": source,
+                        "base_fingerprint": draft["base_fingerprint"],
+                        "expected_version": draft["version"],
+                    },
+                )
+
+                self.assertFalse(invalid["valid"])
+                self.assertEqual(
+                    invalid["problems"][0]["location"],
+                    "states.done.result",
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_flow_mutations_and_builder_only_layout_are_versioned(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = _write_profile(root, LONG_WAIT_PROFILE_YAML)
+            server = create_server("127.0.0.1", 0, root, root / "logs")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                draft = _get_json(f"{base_url}/api/profiles/demo/draft")
+                mutation = {
+                    "operation": "update_state",
+                    "state": "home",
+                    "make_initial": False,
+                    "terminal": False,
+                    "on_success": "done",
+                    "on_failure": "graceful_termination",
+                }
+                preview = _post_json(
+                    f"{base_url}/api/profiles/demo/flow/preview",
+                    {
+                        "expected_version": draft["version"],
+                        "expected_fingerprint": draft["draft_fingerprint"],
+                        "mutation": mutation,
+                    },
+                )
+                self.assertFalse(preview["requires_confirmation"])
+                updated = _post_json(
+                    f"{base_url}/api/profiles/demo/flow",
+                    {
+                        "expected_version": draft["version"],
+                        "expected_fingerprint": draft["draft_fingerprint"],
+                        "mutation": mutation,
+                    },
+                )
+                self.assertEqual(
+                    updated["document"]["states"]["home"]["on_failure"],
+                    "graceful_termination",
+                )
+                self.assertEqual(
+                    profile_path.read_text(encoding="utf-8"),
+                    LONG_WAIT_PROFILE_YAML,
+                )
+
+                terminal_mutation = {
+                    "operation": "update_state",
+                    "state": "home",
+                    "make_initial": False,
+                    "terminal": True,
+                    "result": "success",
+                }
+                terminal_request = {
+                    "expected_version": updated["version"],
+                    "expected_fingerprint": updated["draft_fingerprint"],
+                    "mutation": terminal_mutation,
+                }
+                terminal_preview = _post_json(
+                    f"{base_url}/api/profiles/demo/flow/preview",
+                    terminal_request,
+                )
+                self.assertTrue(terminal_preview["requires_confirmation"])
+                with self.assertRaises(HTTPError) as unconfirmed:
+                    _post_json(
+                        f"{base_url}/api/profiles/demo/flow",
+                        terminal_request,
+                    )
+                self.assertEqual(unconfirmed.exception.code, 428)
+                terminal = _post_json(
+                    f"{base_url}/api/profiles/demo/flow",
+                    {
+                        **terminal_request,
+                        "confirmed_preview_fingerprint": terminal_preview[
+                            "updated_fingerprint"
+                        ],
+                    },
+                )
+                self.assertTrue(terminal["document"]["states"]["home"]["terminal"])
+                updated = _post_json(
+                    f"{base_url}/api/profiles/demo/undo",
+                    {
+                        "expected_version": terminal["version"],
+                        "expected_fingerprint": terminal["draft_fingerprint"],
+                    },
+                )
+                self.assertFalse(
+                    updated["document"]["states"]["home"].get("terminal", False)
+                )
+
+                layout = _get_json(
+                    f"{base_url}/api/profiles/demo/flow-layout"
+                )
+                self.assertEqual(layout["version"], 0)
+                moved_positions = dict(layout["positions"])
+                moved_positions["home"] = {
+                    "x": moved_positions["home"]["x"] + 25,
+                    "y": moved_positions["home"]["y"] + 30,
+                }
+                moved = _post_json(
+                    f"{base_url}/api/profiles/demo/flow-layout",
+                    {
+                        "expected_version": layout["version"],
+                        "positions": moved_positions,
+                    },
+                )
+                self.assertEqual(moved["version"], 1)
+                self.assertTrue(moved["history"]["can_undo"])
+                reloaded_catalog = ProfileCatalog(
+                    root / "profiles",
+                    draft_root=root / "drafts",
+                )
+                self.assertEqual(
+                    reloaded_catalog.get_flow_layout("demo")["positions"],
+                    moved["positions"],
+                )
+
+                tidy = _post_json(
+                    f"{base_url}/api/profiles/demo/flow-layout/tidy",
+                    {"expected_version": moved["version"]},
+                )
+                self.assertEqual(tidy["version"], 2)
+                self.assertNotEqual(tidy["positions"], moved["positions"])
+                restored = _post_json(
+                    f"{base_url}/api/profiles/demo/flow-layout/undo",
+                    {"expected_version": tidy["version"]},
+                )
+                self.assertEqual(restored["positions"], moved["positions"])
+                self.assertEqual(
+                    profile_path.read_text(encoding="utf-8"),
+                    LONG_WAIT_PROFILE_YAML,
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
 
 
 def _write_profile(

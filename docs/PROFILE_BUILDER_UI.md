@@ -45,9 +45,33 @@ explicit Save, atomic `profile.yaml` replacement, external-change conflict
 rejection, and retained revision backups. Invalid YAML remains recoverable and
 never replaces the Saved Profile Version.
 
-The visual State and Action flow remains read only. It reflects a valid Draft
-when possible and still needs the full graph canvas, structured field editing,
-drag and drop, asset editing, and stronger problem navigation described below.
+The first structured Action tracer is implemented. The State View exposes a
+metadata-driven `wait` palette entry, ordered Action Blocks, a `seconds`
+Inspector, keyboard reorder/cross-State Move/Duplicate/Enable/Delete commands,
+inline validation, a navigable Problems Drawer, and session undo/redo. Every mutation is applied
+to the same recoverable YAML Draft with a required Draft version/fingerprint;
+pending raw-editor autosaves are flushed first, and targeted YAML edits preserve
+untouched comments and ordering.
+
+The initial common Action forms (`wait`, `log`, `press_key`, `hold_key`,
+`click_point`, `wait_for_state`, and `stop`) are generated from the metadata
+contract. Action Blocks can be reordered or moved between States by pointer
+drag-and-drop with a visible insertion line, in-list auto-scroll, and Escape
+cancellation; palette Actions can also be dragged into the stack. The existing
+keyboard Add, Move, and Move-to-State controls remain equivalent interaction
+paths. Flow View now renders existing States and success/failure connectors,
+persists draggable node positions outside `profile.yaml`, supports deterministic
+and undoable `Tidy Flow`, and edits transitions plus initial/terminal State
+settings through the protected Draft. Precise keyboard node-nudge controls are
+the equivalent to graph dragging. The Context Rail now shows a clearly labelled
+Saved Profile Target Preview above the Inspector, so an unsaved Draft cannot be
+mistaken for the target configuration used by Live Run. State creation,
+rename/delete, more complex Action forms, and asset editing remain planned.
+
+Mutations that move, duplicate, or delete authored YAML now require an exact
+backend-generated diff preview and matching confirmation fingerprint. Contiguous
+comments immediately above an Action travel with that Action. Validation
+problems expose Action- or State-level locations for badges and navigation.
 
 ## Primary Users
 
@@ -501,7 +525,7 @@ existing Python schema and pack checks.
 
 Builder edits update a recoverable draft without replacing `profile.yaml`.
 Drafts may be incomplete or invalid and are persisted under application data.
-Session undo and redo remain planned. Explicit Save validates the complete
+Structured Action mutations have session undo and redo. Explicit Save validates the complete
 draft, creates revision history, and atomically replaces the saved profile;
 external file changes produce a conflict instead of being overwritten silently.
 
@@ -523,9 +547,22 @@ POST /api/profiles/{id}/validate-draft
 POST /api/profiles/{id}/save
 POST /api/profiles
 POST /api/profiles/{id}/discard-draft
+GET  /api/profile-schema
+POST /api/profiles/{id}/actions/preview
+POST /api/profiles/{id}/actions
+POST /api/profiles/{id}/flow/preview
+POST /api/profiles/{id}/flow
+POST /api/profiles/{id}/undo
+POST /api/profiles/{id}/redo
+GET  /api/profiles/{id}/flow-layout
+POST /api/profiles/{id}/flow-layout
+POST /api/profiles/{id}/flow-layout/tidy
+POST /api/profiles/{id}/flow-layout/undo
+POST /api/profiles/{id}/flow-layout/redo
+GET  /api/profiles/{id}/target-preview
 ```
 
-Planned structured and asset APIs:
+Planned asset APIs:
 
 ```text
 POST /api/profiles/{id}/assets
@@ -581,8 +618,9 @@ types are added.
 
 ### Phase 1: Read-Only Profile Builder View
 
-Status: foundation implemented; graph canvas and richer invalid-source problem
-navigation remain.
+Status: implemented for valid Drafts, including the graph canvas and navigable
+State/Action validation problems. Richer recovery views for unparseable YAML
+remain.
 
 Goal: make profiles easier to understand before editing them.
 
@@ -603,8 +641,9 @@ Acceptance checks:
 
 ### Phase 2: Writable Authoring
 
-Status: raw YAML Draft editing, blank Profile creation, validation, conflict-safe
-Save, and revision retention are implemented. Structured Action editing remains.
+Status: implemented for the initial common Action set, including raw YAML Draft
+editing, blank Profile creation, structured forms, drag/reorder, validation,
+conflict-safe Save, and revision retention.
 
 Goal: edit common action lists without touching YAML manually.
 
@@ -670,6 +709,10 @@ Acceptance checks:
 - missing assets and unknown regions are caught before dry-run/live use
 
 ### Phase 5: Full State Graph Editing
+
+Status: the editable existing-State graph, Transition editing, initial/terminal
+controls, deterministic layout, Builder-only node positions, and graph
+diagnostics are implemented. Add/rename/delete State operations remain.
 
 Goal: author the whole workflow visually.
 
