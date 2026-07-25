@@ -8,6 +8,8 @@ Flow graph are implemented on `codex/structured-action-editor`.
 Implemented:
 
 - complete top-level Action metadata catalogue and schema endpoint
+- complete labels, categories, keywords, defaults, choices, validation hints,
+  and compact summaries for every schema-supported Action
 - versioned insert, update, move, duplicate, enable/disable, and delete mutations
 - comment-preserving targeted YAML edits for Action lists and scalar fields
 - session undo and redo with stale-Draft conflict rejection
@@ -20,6 +22,8 @@ Implemented:
 - backend-enforced diff confirmation for mutations that move, duplicate, or
   remove authored YAML lines
 - Action- and State-level problem badges with navigable structured locations
+- severity-aware problem badges and navigation to the affected Action or State
+  field
 - pointer and native palette drag-and-drop with an explicit insertion line,
   in-list auto-scroll, Escape cancellation, and the existing keyboard commands
   as equivalent controls
@@ -27,6 +31,8 @@ Implemented:
   retention, external-change conflict protection, and saved-version dry-run proof
 - DOM State graph with success/failure connectors, deterministic automatic
   layout, draggable Builder-only positions, and an undoable `Tidy Flow`
+- Saved Profile Target Preview above the Action Inspector, plus precise
+  keyboard node-nudge controls as the equivalent to graph dragging
 - structured success/failure Transition, initial State, terminal State, and
   terminal-result editing through the same protected Draft
 - unreachable-State and missing-terminal-path diagnostics linked to graph nodes
@@ -111,6 +117,9 @@ This tracer must prove the structured mutation, YAML preservation, validation,
 Save, reload, conflict, and execution paths before more Action forms are added.
 
 ## Phase 3: Keyboard-First State View
+
+Status: implemented and verified in the Windows Operator Application at normal
+and compact widths.
 
 Use three stable workspace areas:
 
@@ -244,6 +253,9 @@ State creation, rename, and deletion remain part of the broader Profile Builder
 roadmap rather than this structured Action milestone.
 
 ## Test Plan
+
+The completed evidence matrix is recorded in
+`docs/STRUCTURED_ACTION_EDITOR_ACCEPTANCE.md`.
 
 ### Unit Tests
 

@@ -62,8 +62,11 @@ keyboard Add, Move, and Move-to-State controls remain equivalent interaction
 paths. Flow View now renders existing States and success/failure connectors,
 persists draggable node positions outside `profile.yaml`, supports deterministic
 and undoable `Tidy Flow`, and edits transitions plus initial/terminal State
-settings through the protected Draft. State creation/rename/delete, more complex
-Action forms, asset editing, and broader problem navigation remain planned.
+settings through the protected Draft. Precise keyboard node-nudge controls are
+the equivalent to graph dragging. The Context Rail now shows a clearly labelled
+Saved Profile Target Preview above the Inspector, so an unsaved Draft cannot be
+mistaken for the target configuration used by Live Run. State creation,
+rename/delete, more complex Action forms, and asset editing remain planned.
 
 Mutations that move, duplicate, or delete authored YAML now require an exact
 backend-generated diff preview and matching confirmation fingerprint. Contiguous
@@ -556,6 +559,7 @@ POST /api/profiles/{id}/flow-layout
 POST /api/profiles/{id}/flow-layout/tidy
 POST /api/profiles/{id}/flow-layout/undo
 POST /api/profiles/{id}/flow-layout/redo
+GET  /api/profiles/{id}/target-preview
 ```
 
 Planned asset APIs:

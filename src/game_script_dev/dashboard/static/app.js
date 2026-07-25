@@ -302,6 +302,50 @@ async function refreshTargetPreview({ force = false } = {}) {
   }
 }
 
+async function refreshBuilderTargetPreview() {
+  const image = $("builder-target-preview-image");
+  const empty = $("builder-target-preview-empty");
+  const meta = $("builder-target-preview-meta");
+  const frame = $("builder-target-preview-frame");
+  const button = $("refresh-builder-target-preview");
+  if (!state.selectedProfileId) {
+    image.hidden = true;
+    image.removeAttribute("src");
+    empty.hidden = false;
+    empty.textContent = "Select a Profile to inspect its target.";
+    meta.textContent = "The preview always uses the Saved Profile Version.";
+    frame.style.removeProperty("--builder-target-preview-ratio");
+    button.disabled = true;
+    return;
+  }
+  button.disabled = true;
+  empty.hidden = false;
+  empty.textContent = "Capturing Saved Profile target…";
+  try {
+    const preview = await api(
+      `/api/profiles/${encodeURIComponent(state.selectedProfileId)}/target-preview`,
+    );
+    const previewRatio = preview.height > 0 ? preview.width / preview.height : 16 / 9;
+    frame.style.setProperty(
+      "--builder-target-preview-ratio",
+      String(Math.max(previewRatio, 16 / 9)),
+    );
+    image.src = preview.data_url;
+    image.hidden = false;
+    empty.hidden = true;
+    meta.textContent = `${preview.title} · ${preview.process_name || "unknown process"} · client ${preview.width}×${preview.height} · Saved Profile`;
+  } catch (error) {
+    image.hidden = true;
+    image.removeAttribute("src");
+    empty.hidden = false;
+    empty.textContent = "Target preview unavailable";
+    meta.textContent = `${describeError(error)} · Saved Profile`;
+    frame.style.removeProperty("--builder-target-preview-ratio");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function startTargetPreviewStream() {
   const image = $("target-preview-image");
   const empty = $("target-preview-empty");
@@ -1064,6 +1108,9 @@ function activateWorkspace(workspace, { focus = false } = {}) {
     void runCommand(async () => {
       await flushBuilderAutosave();
       await refreshBuilderProfile();
+      if (state.activeWorkspace === "build") {
+        await refreshBuilderTargetPreview();
+      }
     });
   }
   if (focus) {
@@ -1466,9 +1513,9 @@ function renderBuilderDocument() {
     button.dataset.builderState = stateName;
     button.setAttribute("role", "listitem");
     const transitionParts = [stateValue.on_success, stateValue.on_failure].filter(Boolean);
-    const problemCount = stateProblems(stateName).length;
-    const problemBadge = problemCount
-      ? `<span class="builder-state-problems">${problemCount} error${problemCount === 1 ? "" : "s"}</span>`
+    const problemSummary = builderProblemSummary(stateProblems(stateName));
+    const problemBadge = problemSummary.count
+      ? `<span class="builder-state-problems ${problemSummary.className}">${escapeHtml(problemSummary.label)}</span>`
       : "";
     button.innerHTML = `<strong>${escapeHtml(stateName)}</strong><span>${stateValue.terminal ? "terminal" : transitionParts.length ? `to ${transitionParts.map(escapeHtml).join(" / ")}` : "no transition"}</span>${problemBadge}`;
     target.appendChild(button);
@@ -1543,6 +1590,14 @@ function renderBuilderFlowInspector() {
   $("builder-flow-initial").disabled = !stateName || state.structuredMutationPending;
   $("builder-flow-terminal").disabled = !stateName || state.structuredMutationPending;
   $("save-builder-flow-state").disabled = !stateName || state.structuredMutationPending;
+  for (const buttonId of [
+    "move-builder-node-up",
+    "move-builder-node-left",
+    "move-builder-node-down",
+    "move-builder-node-right",
+  ]) {
+    $(buttonId).disabled = !stateName || !state.builderFlowLayout;
+  }
 }
 
 function renderBuilderFlowGraph() {
@@ -1561,12 +1616,12 @@ function renderBuilderFlowGraph() {
     const stateValue = states[stateName] || {};
     const position = positions[stateName] || { x: 48, y: 48 };
     const initial = stateName === state.builderDocument?.initial_state;
-    const problems = stateProblems(stateName);
+    const problemSummary = builderProblemSummary(stateProblems(stateName));
     const kind = stateValue.terminal ? "Terminal" : (initial ? "Initial" : "State");
     const transition = stateValue.terminal
       ? `result ${stateValue.result || "missing"}`
       : `success ${stateValue.on_success || "missing"} · failure ${stateValue.on_failure || "graceful"}`;
-    return `<button type="button" class="builder-flow-node${stateName === state.selectedBuilderState ? " active" : ""}${stateValue.terminal ? " terminal" : ""}" data-builder-flow-state="${escapeHtml(stateName)}" style="left:${position.x}px;top:${position.y}px" aria-pressed="${stateName === state.selectedBuilderState ? "true" : "false"}"><strong>${escapeHtml(stateName)}</strong><span class="builder-flow-node-kind">${kind}</span><span class="builder-flow-node-transition">${escapeHtml(transition)}</span>${problems.length ? `<span class="builder-flow-node-problem">${problems.length} problem${problems.length === 1 ? "" : "s"}</span>` : ""}</button>`;
+    return `<button type="button" class="builder-flow-node${stateName === state.selectedBuilderState ? " active" : ""}${stateValue.terminal ? " terminal" : ""}" data-builder-flow-state="${escapeHtml(stateName)}" style="left:${position.x}px;top:${position.y}px" aria-pressed="${stateName === state.selectedBuilderState ? "true" : "false"}"><strong>${escapeHtml(stateName)}</strong><span class="builder-flow-node-kind">${kind}</span><span class="builder-flow-node-transition">${escapeHtml(transition)}</span>${problemSummary.count ? `<span class="builder-flow-node-problem ${problemSummary.className}">${escapeHtml(problemSummary.label)}</span>` : ""}</button>`;
   }).join("");
   renderBuilderFlowEdges();
   renderBuilderFlowInspector();
@@ -1609,10 +1664,10 @@ function renderBuilderState() {
   actions.innerHTML = actionValues.length
     ? actionValues.map((action, index) => {
       const definition = actionDefinition(action.type);
-      const problems = actionProblems(stateName, index);
+      const problemSummary = builderProblemSummary(actionProblems(stateName, index));
       const selected = index === state.selectedBuilderActionIndex;
-      const status = problems.length
-        ? `<span class="builder-action-status">${problems.length} error${problems.length === 1 ? "" : "s"}</span>`
+      const status = problemSummary.count
+        ? `<span class="builder-action-status ${problemSummary.className}">${escapeHtml(problemSummary.label)}</span>`
         : "";
       return `<li><button type="button" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}" aria-grabbed="false"><span class="builder-drag-handle" aria-hidden="true"><svg viewBox="0 0 12 18" width="12" height="18" fill="currentColor"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg></span><span class="builder-action-copy"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</span></button></li>`;
     }).join("")
@@ -1660,6 +1715,19 @@ function renderBuilderActionPalette() {
 function actionProblems(stateName, actionIndex) {
   const prefix = `states.${stateName}.actions[${actionIndex}]`;
   return (state.builderDraft?.problems || []).filter((problem) => problem.location?.startsWith(prefix));
+}
+
+function builderProblemSummary(problems) {
+  const warningCount = problems.filter((problem) => problem.severity === "warning").length;
+  const errorCount = problems.length - warningCount;
+  const parts = [];
+  if (errorCount) parts.push(`${errorCount} error${errorCount === 1 ? "" : "s"}`);
+  if (warningCount) parts.push(`${warningCount} warning${warningCount === 1 ? "" : "s"}`);
+  return {
+    count: problems.length,
+    label: parts.join(", "),
+    className: errorCount ? "bad" : "warn",
+  };
 }
 
 function stateProblems(stateName) {
@@ -1771,8 +1839,9 @@ function renderBuilderActionInspector() {
 
 function renderBuilderProblems() {
   const problems = state.builderDraft?.problems || [];
+  const summary = builderProblemSummary(problems);
   $("builder-problem-count").textContent = String(problems.length);
-  $("builder-problem-count").className = `badge ${problems.length ? "bad" : "good"}`;
+  $("builder-problem-count").className = `badge ${problems.length ? summary.className : "good"}`;
   $("builder-problem-list").innerHTML = problems.length
     ? problems.map((problem, index) => `<li><button type="button" data-builder-problem-index="${index}">${escapeHtml(problem.location ? `${problem.location}: ${problem.message}` : problem.message)}</button></li>`).join("")
     : '<li class="muted">No Draft Validation problems.</li>';
@@ -1982,6 +2051,21 @@ async function restoreBuilderFlowLayout(direction) {
   );
   renderBuilderFlowGraph();
   showNotice(`${direction === "undo" ? "Undo" : "Redo"} layout completed.`, "good");
+}
+
+async function nudgeBuilderFlowNode(deltaX, deltaY) {
+  const stateName = state.selectedBuilderState;
+  const current = builderFlowPositions()[stateName];
+  if (!stateName || !current) return;
+  const positions = structuredClone(builderFlowPositions());
+  positions[stateName] = {
+    x: Math.max(0, current.x + deltaX),
+    y: Math.max(0, current.y + deltaY),
+  };
+  await saveBuilderFlowLayout(positions);
+  window.requestAnimationFrame(() => {
+    document.querySelector(`[data-builder-flow-state="${stateName}"]`)?.focus();
+  });
 }
 
 async function restoreBuilderActionHistory(direction) {
@@ -2264,6 +2348,9 @@ $("builder-yaml-editor").addEventListener("input", queueBuilderDraftAutosave);
 $("validate-builder-draft").addEventListener("click", () => runCommand(() => validateBuilderDraft()));
 $("save-builder-profile").addEventListener("click", () => runCommand(() => saveBuilderProfile()));
 $("reload-builder-source").addEventListener("click", () => runCommand(() => discardBuilderDraft()));
+$("refresh-builder-target-preview").addEventListener("click", () => runCommand(
+  refreshBuilderTargetPreview,
+));
 $("undo-builder-action").addEventListener("click", () => runCommand(() => restoreBuilderActionHistory("undo")));
 $("redo-builder-action").addEventListener("click", () => runCommand(() => restoreBuilderActionHistory("redo")));
 $("builder-action-search").addEventListener("input", renderBuilderActionPalette);
@@ -2408,6 +2495,18 @@ $("undo-builder-layout").addEventListener("click", () => runCommand(
 ));
 $("redo-builder-layout").addEventListener("click", () => runCommand(
   () => restoreBuilderFlowLayout("redo"),
+));
+$("move-builder-node-up").addEventListener("click", () => runCommand(
+  () => nudgeBuilderFlowNode(0, -24),
+));
+$("move-builder-node-left").addEventListener("click", () => runCommand(
+  () => nudgeBuilderFlowNode(-24, 0),
+));
+$("move-builder-node-down").addEventListener("click", () => runCommand(
+  () => nudgeBuilderFlowNode(0, 24),
+));
+$("move-builder-node-right").addEventListener("click", () => runCommand(
+  () => nudgeBuilderFlowNode(24, 0),
 ));
 
 $("builder-action-list").addEventListener("click", (event) => {
@@ -2746,11 +2845,22 @@ $("builder-problem-list").addEventListener("click", (event) => {
   if (!match) state.builderView = "flow";
   renderBuilderDocument();
   window.requestAnimationFrame(() => {
-    const target = match?.[3]
-      ? document.querySelector(`[data-builder-action-field="${match[3]}"]`)
-      : (match
-        ? document.querySelector(`[data-builder-action-index="${match[2]}"]`)
-        : document.querySelector(`[data-builder-flow-state="${state.selectedBuilderState}"]`));
+    const stateFieldTargets = {
+      on_success: "builder-flow-success",
+      on_failure: "builder-flow-failure",
+      result: "builder-flow-result",
+      terminal: "builder-flow-terminal",
+    };
+    let target;
+    if (match?.[3]) {
+      target = document.querySelector(`[data-builder-action-field="${match[3]}"]`);
+    } else if (match) {
+      target = document.querySelector(`[data-builder-action-index="${match[2]}"]`);
+    } else if (stateMatch?.[2] && stateFieldTargets[stateMatch[2]]) {
+      target = $(stateFieldTargets[stateMatch[2]]);
+    } else {
+      target = document.querySelector(`[data-builder-flow-state="${state.selectedBuilderState}"]`);
+    }
     target?.focus();
   });
 });
@@ -2786,6 +2896,17 @@ $("target-preview-image").addEventListener("error", () => {
   empty.hidden = false;
   empty.textContent = "Target preview unavailable";
   image.hidden = true;
+});
+
+$("builder-target-preview-image").addEventListener("load", () => {
+  $("builder-target-preview-image").hidden = false;
+  $("builder-target-preview-empty").hidden = true;
+});
+
+$("builder-target-preview-image").addEventListener("error", () => {
+  $("builder-target-preview-image").hidden = true;
+  $("builder-target-preview-empty").hidden = false;
+  $("builder-target-preview-empty").textContent = "Target preview could not be displayed";
 });
 
 async function initialize() {

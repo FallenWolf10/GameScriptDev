@@ -719,6 +719,13 @@ class DashboardTests(unittest.TestCase):
                 recovered = _get_json(f"{base_url}/api/profiles/demo/draft")
                 self.assertEqual(recovered["source"], invalid_source)
                 self.assertTrue(recovered["exists"])
+                restarted_catalog = ProfileCatalog(
+                    root / "profiles",
+                    draft_root=root / "drafts",
+                )
+                restarted_draft = restarted_catalog.get_draft("demo")
+                self.assertEqual(restarted_draft["source"], invalid_source)
+                self.assertFalse(restarted_draft["valid"])
 
                 with self.assertRaises(HTTPError) as invalid_save:
                     _post_json(f"{base_url}/api/profiles/demo/save", {})
@@ -993,7 +1000,7 @@ class DashboardTests(unittest.TestCase):
     def test_server_requires_and_accepts_per_attempt_live_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            _write_profile(root)
+            profile_path = _write_profile(root)
             server = create_server("127.0.0.1", 0, root, root / "logs")
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -1001,6 +1008,27 @@ class DashboardTests(unittest.TestCase):
                 base_url = f"http://127.0.0.1:{server.server_port}"
                 registry = server.dashboard_state.runs  # type: ignore[attr-defined]
                 registry._last_dry_run_success["demo"] = True  # type: ignore[attr-defined]
+                source = _get_json(f"{base_url}/api/profiles/demo/source")
+                draft_only_source = PROFILE_YAML.replace(
+                    "result: success",
+                    "result: draft_only",
+                )
+                _post_json(
+                    f"{base_url}/api/profiles/demo/draft",
+                    {
+                        "source": draft_only_source,
+                        "base_fingerprint": source["fingerprint"],
+                    },
+                )
+                observed_results: list[str] = []
+
+                class CapturingSavedProfileEngine:
+                    def __init__(self, *, profile, **_kwargs) -> None:
+                        observed_results.append(profile.states["done"].result)
+
+                    def run(self) -> str:
+                        return observed_results[-1]
+
                 with patch(
                     "game_script_dev.dashboard.server.DashboardRequestHandler._readiness"
                 ) as readiness:
@@ -1016,16 +1044,32 @@ class DashboardTests(unittest.TestCase):
                         )
                     self.assertEqual(missing_confirmation.exception.code, 400)
 
-                    response = _post_json(
-                        f"{base_url}/api/runs",
-                        {
-                            "profile_id": "demo",
-                            "mode": "live",
-                            "confirmation": LIVE_CONFIRMATION_VALUE,
-                        },
-                    )
+                    with patch(
+                        "game_script_dev.dashboard.run_registry.Engine",
+                        CapturingSavedProfileEngine,
+                    ):
+                        response = _post_json(
+                            f"{base_url}/api/runs",
+                            {
+                                "profile_id": "demo",
+                                "mode": "live",
+                                "confirmation": LIVE_CONFIRMATION_VALUE,
+                            },
+                        )
+                        _wait_for_server_run(base_url, response["id"])
 
                 self.assertEqual(response["mode"], "live")
+                completed = _get_json(f"{base_url}/api/runs/{response['id']}")
+                self.assertEqual(observed_results, ["success"])
+                self.assertEqual(completed["final_result"], "success")
+                self.assertEqual(
+                    profile_path.read_text(encoding="utf-8"),
+                    PROFILE_YAML,
+                )
+                self.assertEqual(
+                    _get_json(f"{base_url}/api/profiles/demo/draft")["source"],
+                    draft_only_source,
+                )
             finally:
                 server.shutdown()
                 server.server_close()
@@ -1312,6 +1356,9 @@ class DashboardTests(unittest.TestCase):
             "builder-action-list",
             "builder-action-palette",
             "builder-action-inspector-form",
+            "builder-target-preview-image",
+            "builder-target-preview-meta",
+            "refresh-builder-target-preview",
             "builder-diff-dialog",
             "builder-diff-preview",
             "confirm-builder-diff",
@@ -1329,6 +1376,10 @@ class DashboardTests(unittest.TestCase):
             "tidy-builder-flow",
             "undo-builder-layout",
             "redo-builder-layout",
+            "move-builder-node-up",
+            "move-builder-node-left",
+            "move-builder-node-down",
+            "move-builder-node-right",
             "create-profile-button",
             "create-profile-dialog",
             "create-profile-form",
@@ -1380,6 +1431,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("function renderBuilderFlowGraph", app_js)
         self.assertIn("async function mutateBuilderFlow", app_js)
         self.assertIn("async function tidyBuilderFlowLayout", app_js)
+        self.assertIn("async function refreshBuilderTargetPreview", app_js)
+        self.assertIn("async function nudgeBuilderFlowNode", app_js)
+        self.assertIn("function builderProblemSummary", app_js)
         self.assertIn("/flow-layout", app_js)
         self.assertIn('operation: "update_state"', app_js)
         self.assertIn('"dragstart"', app_js)

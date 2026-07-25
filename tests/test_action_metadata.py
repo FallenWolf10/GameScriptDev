@@ -60,6 +60,22 @@ class ActionMetadataTests(unittest.TestCase):
             {definition.action_type for definition in ACTION_DEFINITIONS.values()},
         )
 
+    def test_every_builder_definition_exposes_complete_editor_metadata(self) -> None:
+        for action_type, definition in ACTION_DEFINITIONS.items():
+            with self.subTest(action_type=action_type):
+                self.assertTrue(definition.label)
+                self.assertTrue(definition.category)
+                self.assertTrue(definition.keywords)
+                if definition.fields:
+                    self.assertTrue(definition.summary_fields)
+                self.assertEqual(
+                    len({field.name for field in definition.fields}),
+                    len(definition.fields),
+                )
+                for field in definition.fields:
+                    self.assertTrue(field.kind)
+                    self.assertTrue(field.hint)
+
     def test_wait_definition_exposes_structured_editor_contract(self) -> None:
         definition = ACTION_DEFINITIONS["wait"]
 

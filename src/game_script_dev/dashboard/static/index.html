@@ -276,6 +276,20 @@
               </section>
             </section>
             <aside class="builder-action-inspector" aria-labelledby="builder-inspector-title">
+              <figure class="builder-context-preview" aria-labelledby="builder-context-preview-title">
+                <div class="builder-context-preview-heading">
+                  <div>
+                    <span class="eyebrow">Saved Profile</span>
+                    <h3 id="builder-context-preview-title">Target Preview</h3>
+                  </div>
+                  <button id="refresh-builder-target-preview" type="button">Refresh</button>
+                </div>
+                <div id="builder-target-preview-frame" class="builder-context-preview-frame">
+                  <span id="builder-target-preview-empty" class="muted">Refresh to inspect the saved Profile target.</span>
+                  <img id="builder-target-preview-image" alt="Saved Profile target window screenshot" hidden>
+                </div>
+                <figcaption id="builder-target-preview-meta" class="muted">Structured Draft changes do not alter this Saved Profile preview.</figcaption>
+              </figure>
               <span class="eyebrow">Context Rail</span>
               <h3 id="builder-inspector-title">Action Inspector</h3>
               <div id="builder-action-inspector-empty" class="muted">Select an Action to edit its settings.</div>
@@ -339,6 +353,13 @@
                     <select id="builder-flow-failure"></select>
                     <button id="save-builder-flow-state" class="primary-button" type="submit">Apply State Settings</button>
                   </form>
+                  <fieldset class="builder-node-nudge">
+                    <legend>Move selected node</legend>
+                    <button id="move-builder-node-up" type="button" aria-label="Move selected State node up">↑</button>
+                    <button id="move-builder-node-left" type="button" aria-label="Move selected State node left">←</button>
+                    <button id="move-builder-node-down" type="button" aria-label="Move selected State node down">↓</button>
+                    <button id="move-builder-node-right" type="button" aria-label="Move selected State node right">→</button>
+                  </fieldset>
                   <p class="muted">Node positions are Builder-only and never written to <code>profile.yaml</code>.</p>
                 </aside>
               </div>
