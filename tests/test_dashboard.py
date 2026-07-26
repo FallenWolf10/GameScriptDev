@@ -1352,9 +1352,35 @@ class DashboardTests(unittest.TestCase):
             "log-output",
             "artifacts",
             "profile-pack-detail",
+            "builder-state-navigation",
+            "builder-all-states-button",
+            "builder-state-search",
+            "builder-find-state",
+            "builder-canvas-reset-view",
+            "builder-auto-organize",
+            "builder-state-overview",
             "builder-state-list",
-            "builder-action-list",
+            "builder-state-minimap",
+            "builder-state-sections",
             "builder-action-palette",
+            "builder-action-library",
+            "builder-action-library-body",
+            "builder-action-world",
+            "move-builder-action-library",
+            "collapse-builder-action-library",
+            "toggle-builder-action-library",
+            "toggle-builder-action-inspector",
+            "collapse-builder-action-inspector",
+            "builder-canvas-zoom-out",
+            "builder-canvas-zoom-reset",
+            "builder-canvas-zoom-in",
+            "builder-canvas-zoom-value",
+            "builder-notes-drawer",
+            "builder-yaml-drawer",
+            "toggle-builder-notes-drawer",
+            "toggle-builder-yaml-drawer",
+            "toggle-builder-problems-drawer",
+            "builder-action-drag-status",
             "builder-action-inspector-form",
             "builder-target-preview-image",
             "builder-target-preview-meta",
@@ -1441,6 +1467,13 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('"drop"', app_js)
         self.assertIn('event.key !== "Escape"', app_js)
         self.assertIn("builder-drop-indicator", styles)
+        self.assertNotIn(".builder-action-block::before", styles)
+        self.assertNotIn(".builder-action-block::after", styles)
+        self.assertIn(".builder-action-settling", styles)
+        self.assertIn("@keyframes builder-action-settle", styles)
+        self.assertIn(".builder-tool-palette.canvas-hidden", styles)
+        self.assertIn(".builder-action-world", styles)
+        self.assertIn(".builder-state-detail.canvas-panning", styles)
         self.assertIn("builder-state-node.drag-target", styles)
         self.assertIn(".builder-flow-node", styles)
         self.assertIn(".builder-flow-edge.success", styles)
@@ -1448,6 +1481,557 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("function activateWorkspace(workspace", app_js)
         self.assertIn("function scheduleNextPoll()", app_js)
         self.assertNotIn("autoDryRun", app_js)
+
+        self.assertIn("function renderBuilderActionCanvasControls", app_js)
+        self.assertIn("function builderActionWorldBounds", app_js)
+        self.assertIn("function renderBuilderActionViewport", app_js)
+        self.assertIn("function scheduleBuilderActionViewportRender", app_js)
+        self.assertIn("function stopBuilderActionAutoPan", app_js)
+        self.assertIn("BUILDER_ACTION_AUTO_PAN_SPEED", app_js)
+        self.assertIn("function zoomBuilderActionCanvas", app_js)
+        self.assertIn("world.style.zoom = String(viewport.zoom);", app_js)
+        self.assertIn("canvas.scrollTop = 0;", app_js)
+        self.assertNotIn("a, #builder-action-list, .builder-tool-palette", app_js)
+        self.assertIn("&& state.builderDropSlot === slot", app_js)
+        self.assertIn("function builderDropSlot(list, clientY)", app_js)
+        self.assertIn('draggable="false"', app_js)
+        self.assertIn("overflow: visible;", styles)
+        self.assertIn("pointer-events: none;", styles)
+        self.assertNotIn("will-change: transform;", styles)
+        self.assertIn("function toggleBuilderDrawer", app_js)
+        self.assertIn('addEventListener("wheel"', app_js)
+        self.assertIn("function moveBuilderActionLibrary", app_js)
+        self.assertIn("function settleBuilderAction", app_js)
+        self.assertIn(
+            '"Actions can only be reordered inside their owning State. '
+            'Releasing here will not change the Draft."',
+            app_js,
+        )
+        self.assertNotIn(
+            '$("builder-state-list").addEventListener("drop"',
+            app_js,
+        )
+
+    def test_dashboard_static_ui_exposes_all_states_action_canvas_contract(
+        self,
+    ) -> None:
+        html = Path("src/game_script_dev/dashboard/static/index.html").read_text(
+            encoding="utf-8"
+        )
+        styles = Path("src/game_script_dev/dashboard/static/styles.css").read_text(
+            encoding="utf-8"
+        )
+        app_js = Path("src/game_script_dev/dashboard/static/app.js").read_text(
+            encoding="utf-8"
+        )
+
+        # The preferred grouped presentation keeps Profile States visible
+        # above the canvas. Redesign-only overview/minimap chrome remains
+        # hidden as behavior hooks rather than replacing that presentation.
+        self.assertIn(
+            'id="builder-state-sections" class="builder-state-sections" '
+            'role="list"',
+            html,
+        )
+        self.assertIn(
+            'aria-label="All Profile State Actions virtual canvas"',
+            html,
+        )
+        self.assertIn(
+            'id="builder-state-navigation" class="builder-state-navigation" '
+            'aria-label="State Actions navigation"',
+            html,
+        )
+        self.assertIn(
+            'id="builder-all-states-button" type="button" '
+            'aria-expanded="false" aria-controls="builder-state-overview"',
+            html,
+        )
+        self.assertIn(
+            '<label for="builder-state-search">Find a State</label>',
+            html,
+        )
+        self.assertIn(
+            'id="builder-state-overview" class="builder-state-overview" '
+            'aria-label="All States overview" hidden',
+            html,
+        )
+        self.assertIn(
+            'id="builder-state-minimap" class="builder-state-minimap" '
+            'role="group" aria-label="State canvas minimap"',
+            html,
+        )
+        self.assertNotIn(
+            'id="builder-state-minimap" class="builder-state-minimap" '
+            'role="status"',
+            html,
+        )
+        navigation_start = html.index('id="builder-state-navigation"')
+        navigation_end = html.index("</nav>", navigation_start)
+        state_list_position = html.index('id="builder-state-list"')
+        self.assertLess(navigation_start, state_list_position)
+        self.assertLess(state_list_position, navigation_end)
+        self.assertIn(".builder-behavior-hooks,", styles)
+        self.assertIn("#builder-state-overview {", styles)
+        self.assertIn("display: none !important;", styles)
+
+        # Every document state renders as a distinct roof-led section. Long
+        # sequences split every five Actions, then measured SVG paths preserve
+        # unambiguous order both within and across columns.
+        self.assertIn("function renderBuilderStateSections()", app_js)
+        self.assertIn(
+            "const stateNames = Object.keys(states);",
+            app_js,
+        )
+        self.assertIn(
+            "const BUILDER_ACTIONS_PER_COLUMN = 5;",
+            app_js,
+        )
+        self.assertIn(
+            'class="builder-state-section${active ? " active" : ""}"',
+            app_js,
+        )
+        self.assertIn(
+            'data-builder-state-section-handle="${escapeHtml(stateName)}"',
+            app_js,
+        )
+        self.assertIn(
+            'class="builder-state-action-connectors"',
+            app_js,
+        )
+        self.assertIn(
+            'data-builder-action-state="${escapeHtml(stateName)}"',
+            app_js,
+        )
+        self.assertIn(
+            "clip-path: polygon(50% 0, 100% 34%, 100% 100%, 0 100%, 0 34%);",
+            styles,
+        )
+        self.assertIn(".builder-state-action-columns", styles)
+        self.assertIn(".builder-state-action-connectors", styles)
+        self.assertNotIn(".builder-action-connectors", styles)
+        self.assertNotIn(".builder-action-column-continuation", styles)
+        self.assertNotIn(
+            ".builder-state-section .builder-action-list "
+            "li:not(.builder-drop-indicator)::before",
+            styles,
+        )
+        self.assertNotIn(
+            ".builder-state-section .builder-action-list li:last-child::after",
+            styles,
+        )
+        self.assertIn("function builderOffsetWithin(element, ancestor)", app_js)
+        self.assertIn("function renderBuilderActionConnectors()", app_js)
+        self.assertIn(
+            "const currentPosition = builderOffsetWithin(current, section);",
+            app_js,
+        )
+        self.assertIn(
+            "const nextPosition = builderOffsetWithin(next, section);",
+            app_js,
+        )
+        self.assertIn(
+            "const x1 = currentPosition.x + current.offsetWidth / 2;",
+            app_js,
+        )
+        self.assertIn(
+            "const y1 = currentPosition.y + current.offsetHeight;",
+            app_js,
+        )
+        self.assertIn(
+            "const y2 = nextPosition.y;",
+            app_js,
+        )
+        self.assertIn(
+            '=== next.closest(".builder-action-column");',
+            app_js,
+        )
+        self.assertIn(
+            '${sameColumn ? " same-column" : " cross-column"}',
+            app_js,
+        )
+        self.assertIn(
+            'x="${(x1 + x2) / 2}"',
+            app_js,
+        )
+        self.assertIn('text-anchor="middle"', app_js)
+        self.assertIn(">Next</text>", app_js)
+        self.assertIn(
+            "vector-effect=\"non-scaling-stroke\"",
+            app_js,
+        )
+        self.assertIn(
+            "overflow: visible;",
+            styles,
+        )
+        self.assertRegex(
+            styles,
+            r"(?s)\.builder-state-detail\s*\{.*?overflow:\s*hidden;.*?\}",
+        )
+        self.assertIn(
+            ".builder-state-action-connectors .cross-column path",
+            styles,
+        )
+        self.assertIn(
+            ".builder-state-action-connectors .same-column path",
+            styles,
+        )
+        self.assertIn("gap: 46px;", styles)
+        self.assertIn("flex: 0 0 296px;", styles)
+        self.assertIn("min-height: 68px;", styles)
+
+        # World dimensions support layout/minimap calculations; they do not
+        # clamp the independently pannable viewport.
+        self.assertIn("function builderActionWorldBounds()", app_js)
+        self.assertNotIn("BUILDER_ACTION_WORKSPACE_MIN_WIDTH", app_js)
+        self.assertNotIn("BUILDER_ACTION_WORKSPACE_MIN_HEIGHT", app_js)
+        self.assertIn(
+            "section.offsetLeft + section.offsetWidth",
+            app_js,
+        )
+        self.assertIn(
+            "section.offsetTop + section.offsetHeight",
+            app_js,
+        )
+        self.assertIn("function builderActionContentBounds()", app_js)
+        self.assertIn(
+            "Math.max(\n        BUILDER_ACTION_MIN_ZOOM,",
+            app_js,
+        )
+        self.assertIn(
+            "Math.min(availableWidth / content.width, "
+            "availableHeight / content.height)",
+            app_js,
+        )
+        self.assertIn(
+            "state.builderActionViewport.x = pan.originX + event.clientX - pan.startX;",
+            app_js,
+        )
+        self.assertIn(
+            "state.builderActionViewport.y = pan.originY + event.clientY - pan.startY;",
+            app_js,
+        )
+
+        # Section positions are profile-scoped client session state. The
+        # section background as well as its roof can move the layout, with no
+        # persistence API or Draft mutation.
+        self.assertIn(
+            "builderActionLayout: { profileId: null, positions: {} },",
+            app_js,
+        )
+        self.assertIn(
+            "function builderActionSectionPosition(stateName, index)",
+            app_js,
+        )
+        self.assertIn(
+            "state.builderActionLayout.positions[sectionDrag.stateName]",
+            app_js,
+        )
+        self.assertIn(
+            "(event.clientX - sectionDrag.startX) / zoom",
+            app_js,
+        )
+        self.assertIn(
+            'const section = event.target.closest("[data-builder-state-section]");',
+            app_js,
+        )
+        self.assertIn(
+            "const stateName = roof?.dataset.builderStateSectionHandle\n"
+            "    || section.dataset.builderStateSection;",
+            app_js,
+        )
+        self.assertIn(
+            "handle: roof || section,",
+            app_js,
+        )
+        self.assertNotIn("/state-actions-layout", app_js)
+
+        # Find, overview/minimap, reset and auto-organize provide deterministic
+        # recovery paths. Action pointer drops stay scoped to the owning State.
+        self.assertIn("function renderBuilderStateOverview()", app_js)
+        self.assertIn("function renderBuilderStateMinimap()", app_js)
+        self.assertIn(
+            'class="builder-state-minimap-section${active}"',
+            app_js,
+        )
+        self.assertIn(
+            ".builder-state-navigation",
+            styles,
+        )
+        self.assertIn("function bestBuilderStateMatch(query)", app_js)
+        self.assertIn("function findAndCenterBuilderState()", app_js)
+        self.assertIn("function autoOrganizeBuilderActionLayout()", app_js)
+        self.assertIn(
+            "const usableCanvasWidth = Math.max(540, "
+            "canvas.clientWidth - 128);",
+            app_js,
+        )
+        self.assertIn(
+            "usableCanvasWidth / BUILDER_ACTION_MIN_ZOOM",
+            app_js,
+        )
+        self.assertIn(
+            "x + width > maximumRowWidth",
+            app_js,
+        )
+        self.assertIn(
+            '$("builder-find-state")?.addEventListener('
+            '"click", findAndCenterBuilderState);',
+            app_js,
+        )
+        self.assertIn(
+            '$("builder-canvas-reset-view")?.addEventListener("click", () => {',
+            app_js,
+        )
+        self.assertIn(
+            '$("builder-auto-organize")?.addEventListener('
+            '"click", autoOrganizeBuilderActionLayout);',
+            app_js,
+        )
+        self.assertIn(
+            "function centerBuilderActionState(stateName, { smooth = true } = {})",
+            app_js,
+        )
+        self.assertIn(
+            "window.matchMedia(\"(prefers-reduced-motion: reduce)\").matches",
+            app_js,
+        )
+        self.assertIn(
+            "selectAndCenterBuilderState(button.dataset.builderState);",
+            app_js,
+        )
+        self.assertIn(
+            "function dropBuilderActionAtSlot(drag, slot, targetState)",
+            app_js,
+        )
+        self.assertIn(
+            'const list = event.target.closest("ol[data-builder-action-state]");',
+            app_js,
+        )
+        self.assertIn(
+            "const targetState = list.dataset.builderActionState;",
+            app_js,
+        )
+        self.assertIn(
+            "list.dataset.builderActionState === state.builderDrag.state",
+            app_js,
+        )
+        self.assertIn(
+            'operation: "move",',
+            app_js,
+        )
+        self.assertIn(
+            'operation: "move_to_state",',
+            app_js,
+        )
+
+    def test_dashboard_state_action_canvas_correction_contract(self) -> None:
+        html = Path("src/game_script_dev/dashboard/static/index.html").read_text(
+            encoding="utf-8"
+        )
+        styles = Path("src/game_script_dev/dashboard/static/styles.css").read_text(
+            encoding="utf-8"
+        )
+        app_js = Path("src/game_script_dev/dashboard/static/app.js").read_text(
+            encoding="utf-8"
+        )
+
+        # The correction preserves the existing grouped State presentation:
+        # every State owns its rendered Actions and its ordered SVG connectors.
+        self.assertIn(
+            'id="builder-state-sections" class="builder-state-sections" '
+            'role="list"',
+            html,
+        )
+        self.assertIn("function renderBuilderStateSections()", app_js)
+        self.assertIn(
+            "const stateNames = Object.keys(states);",
+            app_js,
+        )
+        self.assertIn(
+            'data-builder-state-section="${escapeHtml(stateName)}"',
+            app_js,
+        )
+        self.assertIn(
+            'data-builder-action-state="${escapeHtml(stateName)}"',
+            app_js,
+        )
+        self.assertIn(
+            'class="builder-state-action-connectors"',
+            app_js,
+        )
+        self.assertIn(
+            "Number(left.dataset.builderActionIndex) "
+            "- Number(right.dataset.builderActionIndex)",
+            app_js,
+        )
+        self.assertIn(
+            'data-builder-action-connector-from="'
+            '${current.dataset.builderActionIndex}"',
+            app_js,
+        )
+        self.assertIn(
+            'data-builder-action-connector-to="'
+            '${next.dataset.builderActionIndex}"',
+            app_js,
+        )
+
+        # State Actions consumes the Build page below the application controls.
+        # The old centered panel framing is removed, while navigation and
+        # recoverable drawers remain part of the full-page workspace.
+        self.assertRegex(
+            styles,
+            r"(?s)#workspace-build\.state-actions-mode\s*\{"
+            r".*?padding:\s*0;.*?overflow:\s*hidden;.*?\}",
+        )
+        self.assertRegex(
+            styles,
+            r"(?s)#workspace-build\.state-actions-mode \.secondary-grid\s*\{"
+            r".*?position:\s*relative;.*?display:\s*block;"
+            r".*?max-width:\s*none;.*?height:\s*100%;.*?\}",
+        )
+        self.assertRegex(
+            styles,
+            r"(?s)#workspace-build\.state-actions-mode "
+            r"\.builder-readonly-view\s*\{"
+            r".*?width:\s*100%;.*?height:\s*100%;.*?border:\s*0;"
+            r".*?border-radius:\s*0;.*?padding:\s*0;"
+            r".*?box-shadow:\s*none;.*?\}",
+        )
+        self.assertRegex(
+            styles,
+            r"(?s)#workspace-build\.state-actions-mode "
+            r"\.builder-state-detail\s*\{"
+            r".*?border:\s*0;.*?border-radius:\s*0;"
+            r".*?box-shadow:\s*none;.*?\}",
+        )
+        self.assertIn(
+            "#workspace-build.state-actions-mode .builder-drawer-actions",
+            styles,
+        )
+        self.assertIn(
+            "#workspace-build.state-actions-mode "
+            ".builder-problems-drawer:not([open])",
+            styles,
+        )
+        world_rule_start = styles.index(".builder-action-world {")
+        world_rule_end = styles.index("}", world_rule_start)
+        world_rule = styles[world_rule_start:world_rule_end]
+        self.assertNotIn("border:", world_rule)
+        self.assertNotIn("background:", world_rule)
+
+        # Valid viewport coordinates are never clamped to artificial workspace
+        # edges. Normalization only recovers corrupt/non-finite session state.
+        self.assertNotIn("function clampBuilderActionViewport()", app_js)
+        self.assertIn("function normalizeBuilderActionViewport()", app_js)
+        self.assertIn(
+            "if (!Number.isFinite(viewport.x)) viewport.x = 0;",
+            app_js,
+        )
+        self.assertIn(
+            "if (!Number.isFinite(viewport.y)) viewport.y = 0;",
+            app_js,
+        )
+        self.assertIn(
+            "if (!Number.isFinite(viewport.zoom) || viewport.zoom <= 0) "
+            "viewport.zoom = 1;",
+            app_js,
+        )
+        self.assertIn("normalizeBuilderActionViewport();", app_js)
+        self.assertNotIn("Math.min(Math.max(offset", app_js)
+        self.assertNotIn("BUILDER_ACTION_BOUNDARY_VISIBILITY", app_js)
+        self.assertNotIn("BUILDER_ACTION_WORKSPACE_MIN_WIDTH", app_js)
+        self.assertNotIn("BUILDER_ACTION_WORKSPACE_MIN_HEIGHT", app_js)
+        self.assertIn(
+            "if (!container || !sections.length) "
+            "return { width: 960, height: 760 };",
+            app_js,
+        )
+        self.assertIn("let width = 1;", app_js)
+        self.assertIn("let height = 1;", app_js)
+        self.assertIn(
+            "state.builderActionViewport.x = pan.originX "
+            "+ event.clientX - pan.startX;",
+            app_js,
+        )
+        self.assertIn(
+            "state.builderActionViewport.y = pan.originY "
+            "+ event.clientY - pan.startY;",
+            app_js,
+        )
+
+        # Recovery/navigation controls remain available even though normal pan
+        # can continue indefinitely in every direction.
+        self.assertIn(
+            '$("builder-canvas-reset-view")?.addEventListener("click", () => {',
+            app_js,
+        )
+        self.assertIn(
+            '$("builder-auto-organize")?.addEventListener('
+            '"click", autoOrganizeBuilderActionLayout);',
+            app_js,
+        )
+        self.assertIn(
+            'id="builder-state-navigation" class="builder-state-navigation"',
+            html,
+        )
+        self.assertIn('id="builder-state-list"', html)
+        self.assertIn(".builder-state-navigation", styles)
+
+        # Pointer reordering begins on the whole Action card, including copy on
+        # its right side. Nested controls retain normal behavior, and a click is
+        # not consumed until the existing movement threshold activates a drag.
+        pointer_listener = app_js.index(
+            '$("builder-state-sections").addEventListener("pointerdown", '
+            "(event) => {"
+        )
+        self.assertGreaterEqual(pointer_listener, 0)
+        pointer_listener_end = app_js.index(
+            '$("builder-state-sections").addEventListener("pointerdown", '
+            "(event) => {",
+            pointer_listener + 1,
+        )
+        pointer_handler = app_js[pointer_listener:pointer_listener_end]
+        self.assertIn(
+            'event.target.closest("button[data-builder-action-index]")',
+            pointer_handler,
+        )
+        self.assertIn(
+            '"button, input, select, textarea, a, summary, [contenteditable]"',
+            pointer_handler,
+        )
+        self.assertIn(
+            "interactiveTarget && interactiveTarget !== button",
+            pointer_handler,
+        )
+        self.assertIn("button.setPointerCapture?.(event.pointerId);", pointer_handler)
+        self.assertNotIn("builder-drag-handle", pointer_handler)
+        self.assertNotIn("event.preventDefault();", pointer_handler)
+        self.assertIn("pointer.active = true;", app_js)
+        self.assertIn("if (!pointer.active && distance < 5) return;", app_js)
+
+        # Reorder still follows the existing structured Draft mutation path, so
+        # versioned Draft Safety and session undo/redo semantics stay intact.
+        self.assertIn("function dropBuilderActionAtSlot(", app_js)
+        self.assertIn(
+            "void runCommand(() => mutateBuilderAction(",
+            app_js,
+        )
+        self.assertIn(
+            'operation: "move",',
+            app_js,
+        )
+        self.assertIn(
+            'restoreBuilderActionHistory("undo")',
+            app_js,
+        )
+        self.assertIn(
+            'restoreBuilderActionHistory("redo")',
+            app_js,
+        )
+        self.assertIn('id="builder-flow-canvas"', html)
+        self.assertIn("function renderBuilderFlowGraph()", app_js)
+        self.assertIn("function mutateBuilderFlow(", app_js)
 
     def test_dashboard_can_relaunch_as_admin(self) -> None:
         with patch(

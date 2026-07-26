@@ -235,6 +235,11 @@
                 <button id="builder-state-view-tab" type="button" role="tab" aria-selected="true" aria-controls="builder-state-view">State Actions</button>
                 <button id="builder-graph-view-tab" type="button" role="tab" aria-selected="false" aria-controls="builder-graph-view">Flow</button>
               </div>
+              <div class="builder-drawer-actions" aria-label="State Actions drawers">
+                <button id="toggle-builder-notes-drawer" type="button" aria-expanded="false" aria-controls="builder-notes-drawer">Notes</button>
+                <button id="toggle-builder-yaml-drawer" type="button" aria-expanded="false" aria-controls="builder-yaml-drawer">YAML</button>
+                <button id="toggle-builder-problems-drawer" type="button" aria-expanded="false" aria-controls="builder-problems-drawer">Problems</button>
+              </div>
               <button id="undo-builder-action" type="button" disabled>Undo</button>
               <button id="redo-builder-action" type="button" disabled>Redo</button>
               <span id="builder-fingerprint" class="muted">No source loaded</span>
@@ -249,49 +254,78 @@
           </div>
           <div id="builder-flow" class="builder-flow" hidden>
             <div id="builder-state-view" class="builder-state-view" role="tabpanel" aria-labelledby="builder-state-view-tab">
-            <aside class="builder-tool-palette" aria-labelledby="builder-palette-title">
-              <span class="eyebrow">Tool Palette</span>
-              <h3 id="builder-palette-title">Actions</h3>
-              <label for="builder-action-search">Search Actions</label>
-              <input id="builder-action-search" type="search" placeholder="Search by name or type" autocomplete="off">
-              <div id="builder-action-palette" class="builder-action-palette" role="list"></div>
-            </aside>
             <section class="builder-state-workspace" aria-live="polite">
-              <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
-              <section class="builder-state-detail">
+              <nav id="builder-state-navigation" class="builder-state-navigation" aria-label="State Actions navigation">
+                <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
+                <div class="builder-canvas-recovery" aria-label="Canvas recovery">
+                <button id="builder-canvas-reset-view" type="button">Reset View</button>
+                <button id="builder-auto-organize" type="button">Auto-organize</button>
+                </div>
+                <div class="builder-behavior-hooks" aria-hidden="true">
+                  <button id="builder-all-states-button" type="button" aria-expanded="false" aria-controls="builder-state-overview" tabindex="-1">All States</button>
+                  <label for="builder-state-search">Find a State</label>
+                  <input id="builder-state-search" type="search" placeholder="State name" autocomplete="off" tabindex="-1">
+                  <button id="builder-find-state" type="button" tabindex="-1">Find State</button>
+                </div>
+              </nav>
+              <section id="builder-state-overview" class="builder-state-overview" aria-label="All States overview" hidden>
+                <div id="builder-state-minimap" class="builder-state-minimap" role="group" aria-label="State canvas minimap"></div>
+              </section>
+              <section id="builder-state-detail" class="builder-state-detail">
                 <div class="builder-state-detail-heading">
                   <div>
                     <span class="eyebrow">Action Stack</span>
                     <h2 id="builder-state-name">No State selected</h2>
                   </div>
-                  <span id="builder-state-kind" class="badge">State</span>
+                  <div class="builder-state-canvas-actions">
+                    <span id="builder-state-kind" class="badge">State</span>
+                    <div class="builder-canvas-zoom-controls builder-behavior-hooks" aria-label="Canvas zoom" aria-hidden="true">
+                      <button id="builder-canvas-zoom-out" type="button" aria-label="Zoom out">−</button>
+                      <button id="builder-canvas-zoom-reset" type="button" aria-label="Reset canvas view"><span id="builder-canvas-zoom-value">100%</span></button>
+                      <button id="builder-canvas-zoom-in" type="button" aria-label="Zoom in">+</button>
+                    </div>
+                    <button id="toggle-builder-action-library" type="button" aria-expanded="true" aria-controls="builder-action-library">Hide Library</button>
+                    <button id="toggle-builder-action-inspector" type="button" aria-expanded="false" aria-controls="builder-action-inspector">Show Inspector</button>
+                  </div>
                 </div>
-                <dl id="builder-state-transitions" class="builder-transition-list"></dl>
-                <details>
-                  <summary>Required Anchors</summary>
+                <details class="builder-state-context">
+                  <summary>State context</summary>
+                  <dl id="builder-state-transitions" class="builder-transition-list"></dl>
+                  <h3>Required Anchors</h3>
                   <ul id="builder-anchor-list" class="builder-anchor-list"></ul>
                 </details>
-                <h3>Ordered Actions</h3>
-                <ol id="builder-action-list" class="builder-action-list"></ol>
+                <div id="builder-action-world" class="builder-action-world" aria-label="All Profile State Actions virtual canvas">
+                  <p id="builder-action-canvas-help" class="builder-action-canvas-help">Drag a State heading to arrange its group, blank space to pan, or an Action card to reorder it. Use a State name, Reset View, or Auto-organize to recover the grouped view.</p>
+                  <div id="builder-state-sections" class="builder-state-sections" role="list" aria-label="Profile State Action sections" aria-describedby="builder-action-canvas-help"></div>
+                </div>
+                <div id="builder-action-drag-status" class="sr-only" role="status" aria-live="polite"></div>
+                <aside id="builder-action-library" class="builder-tool-palette" aria-labelledby="builder-palette-title">
+                  <div class="builder-library-heading">
+                    <button id="move-builder-action-library" class="builder-library-move" type="button" aria-label="Move Action Library. Use arrow keys or drag." title="Drag or use arrow keys to move the Action Library">
+                      <svg viewBox="0 0 12 18" width="12" height="18" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg>
+                    </button>
+                    <div>
+                      <span class="eyebrow">Action Library</span>
+                      <h3 id="builder-palette-title">Add a block</h3>
+                    </div>
+                    <button id="collapse-builder-action-library" type="button" aria-label="Collapse Action Library" aria-expanded="true" aria-controls="builder-action-library-body">−</button>
+                  </div>
+                  <div id="builder-action-library-body">
+                    <label for="builder-action-search">Search Actions</label>
+                    <input id="builder-action-search" type="search" placeholder="Search by name or type" autocomplete="off">
+                    <div id="builder-action-palette" class="builder-action-palette" role="list"></div>
+                  </div>
+                </aside>
               </section>
             </section>
-            <aside class="builder-action-inspector" aria-labelledby="builder-inspector-title">
-              <figure class="builder-context-preview" aria-labelledby="builder-context-preview-title">
-                <div class="builder-context-preview-heading">
-                  <div>
-                    <span class="eyebrow">Saved Profile</span>
-                    <h3 id="builder-context-preview-title">Target Preview</h3>
-                  </div>
-                  <button id="refresh-builder-target-preview" type="button">Refresh</button>
+            <aside id="builder-action-inspector" class="builder-action-inspector collapsed" aria-labelledby="builder-inspector-title">
+              <div class="builder-inspector-title-row">
+                <div>
+                  <span class="eyebrow">Contextual Drawer</span>
+                  <h3 id="builder-inspector-title">Action Inspector</h3>
                 </div>
-                <div id="builder-target-preview-frame" class="builder-context-preview-frame">
-                  <span id="builder-target-preview-empty" class="muted">Refresh to inspect the saved Profile target.</span>
-                  <img id="builder-target-preview-image" alt="Saved Profile target window screenshot" hidden>
-                </div>
-                <figcaption id="builder-target-preview-meta" class="muted">Structured Draft changes do not alter this Saved Profile preview.</figcaption>
-              </figure>
-              <span class="eyebrow">Context Rail</span>
-              <h3 id="builder-inspector-title">Action Inspector</h3>
+                <button id="collapse-builder-action-inspector" type="button" aria-label="Collapse Action Inspector">×</button>
+              </div>
               <div id="builder-action-inspector-empty" class="muted">Select an Action to edit its settings.</div>
               <form id="builder-action-inspector-form" hidden>
                 <div class="builder-inspector-heading">
@@ -313,6 +347,18 @@
                   <button id="move-builder-action-state-button" type="button">Move</button>
                 </div>
               </form>
+              <details class="builder-context-preview">
+                <summary id="builder-context-preview-title">Saved Target Preview</summary>
+                <div class="builder-context-preview-heading">
+                  <span class="muted">Draft changes do not alter this preview.</span>
+                  <button id="refresh-builder-target-preview" type="button">Refresh</button>
+                </div>
+                <div id="builder-target-preview-frame" class="builder-context-preview-frame">
+                  <span id="builder-target-preview-empty" class="muted">Refresh to inspect the saved Profile target.</span>
+                  <img id="builder-target-preview-image" alt="Saved Profile target window screenshot" hidden>
+                </div>
+                <p id="builder-target-preview-meta" class="muted">Structured Draft changes do not alter this Saved Profile preview.</p>
+              </details>
             </aside>
             </div>
             <section id="builder-graph-view" class="builder-graph-view" role="tabpanel" aria-labelledby="builder-graph-view-tab" hidden>
@@ -371,18 +417,18 @@
           </details>
           <p class="builder-readonly-message">Common Actions are editable through metadata-driven forms. Complex Actions remain visible and fully editable in the synchronized YAML Draft.</p>
         </section>
-        <aside class="panel builder-notes-panel">
-          <div class="panel-heading"><h2>Pack Notes</h2><span class="badge">Read only</span></div>
+        <details id="builder-notes-drawer" class="panel builder-notes-panel">
+          <summary class="panel-heading"><h2>Pack Notes</h2><span class="badge">Read only</span></summary>
           <pre id="builder-profile-notes" class="notes-preview">No notes available.</pre>
-        </aside>
-        <section class="panel builder-editor-panel" aria-labelledby="builder-editor-title">
-          <div class="panel-heading builder-editor-heading">
+        </details>
+        <details id="builder-yaml-drawer" class="panel builder-editor-panel" aria-labelledby="builder-editor-title">
+          <summary class="panel-heading builder-editor-heading">
             <div>
               <span class="eyebrow">Recoverable Draft</span>
               <h2 id="builder-editor-title">YAML Profile</h2>
             </div>
             <span id="builder-draft-status" class="badge">No Profile</span>
-          </div>
+          </summary>
           <p class="builder-editor-help">Changes are autosaved as a draft and do not replace <code>profile.yaml</code> until Validate succeeds and you select Save Profile.</p>
           <label class="sr-only" for="builder-yaml-editor">Profile YAML draft</label>
           <textarea id="builder-yaml-editor" spellcheck="false" autocomplete="off" aria-describedby="builder-editor-help builder-draft-messages" disabled></textarea>
@@ -395,7 +441,7 @@
               <button id="save-builder-profile" class="primary-button" type="button" disabled>Save Profile</button>
             </div>
           </div>
-        </section>
+        </details>
       </main>
     </section>
 

@@ -25,8 +25,28 @@ const state = {
   structuredMutationPending: false,
   builderDrag: null,
   builderDropSlot: null,
+  builderDropState: null,
   builderPointerDrag: null,
+  builderActionAutoPan: null,
   builderSuppressActionClick: false,
+  builderActionLibraryCollapsed: false,
+  builderActionLibraryHidden: false,
+  builderActionLibraryDrag: null,
+  builderActionInspectorCollapsed: true,
+  builderActionViewport: {
+    profileId: null,
+    x: 0,
+    y: 0,
+    zoom: 1,
+    initialized: false,
+  },
+  // This arrangement deliberately lives only for the current browser session.
+  // State/action changes remain Draft mutations; moving a roof never writes YAML.
+  builderActionLayout: { profileId: null, positions: {} },
+  builderActionSectionDrag: null,
+  builderActionOverviewOpen: false,
+  builderStateMinimapSignature: "",
+  builderCanvasPan: null,
   builderView: "state",
   builderFlowLayout: null,
   builderFlowNodeDrag: null,
@@ -61,6 +81,9 @@ const PREVIEW_REFRESH_INTERVAL_MS = 1000;
 const PREVIEW_META_REFRESH_INTERVAL_MS = 5000;
 const PREVIEW_STREAM_FPS = 6;
 const PREVIEW_STREAM_MAX_WIDTH = 960;
+const BUILDER_ACTION_MIN_ZOOM = 0.45;
+const BUILDER_ACTION_MAX_ZOOM = 1.8;
+const BUILDER_ACTION_AUTO_PAN_SPEED = 1080;
 const ACTIVE_POLL_INTERVAL_MS = 1000;
 const IDLE_POLL_INTERVAL_MS = 1000;
 const RUNTIME_REFRESH_EVERY_POLLS = 5;
@@ -1501,6 +1524,7 @@ function renderBuilderDocument() {
     : "No source loaded";
   $("builder-empty").hidden = stateNames.length > 0;
   $("builder-flow").hidden = stateNames.length === 0;
+  renderBuilderView();
   if (!stateNames.length) return;
 
   const target = $("builder-state-list");
@@ -1520,18 +1544,23 @@ function renderBuilderDocument() {
     button.innerHTML = `<strong>${escapeHtml(stateName)}</strong><span>${stateValue.terminal ? "terminal" : transitionParts.length ? `to ${transitionParts.map(escapeHtml).join(" / ")}` : "no transition"}</span>${problemBadge}`;
     target.appendChild(button);
   }
-  renderBuilderView();
   renderBuilderState();
   renderBuilderFlowGraph();
 }
 
 function renderBuilderView() {
   const flowActive = state.builderView === "flow";
+  const stateActionsMode = !flowActive && !$("builder-flow").hidden;
   $("builder-state-view").hidden = flowActive;
   $("builder-graph-view").hidden = !flowActive;
   $("builder-state-view-tab").setAttribute("aria-selected", String(!flowActive));
   $("builder-graph-view-tab").setAttribute("aria-selected", String(flowActive));
   $("builder-canvas-title").textContent = flowActive ? "Flow" : "State Actions";
+  $("workspace-build").classList.toggle("state-actions-mode", stateActionsMode);
+  if (flowActive) closeBuilderDrawers();
+  if (stateActionsMode) {
+    window.requestAnimationFrame(() => renderBuilderActionViewport());
+  }
 }
 
 function builderFlowPositions() {
@@ -1652,28 +1681,476 @@ function renderBuilderState() {
   anchors.innerHTML = requiredAnchors.length
     ? requiredAnchors.map((anchor) => `<li><strong>${escapeHtml(anchor.name || anchor.type || "anchor")}</strong><span class="muted">${escapeHtml(anchor.type || "unknown")}</span></li>`).join("")
     : '<li class="muted">No required anchors</li>';
-
-  const actions = $("builder-action-list");
-  const actionValues = stateValue.actions || [];
-  if (
-    !Number.isInteger(state.selectedBuilderActionIndex)
-    || state.selectedBuilderActionIndex >= actionValues.length
-  ) {
-    state.selectedBuilderActionIndex = actionValues.length ? 0 : null;
+  const selectedActions = stateValue.actions || [];
+  if (!Number.isInteger(state.selectedBuilderActionIndex)
+    || state.selectedBuilderActionIndex >= selectedActions.length) {
+    state.selectedBuilderActionIndex = selectedActions.length ? 0 : null;
   }
-  actions.innerHTML = actionValues.length
-    ? actionValues.map((action, index) => {
-      const definition = actionDefinition(action.type);
-      const problemSummary = builderProblemSummary(actionProblems(stateName, index));
-      const selected = index === state.selectedBuilderActionIndex;
-      const status = problemSummary.count
-        ? `<span class="builder-action-status ${problemSummary.className}">${escapeHtml(problemSummary.label)}</span>`
-        : "";
-      return `<li><button type="button" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}" aria-grabbed="false"><span class="builder-drag-handle" aria-hidden="true"><svg viewBox="0 0 12 18" width="12" height="18" fill="currentColor"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg></span><span class="builder-action-copy"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</span></button></li>`;
-    }).join("")
-    : '<li class="muted">No Actions. Add Wait from the Tool Palette.</li>';
+  renderBuilderStateSections();
+  renderBuilderActionCanvasControls();
+  window.requestAnimationFrame(() => renderBuilderActionViewport());
   renderBuilderActionPalette();
   renderBuilderActionInspector();
+}
+
+const BUILDER_ACTIONS_PER_COLUMN = 5;
+const BUILDER_ACTION_SECTION_COLUMNS = 3;
+const BUILDER_ACTION_SECTION_X_GAP = 1120;
+const BUILDER_ACTION_SECTION_Y_GAP = 840;
+const BUILDER_ACTION_SECTION_ORIGIN_X = 72;
+const BUILDER_ACTION_SECTION_ORIGIN_Y = 72;
+
+function builderActionStateNames() {
+  return Object.keys(state.builderDocument?.states || {});
+}
+
+function builderActionSectionPosition(stateName, index) {
+  const layout = state.builderActionLayout;
+  if (layout.profileId !== state.builderProfileId) {
+    layout.profileId = state.builderProfileId;
+    layout.positions = {};
+  }
+  if (!layout.positions[stateName]) {
+    layout.positions[stateName] = {
+      x: BUILDER_ACTION_SECTION_ORIGIN_X + (index % BUILDER_ACTION_SECTION_COLUMNS) * BUILDER_ACTION_SECTION_X_GAP,
+      y: BUILDER_ACTION_SECTION_ORIGIN_Y + Math.floor(index / BUILDER_ACTION_SECTION_COLUMNS) * BUILDER_ACTION_SECTION_Y_GAP,
+    };
+  }
+  return layout.positions[stateName];
+}
+
+function renderBuilderActionBlock(stateName, action, index) {
+  const definition = actionDefinition(action.type);
+  const problemSummary = builderProblemSummary(actionProblems(stateName, index));
+  const selected = stateName === state.selectedBuilderState
+    && index === state.selectedBuilderActionIndex;
+  const status = problemSummary.count
+    ? `<span class="builder-action-status ${problemSummary.className}">${escapeHtml(problemSummary.label)}</span>`
+    : "";
+  return `<li><button type="button" draggable="false" class="builder-action-block${action.disabled ? " disabled" : ""}" data-builder-action-state="${escapeHtml(stateName)}" data-builder-action-index="${index}" aria-current="${selected ? "true" : "false"}" aria-grabbed="false"><span class="builder-drag-handle" aria-hidden="true"><svg viewBox="0 0 12 18" width="12" height="18" fill="currentColor"><circle cx="3" cy="3" r="1.25"/><circle cx="9" cy="3" r="1.25"/><circle cx="3" cy="9" r="1.25"/><circle cx="9" cy="9" r="1.25"/><circle cx="3" cy="15" r="1.25"/><circle cx="9" cy="15" r="1.25"/></svg></span><span class="builder-action-copy"><strong>${index + 1}. ${escapeHtml(definition?.label || action.type || "Action")}</strong><span>${escapeHtml(action.type || "unknown")}</span><span>${escapeHtml(formatActionSummary(action, definition))}</span>${status}</span></button></li>`;
+}
+
+function renderBuilderStateSections() {
+  const target = $("builder-state-sections");
+  const states = state.builderDocument?.states || {};
+  const stateNames = Object.keys(states);
+  target.innerHTML = stateNames.map((stateName, stateIndex) => {
+    const stateValue = states[stateName] || {};
+    const position = builderActionSectionPosition(stateName, stateIndex);
+    const actionValues = stateValue.actions || [];
+    const columns = [];
+    for (let start = 0; start < actionValues.length || (!actionValues.length && start === 0); start += BUILDER_ACTIONS_PER_COLUMN) {
+      const chunk = actionValues.slice(start, start + BUILDER_ACTIONS_PER_COLUMN);
+      const actionItems = chunk.length
+        ? chunk.map((action, offset) => renderBuilderActionBlock(stateName, action, start + offset)).join("")
+        : '<li class="builder-state-section-empty muted">No Actions. Drop an Action here.</li>';
+      columns.push(`<div class="builder-action-column"><ol class="builder-action-list" data-builder-action-state="${escapeHtml(stateName)}" data-builder-action-column="${columns.length}" start="${start + 1}">${actionItems}</ol></div>`);
+    }
+    const kind = stateValue.terminal
+      ? "Terminal"
+      : (stateName === state.builderDocument?.initial_state ? "Initial" : "State");
+    const active = stateName === state.selectedBuilderState;
+    return `<section class="builder-state-section${active ? " active" : ""}" data-builder-state-section="${escapeHtml(stateName)}" role="listitem" aria-current="${active ? "true" : "false"}" style="left:${position.x}px;top:${position.y}px"><button type="button" class="builder-state-roof" data-builder-state-section-handle="${escapeHtml(stateName)}" aria-grabbed="false" aria-label="${escapeHtml(`Move ${stateName} layout only`)}"><strong class="builder-state-name">${escapeHtml(stateName)}</strong><span class="builder-state-kind">${kind}</span></button><svg class="builder-state-action-connectors" data-builder-state-connectors="${escapeHtml(stateName)}" aria-hidden="true"></svg><div class="builder-state-action-columns">${columns.join("")}</div></section>`;
+  }).join("");
+  window.requestAnimationFrame(() => {
+    renderBuilderActionConnectors();
+    renderBuilderStateMinimap();
+    renderBuilderActionViewport();
+  });
+}
+
+function builderOffsetWithin(element, ancestor) {
+  let x = 0;
+  let y = 0;
+  for (let node = element; node && node !== ancestor; node = node.offsetParent) {
+    x += node.offsetLeft;
+    y += node.offsetTop;
+  }
+  return { x, y };
+}
+
+function renderBuilderActionConnectors() {
+  for (const section of document.querySelectorAll("[data-builder-state-section]")) {
+    const svg = section.querySelector("[data-builder-state-connectors]");
+    const blocks = [...section.querySelectorAll("[data-builder-action-index]")]
+      .sort((left, right) => (
+        Number(left.dataset.builderActionIndex) - Number(right.dataset.builderActionIndex)
+      ));
+    if (!svg) continue;
+    Object.assign(svg.style, {
+      position: "absolute",
+      inset: "0",
+      zIndex: "0",
+      overflow: "visible",
+      pointerEvents: "none",
+    });
+    svg.setAttribute("width", String(section.offsetWidth));
+    svg.setAttribute("height", String(section.offsetHeight));
+    svg.setAttribute("viewBox", `0 0 ${section.offsetWidth} ${section.offsetHeight}`);
+    const paths = [];
+    for (let index = 0; index < blocks.length - 1; index += 1) {
+      const current = blocks[index];
+      const next = blocks[index + 1];
+      const currentPosition = builderOffsetWithin(current, section);
+      const nextPosition = builderOffsetWithin(next, section);
+      const x1 = currentPosition.x + current.offsetWidth / 2;
+      const y1 = currentPosition.y + current.offsetHeight;
+      const x2 = nextPosition.x + next.offsetWidth / 2;
+      const y2 = nextPosition.y;
+      const sameColumn = current.closest(".builder-action-column")
+        === next.closest(".builder-action-column");
+      let path;
+      let label = "";
+      if (sameColumn) {
+        path = `M ${x1} ${y1} L ${x2} ${y2}`;
+      } else {
+        const routeY = Math.max(y1 + 22, y2 + 28);
+        path = `M ${x1} ${y1} L ${x1} ${routeY} L ${x2} ${routeY} L ${x2} ${y2}`;
+        label = `<text class="builder-action-connector-label" data-builder-action-connector-label x="${(x1 + x2) / 2}" y="${routeY - 7}" fill="var(--state-accent)" font-size="10" text-anchor="middle">Next</text>`;
+      }
+      paths.push(
+        `<g class="builder-action-connector${sameColumn ? " same-column" : " cross-column"}" data-builder-action-connector-from="${current.dataset.builderActionIndex}" data-builder-action-connector-to="${next.dataset.builderActionIndex}"><path d="${path}" fill="none" stroke="var(--state-accent)" stroke-width="2" vector-effect="non-scaling-stroke"></path>${label}</g>`,
+      );
+    }
+    svg.innerHTML = paths.join("");
+  }
+}
+
+function renderBuilderStateOverview() {
+  const overview = $("builder-state-overview");
+  const toggle = $("builder-all-states-button");
+  if (!overview || !toggle) return;
+  overview.hidden = !state.builderActionOverviewOpen;
+  toggle.setAttribute("aria-expanded", String(state.builderActionOverviewOpen));
+}
+
+function renderBuilderStateMinimap() {
+  const minimap = $("builder-state-minimap");
+  const canvas = $("builder-state-detail");
+  const container = $("builder-state-sections");
+  if (!minimap || !canvas || !container) return;
+  const world = builderActionWorldBounds();
+  const viewport = state.builderActionViewport;
+  const scaleX = 100 / world.width;
+  const scaleY = 100 / world.height;
+  const sections = [...document.querySelectorAll("[data-builder-state-section]")];
+  const signature = JSON.stringify(sections.map((section) => [
+    section.dataset.builderStateSection,
+    section.offsetLeft,
+    section.offsetTop,
+    section.offsetWidth,
+    section.offsetHeight,
+    section.dataset.builderStateSection === state.selectedBuilderState,
+  ]));
+  if (!state.builderActionSectionDrag
+    && signature !== state.builderStateMinimapSignature) {
+    const footprints = sections.map((section) => {
+      const stateName = section.dataset.builderStateSection;
+      const left = (container.offsetLeft + section.offsetLeft) * scaleX;
+      const top = (container.offsetTop + section.offsetTop) * scaleY;
+      const width = Math.max(1.5, section.offsetWidth * scaleX);
+      const height = Math.max(2, section.offsetHeight * scaleY);
+      const active = stateName === state.selectedBuilderState ? " active" : "";
+      return `<button type="button" class="builder-state-minimap-section${active}" data-builder-minimap-state="${escapeHtml(stateName)}" title="${escapeHtml(stateName)}" aria-label="${escapeHtml(`Center ${stateName}`)}" style="left:${left}%;top:${top}%;width:${width}%;height:${height}%"></button>`;
+    });
+    footprints.push(
+      '<span class="builder-state-minimap-viewport" aria-hidden="true"></span>',
+    );
+    minimap.innerHTML = footprints.join("");
+    state.builderStateMinimapSignature = signature;
+  }
+  const visibleLeft = Math.max(0, -viewport.x / viewport.zoom);
+  const visibleTop = Math.max(0, -viewport.y / viewport.zoom);
+  const visibleWidth = Math.min(world.width, canvas.clientWidth / viewport.zoom);
+  const visibleHeight = Math.min(world.height, canvas.clientHeight / viewport.zoom);
+  const viewportNode = minimap.querySelector(".builder-state-minimap-viewport");
+  if (viewportNode) {
+    viewportNode.style.left = `${visibleLeft * scaleX}%`;
+    viewportNode.style.top = `${visibleTop * scaleY}%`;
+    viewportNode.style.width = `${visibleWidth * scaleX}%`;
+    viewportNode.style.height = `${visibleHeight * scaleY}%`;
+  }
+}
+
+function autoOrganizeBuilderActionLayout() {
+  const sections = [...document.querySelectorAll("[data-builder-state-section]")];
+  if (!sections.length) return;
+  const canvas = $("builder-state-detail");
+  const usableCanvasWidth = Math.max(540, canvas.clientWidth - 128);
+  const maximumRowWidth = BUILDER_ACTION_SECTION_ORIGIN_X + Math.max(
+    1200,
+    usableCanvasWidth / BUILDER_ACTION_MIN_ZOOM,
+  );
+  let x = BUILDER_ACTION_SECTION_ORIGIN_X;
+  let y = BUILDER_ACTION_SECTION_ORIGIN_Y;
+  let rowHeight = 0;
+  const positions = {};
+  for (const section of sections) {
+    const width = section.offsetWidth;
+    const height = section.offsetHeight;
+    if (x > BUILDER_ACTION_SECTION_ORIGIN_X
+      && x + width > maximumRowWidth) {
+      x = BUILDER_ACTION_SECTION_ORIGIN_X;
+      y += rowHeight + 140;
+      rowHeight = 0;
+    }
+    positions[section.dataset.builderStateSection] = { x, y };
+    x += width + 120;
+    rowHeight = Math.max(rowHeight, height);
+  }
+  state.builderActionLayout = {
+    profileId: state.builderProfileId,
+    positions,
+  };
+  renderBuilderStateSections();
+  window.requestAnimationFrame(() => renderBuilderActionViewport({ reset: true }));
+  showNotice("State sections auto-organized for this browser session.", "good");
+}
+
+function bestBuilderStateMatch(query) {
+  const stateNames = builderActionStateNames();
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return state.selectedBuilderState || stateNames[0] || null;
+  return stateNames.find((name) => name.toLocaleLowerCase() === needle)
+    || stateNames.find((name) => name.toLocaleLowerCase().startsWith(needle))
+    || stateNames.find((name) => name.toLocaleLowerCase().includes(needle))
+    || null;
+}
+
+function selectAndCenterBuilderState(stateName, { smooth = true } = {}) {
+  if (!stateName || !state.builderDocument?.states?.[stateName]) return;
+  state.selectedBuilderState = stateName;
+  const actions = state.builderDocument.states[stateName]?.actions || [];
+  if (!Number.isInteger(state.selectedBuilderActionIndex)
+    || state.selectedBuilderActionIndex >= actions.length) {
+    state.selectedBuilderActionIndex = actions.length ? 0 : null;
+  }
+  state.builderActionOverviewOpen = false;
+  renderBuilderDocument();
+  renderBuilderStateOverview();
+  window.requestAnimationFrame(() => centerBuilderActionState(stateName, { smooth }));
+}
+
+function renderBuilderActionCanvasControls() {
+  const library = $("builder-action-library");
+  library.classList.toggle("collapsed", state.builderActionLibraryCollapsed);
+  library.classList.toggle("canvas-hidden", state.builderActionLibraryHidden);
+  $("builder-action-library-body").hidden = state.builderActionLibraryCollapsed;
+  $("collapse-builder-action-library").textContent = state.builderActionLibraryCollapsed ? "+" : "−";
+  $("collapse-builder-action-library").setAttribute(
+    "aria-label",
+    state.builderActionLibraryCollapsed ? "Expand Action Library" : "Collapse Action Library",
+  );
+  $("collapse-builder-action-library").setAttribute(
+    "aria-expanded",
+    String(!state.builderActionLibraryCollapsed),
+  );
+  $("toggle-builder-action-library").textContent = state.builderActionLibraryHidden
+    ? "Show Library"
+    : "Hide Library";
+  $("toggle-builder-action-library").setAttribute(
+    "aria-expanded",
+    String(!state.builderActionLibraryHidden),
+  );
+  $("builder-action-inspector").classList.toggle(
+    "collapsed",
+    state.builderActionInspectorCollapsed,
+  );
+  $("toggle-builder-action-inspector").textContent = state.builderActionInspectorCollapsed
+    ? "Show Inspector"
+    : "Hide Inspector";
+  $("toggle-builder-action-inspector").setAttribute(
+    "aria-expanded",
+    String(!state.builderActionInspectorCollapsed),
+  );
+  renderBuilderStateOverview();
+}
+
+function builderActionWorldBounds() {
+  const container = $("builder-state-sections");
+  const sections = [...document.querySelectorAll("[data-builder-state-section]")];
+  if (!container || !sections.length) return { width: 960, height: 760 };
+  let width = 1;
+  let height = 1;
+  for (const section of sections) {
+    width = Math.max(
+      width,
+      container.offsetLeft + section.offsetLeft + section.offsetWidth,
+    );
+    height = Math.max(
+      height,
+      container.offsetTop + section.offsetTop + section.offsetHeight,
+    );
+  }
+  return { width, height };
+}
+
+function builderActionContentBounds() {
+  const container = $("builder-state-sections");
+  const sections = [...document.querySelectorAll("[data-builder-state-section]")];
+  if (!container || !sections.length) {
+    return { left: 0, top: 0, right: 960, bottom: 760, width: 960, height: 760 };
+  }
+  const left = Math.min(...sections.map((section) => container.offsetLeft + section.offsetLeft));
+  const top = Math.min(...sections.map((section) => container.offsetTop + section.offsetTop));
+  const right = Math.max(...sections.map(
+    (section) => container.offsetLeft + section.offsetLeft + section.offsetWidth,
+  ));
+  const bottom = Math.max(...sections.map(
+    (section) => container.offsetTop + section.offsetTop + section.offsetHeight,
+  ));
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function normalizeBuilderActionViewport() {
+  const viewport = state.builderActionViewport;
+  if (!Number.isFinite(viewport.x)) viewport.x = 0;
+  if (!Number.isFinite(viewport.y)) viewport.y = 0;
+  if (!Number.isFinite(viewport.zoom) || viewport.zoom <= 0) viewport.zoom = 1;
+}
+
+function renderBuilderActionViewport({ reset = false } = {}) {
+  const canvas = $("builder-state-detail");
+  const world = $("builder-action-world");
+  const viewport = state.builderActionViewport;
+  if (!canvas || !world || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
+  if (viewport.profileId !== state.builderProfileId) {
+    viewport.profileId = state.builderProfileId;
+    viewport.initialized = false;
+  }
+  if (reset || !viewport.initialized) {
+    const content = builderActionContentBounds();
+    const availableWidth = Math.max(320, canvas.clientWidth - 96);
+    const availableHeight = Math.max(240, canvas.clientHeight - 190);
+    viewport.zoom = Math.min(
+      1,
+      BUILDER_ACTION_MAX_ZOOM,
+      Math.max(
+        BUILDER_ACTION_MIN_ZOOM,
+        Math.min(availableWidth / content.width, availableHeight / content.height),
+      ),
+    );
+    viewport.x = canvas.clientWidth / 2
+      - (content.left + content.width / 2) * viewport.zoom;
+    viewport.y = (canvas.clientHeight + 120) / 2
+      - (content.top + content.height / 2) * viewport.zoom;
+    viewport.initialized = true;
+  }
+  // State Actions is a virtual canvas, not a native scroll container. Focus and
+  // pointer automation can otherwise retain a hidden scroll offset that is not
+  // represented by viewport.x/y and makes rendered content appear displaced.
+  canvas.scrollLeft = 0;
+  canvas.scrollTop = 0;
+  const worldBounds = builderActionWorldBounds();
+  world.style.width = `${worldBounds.width}px`;
+  world.style.height = `${worldBounds.height}px`;
+  // World dimensions support section layout and the minimap only. The canvas
+  // deliberately does not clamp x/y to them, so panning remains unbounded.
+  normalizeBuilderActionViewport();
+  const deviceScale = window.devicePixelRatio || 1;
+  const renderedX = Math.round(viewport.x * deviceScale) / deviceScale;
+  const renderedY = Math.round(viewport.y * deviceScale) / deviceScale;
+  // CSS zoom lays out and paints DOM text at the requested scale. Keeping scale
+  // out of transform avoids repeatedly raster-scaling the whole Action stack.
+  world.style.zoom = String(viewport.zoom);
+  world.style.transform = `translate(${renderedX / viewport.zoom}px, ${renderedY / viewport.zoom}px)`;
+  canvas.style.backgroundPosition = `${renderedX}px ${renderedY}px`;
+  canvas.style.backgroundSize = `${24 * viewport.zoom}px ${24 * viewport.zoom}px`;
+  $("builder-canvas-zoom-value").textContent = `${Math.round(viewport.zoom * 100)}%`;
+  renderBuilderStateMinimap();
+}
+
+let builderActionViewportFrame = null;
+
+function scheduleBuilderActionViewportRender() {
+  if (builderActionViewportFrame !== null) return;
+  builderActionViewportFrame = window.requestAnimationFrame(() => {
+    builderActionViewportFrame = null;
+    renderBuilderActionViewport();
+  });
+}
+
+function zoomBuilderActionCanvas(nextZoom, clientX = null, clientY = null) {
+  cancelBuilderActionCentering();
+  const canvas = $("builder-state-detail");
+  const bounds = canvas.getBoundingClientRect();
+  const viewport = state.builderActionViewport;
+  const zoom = Math.min(
+    BUILDER_ACTION_MAX_ZOOM,
+    Math.max(BUILDER_ACTION_MIN_ZOOM, nextZoom),
+  );
+  if (Math.abs(zoom - viewport.zoom) < 0.001) return;
+  const localX = clientX === null ? canvas.clientWidth / 2 : clientX - bounds.left;
+  const localY = clientY === null ? canvas.clientHeight / 2 : clientY - bounds.top;
+  const worldX = (localX - viewport.x) / viewport.zoom;
+  const worldY = (localY - viewport.y) / viewport.zoom;
+  viewport.x = localX - worldX * zoom;
+  viewport.y = localY - worldY * zoom;
+  viewport.zoom = zoom;
+  viewport.initialized = true;
+  renderBuilderActionViewport();
+}
+
+let builderActionCenterFrame = null;
+
+function cancelBuilderActionCentering() {
+  if (builderActionCenterFrame === null) return;
+  window.cancelAnimationFrame(builderActionCenterFrame);
+  builderActionCenterFrame = null;
+}
+
+function centerBuilderActionState(stateName, { smooth = true } = {}) {
+  const canvas = $("builder-state-detail");
+  const container = $("builder-state-sections");
+  const section = document.querySelector(`[data-builder-state-section="${CSS.escape(stateName)}"]`);
+  if (!canvas || !section) return;
+  const viewport = state.builderActionViewport;
+  const canvasBounds = canvas.getBoundingClientRect();
+  const selectorBounds = $("builder-state-list").getBoundingClientRect();
+  const headingBounds = canvas.querySelector(".builder-state-detail-heading")
+    ?.getBoundingClientRect();
+  const focusTop = Math.max(
+    16,
+    selectorBounds.bottom - canvasBounds.top + 12,
+    (headingBounds?.bottom || canvasBounds.top) - canvasBounds.top + 12,
+  );
+  const focusBottom = canvas.clientHeight - 16;
+  const renderedSectionHeight = section.offsetHeight * viewport.zoom;
+  const focusHeight = Math.max(0, focusBottom - focusTop);
+  const sectionTop = renderedSectionHeight >= focusHeight
+    ? focusTop
+    : focusTop + (focusHeight - renderedSectionHeight) / 2;
+  const targetX = canvas.clientWidth / 2
+    - (container.offsetLeft + section.offsetLeft + section.offsetWidth / 2) * viewport.zoom;
+  const targetY = sectionTop
+    - (container.offsetTop + section.offsetTop) * viewport.zoom;
+  cancelBuilderActionCentering();
+  if (!smooth || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    viewport.x = targetX;
+    viewport.y = targetY;
+    renderBuilderActionViewport();
+    return;
+  }
+  const originX = viewport.x;
+  const originY = viewport.y;
+  const startedAt = performance.now();
+  const tick = (now) => {
+    const progress = Math.min(1, (now - startedAt) / 260);
+    const eased = 1 - (1 - progress) ** 3;
+    viewport.x = originX + (targetX - originX) * eased;
+    viewport.y = originY + (targetY - originY) * eased;
+    renderBuilderActionViewport();
+    if (progress < 1) builderActionCenterFrame = window.requestAnimationFrame(tick);
+    else builderActionCenterFrame = null;
+  };
+  builderActionCenterFrame = window.requestAnimationFrame(tick);
 }
 
 function actionDefinition(actionType) {
@@ -1917,11 +2394,14 @@ async function mutateBuilderAction(
     if (focusState) state.selectedBuilderState = focusState;
     state.selectedBuilderActionIndex = focusIndex;
     applyStructuredDraft(draft);
+    if (["insert", "move", "duplicate"].includes(mutation.operation)) {
+      settleBuilderAction(focusIndex);
+    }
     showNotice(`${mutation.operation[0].toUpperCase()}${mutation.operation.slice(1)} Action completed.`, draft.valid ? "good" : "error");
     window.requestAnimationFrame(() => {
       const selector = focusField
         ? `[data-builder-action-field="${focusField}"]`
-        : `[data-builder-action-index="${state.selectedBuilderActionIndex}"]`;
+        : `[data-builder-action-state="${CSS.escape(state.selectedBuilderState)}"][data-builder-action-index="${state.selectedBuilderActionIndex}"]`;
       document.querySelector(selector)?.focus();
     });
   } catch (error) {
@@ -2111,12 +2591,14 @@ function defaultBuilderActionFields(actionType) {
   );
 }
 
-function insertBuilderAction(actionType, index) {
+function insertBuilderAction(actionType, index, stateName = state.selectedBuilderState) {
   const definition = actionDefinition(actionType);
+  state.selectedBuilderState = stateName;
+  state.selectedBuilderActionIndex = index;
   return mutateBuilderAction(
     {
       operation: "insert",
-      state: state.selectedBuilderState,
+      state: stateName,
       index,
       action_type: actionType,
       fields: defaultBuilderActionFields(actionType),
@@ -2130,6 +2612,7 @@ function insertBuilderAction(actionType, index) {
 
 function clearBuilderDrag({ restoreFocus = false } = {}) {
   const drag = state.builderDrag;
+  stopBuilderActionAutoPan();
   document.querySelector("#builder-drop-indicator")?.remove();
   document.querySelectorAll(".builder-state-node.drag-target")
     .forEach((node) => node.classList.remove("drag-target"));
@@ -2137,56 +2620,131 @@ function clearBuilderDrag({ restoreFocus = false } = {}) {
     .forEach((node) => node.setAttribute("aria-grabbed", "false"));
   state.builderDrag = null;
   state.builderDropSlot = null;
+  state.builderDropState = null;
+  setBuilderActionDragStatus("");
   if (restoreFocus && drag) {
     window.requestAnimationFrame(() => {
       const selector = drag.kind === "palette"
         ? `[data-add-builder-action="${drag.actionType}"]`
-        : `[data-builder-action-index="${drag.index}"]`;
+        : `[data-builder-action-state="${CSS.escape(drag.state)}"][data-builder-action-index="${drag.index}"]`;
       document.querySelector(selector)?.focus();
     });
   }
 }
 
-function showBuilderDropIndicator(slot) {
-  document.querySelector("#builder-drop-indicator")?.remove();
-  const list = $("builder-action-list");
+function setBuilderActionDragStatus(message) {
+  const status = $("builder-action-drag-status");
+  if (status.textContent !== message) status.textContent = message;
+}
+
+function showBuilderDropIndicator(list, slot) {
+  const existing = document.querySelector("#builder-drop-indicator");
+  if (
+    existing
+    && existing.parentElement === list
+    && state.builderDropSlot === slot
+  ) return;
+  existing?.remove();
   const indicator = document.createElement("li");
   indicator.id = "builder-drop-indicator";
   indicator.className = "builder-drop-indicator";
   indicator.setAttribute("aria-hidden", "true");
   const actionItems = [...list.children]
     .filter((item) => item.id !== "builder-drop-indicator");
-  list.insertBefore(indicator, actionItems[slot] || null);
+  let previous = null;
+  for (const item of actionItems) {
+    const block = item.querySelector("[data-builder-action-index]");
+    if (block && Number(block.dataset.builderActionIndex) < slot) previous = item;
+  }
+  const next = actionItems.find((item) => {
+    const block = item.querySelector("[data-builder-action-index]");
+    return block && Number(block.dataset.builderActionIndex) >= slot;
+  }) || null;
+  const grooveCenter = previous && next
+    ? (previous.offsetTop + previous.offsetHeight + next.offsetTop) / 2
+    : previous
+      ? previous.offsetTop + previous.offsetHeight + 12
+      : next
+        ? Math.max(11, next.offsetTop - 12)
+        : 18;
+  indicator.style.top = `${Math.max(0, grooveCenter - 11)}px`;
+  list.appendChild(indicator);
   state.builderDropSlot = slot;
+  setBuilderActionDragStatus(
+    `Valid insertion groove ${slot + 1} of ${actionItems.length + 1}.`,
+  );
 }
 
-function builderDropSlot(event) {
-  const block = event.target.closest?.("[data-builder-action-index]");
-  const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
-  if (!block) return actions.length;
-  const index = Number(block.dataset.builderActionIndex);
-  const bounds = block.getBoundingClientRect();
-  return event.clientY < bounds.top + bounds.height / 2 ? index : index + 1;
+function builderDropSlot(list, clientY) {
+  const blocks = [...list.querySelectorAll(
+    "[data-builder-action-index]",
+  )];
+  for (const block of blocks) {
+    const bounds = block.getBoundingClientRect();
+    if (clientY < bounds.top + bounds.height / 2) {
+      return Number(block.dataset.builderActionIndex);
+    }
+  }
+  return blocks.length
+    ? Number(blocks[blocks.length - 1].dataset.builderActionIndex) + 1
+    : 0;
 }
 
 function autoScrollBuilderActionList(clientY) {
-  const list = $("builder-action-list");
-  const bounds = list.getBoundingClientRect();
-  const edge = 32;
-  if (clientY < bounds.top + edge) list.scrollTop -= 18;
-  if (clientY > bounds.bottom - edge) list.scrollTop += 18;
-}
-
-function dropBuilderActionAtSlot(drag, slot) {
-  if (drag.kind === "palette") {
-    void runCommand(() => insertBuilderAction(drag.actionType, slot));
+  const canvas = $("builder-state-detail");
+  const bounds = canvas.getBoundingClientRect();
+  const edge = 48;
+  const direction = clientY < bounds.top + edge
+    ? 1
+    : clientY > bounds.bottom - edge
+      ? -1
+      : 0;
+  if (!direction) {
+    stopBuilderActionAutoPan();
     return;
   }
-  if (drag.state !== state.selectedBuilderState) return;
+  if (state.builderActionAutoPan) {
+    state.builderActionAutoPan.direction = direction;
+    return;
+  }
+  state.builderActionAutoPan = {
+    direction,
+    frameId: null,
+    lastTimestamp: null,
+  };
+  const step = (timestamp) => {
+    const autoPan = state.builderActionAutoPan;
+    if (!autoPan) return;
+    const elapsed = autoPan.lastTimestamp === null
+      ? 1000 / 60
+      : Math.min(50, timestamp - autoPan.lastTimestamp);
+    autoPan.lastTimestamp = timestamp;
+    state.builderActionViewport.y += (
+      autoPan.direction * BUILDER_ACTION_AUTO_PAN_SPEED * elapsed / 1000
+    );
+    renderBuilderActionViewport();
+    autoPan.frameId = window.requestAnimationFrame(step);
+  };
+  state.builderActionAutoPan.frameId = window.requestAnimationFrame(step);
+}
+
+function stopBuilderActionAutoPan() {
+  const autoPan = state.builderActionAutoPan;
+  if (!autoPan) return;
+  if (autoPan.frameId !== null) window.cancelAnimationFrame(autoPan.frameId);
+  state.builderActionAutoPan = null;
+}
+
+function dropBuilderActionAtSlot(drag, slot, targetState) {
+  if (drag.kind === "palette") {
+    void runCommand(() => insertBuilderAction(drag.actionType, slot, targetState));
+    return;
+  }
+  if (drag.state !== targetState) return;
   const targetIndex = drag.index < slot ? slot - 1 : slot;
   if (targetIndex === drag.index) {
     window.requestAnimationFrame(() => {
-      document.querySelector(`[data-builder-action-index="${drag.index}"]`)?.focus();
+      document.querySelector(`[data-builder-action-state="${CSS.escape(drag.state)}"][data-builder-action-index="${drag.index}"]`)?.focus();
     });
     return;
   }
@@ -2199,6 +2757,62 @@ function dropBuilderActionAtSlot(drag, slot) {
     },
     { focusIndex: targetIndex },
   ));
+}
+
+function settleBuilderAction(index) {
+  if (!Number.isInteger(index)) return;
+  window.requestAnimationFrame(() => {
+    const block = document.querySelector(
+      `[data-builder-action-state="${CSS.escape(state.selectedBuilderState)}"][data-builder-action-index="${index}"]`,
+    );
+    if (!block) return;
+    block.classList.add("builder-action-settling");
+    block.addEventListener(
+      "animationend",
+      () => block.classList.remove("builder-action-settling"),
+      { once: true },
+    );
+  });
+}
+
+function moveBuilderActionLibrary(left, top) {
+  const library = $("builder-action-library");
+  const canvas = $("builder-state-detail");
+  const maximumLeft = Math.max(8, canvas.clientWidth - library.offsetWidth - 8);
+  const maximumTop = Math.max(70, canvas.clientHeight - library.offsetHeight - 8);
+  library.style.left = `${Math.min(Math.max(8, left), maximumLeft)}px`;
+  library.style.top = `${Math.min(Math.max(70, top), maximumTop)}px`;
+  library.style.right = "auto";
+}
+
+const BUILDER_DRAWERS = [
+  ["builder-notes-drawer", "toggle-builder-notes-drawer"],
+  ["builder-yaml-drawer", "toggle-builder-yaml-drawer"],
+  ["builder-problems-drawer", "toggle-builder-problems-drawer"],
+];
+
+function syncBuilderDrawerControls() {
+  for (const [drawerId, controlId] of BUILDER_DRAWERS) {
+    $(controlId).setAttribute("aria-expanded", String($(drawerId).open));
+  }
+}
+
+function closeBuilderDrawers(exceptId = null) {
+  for (const [drawerId] of BUILDER_DRAWERS) {
+    if (drawerId !== exceptId) $(drawerId).open = false;
+  }
+  syncBuilderDrawerControls();
+}
+
+function toggleBuilderDrawer(drawerId) {
+  const drawer = $(drawerId);
+  const shouldOpen = !drawer.open;
+  closeBuilderDrawers(shouldOpen ? drawerId : null);
+  drawer.open = shouldOpen;
+  syncBuilderDrawerControls();
+  if (shouldOpen) {
+    window.requestAnimationFrame(() => drawer.querySelector("summary")?.focus());
+  }
 }
 
 function dropBuilderActionOnState(drag, targetState) {
@@ -2407,10 +3021,7 @@ $("builder-state-list").addEventListener("click", (event) => {
   if (!(event.target instanceof Element)) return;
   const button = event.target.closest("button[data-builder-state]");
   if (!button) return;
-  state.selectedBuilderState = button.dataset.builderState;
-  const actions = state.builderDocument?.states?.[state.selectedBuilderState]?.actions || [];
-  state.selectedBuilderActionIndex = actions.length ? 0 : null;
-  renderBuilderDocument();
+  selectAndCenterBuilderState(button.dataset.builderState);
 });
 
 $("builder-flow-nodes").addEventListener("click", (event) => {
@@ -2509,7 +3120,7 @@ $("move-builder-node-right").addEventListener("click", () => runCommand(
   () => nudgeBuilderFlowNode(24, 0),
 ));
 
-$("builder-action-list").addEventListener("click", (event) => {
+$("builder-state-sections").addEventListener("click", (event) => {
   if (state.builderSuppressActionClick) {
     state.builderSuppressActionClick = false;
     event.preventDefault();
@@ -2518,14 +3129,203 @@ $("builder-action-list").addEventListener("click", (event) => {
   if (!(event.target instanceof Element)) return;
   const button = event.target.closest("button[data-builder-action-index]");
   if (!button) return;
+  state.selectedBuilderState = button.dataset.builderActionState;
   state.selectedBuilderActionIndex = Number(button.dataset.builderActionIndex);
+  state.builderActionInspectorCollapsed = false;
   renderBuilderState();
+});
+
+$("toggle-builder-action-library").addEventListener("click", () => {
+  state.builderActionLibraryHidden = !state.builderActionLibraryHidden;
+  renderBuilderActionCanvasControls();
+});
+
+$("collapse-builder-action-library").addEventListener("click", () => {
+  state.builderActionLibraryCollapsed = !state.builderActionLibraryCollapsed;
+  renderBuilderActionCanvasControls();
+});
+
+$("toggle-builder-action-inspector").addEventListener("click", () => {
+  state.builderActionInspectorCollapsed = !state.builderActionInspectorCollapsed;
+  renderBuilderActionCanvasControls();
+});
+
+$("collapse-builder-action-inspector").addEventListener("click", () => {
+  state.builderActionInspectorCollapsed = true;
+  renderBuilderActionCanvasControls();
+  $("toggle-builder-action-inspector").focus();
+});
+
+$("builder-canvas-zoom-out").addEventListener("click", () => {
+  zoomBuilderActionCanvas(state.builderActionViewport.zoom / 1.15);
+});
+
+$("builder-canvas-zoom-reset").addEventListener("click", () => {
+  renderBuilderActionViewport({ reset: true });
+});
+
+$("builder-canvas-zoom-in").addEventListener("click", () => {
+  zoomBuilderActionCanvas(state.builderActionViewport.zoom * 1.15);
+});
+
+$("builder-all-states-button")?.addEventListener("click", () => {
+  state.builderActionOverviewOpen = !state.builderActionOverviewOpen;
+  renderBuilderStateOverview();
+  if (state.builderActionOverviewOpen) {
+    window.requestAnimationFrame(() => $("builder-state-search")?.focus());
+  }
+});
+
+function findAndCenterBuilderState() {
+  const query = $("builder-state-search")?.value || "";
+  const match = bestBuilderStateMatch(query);
+  if (!match) {
+    showNotice(`No State matches “${query.trim()}”.`, "error");
+    return;
+  }
+  selectAndCenterBuilderState(match);
+}
+
+$("builder-find-state")?.addEventListener("click", findAndCenterBuilderState);
+$("builder-state-search")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  findAndCenterBuilderState();
+});
+$("builder-canvas-reset-view")?.addEventListener("click", () => {
+  cancelBuilderActionCentering();
+  renderBuilderActionViewport({ reset: true });
+});
+$("builder-auto-organize")?.addEventListener("click", autoOrganizeBuilderActionLayout);
+
+$("builder-state-minimap")?.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const stateButton = event.target.closest("[data-builder-minimap-state]");
+  if (stateButton) {
+    selectAndCenterBuilderState(stateButton.dataset.builderMinimapState);
+    return;
+  }
+  const minimap = $("builder-state-minimap");
+  const canvas = $("builder-state-detail");
+  const bounds = minimap.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return;
+  const world = builderActionWorldBounds();
+  const worldX = (event.clientX - bounds.left) / bounds.width * world.width;
+  const worldY = (event.clientY - bounds.top) / bounds.height * world.height;
+  state.builderActionViewport.x = canvas.clientWidth / 2
+    - worldX * state.builderActionViewport.zoom;
+  state.builderActionViewport.y = canvas.clientHeight / 2
+    - worldY * state.builderActionViewport.zoom;
+  state.builderActionViewport.initialized = true;
+  renderBuilderActionViewport();
+});
+
+for (const [drawerId, controlId] of BUILDER_DRAWERS) {
+  $(controlId).addEventListener("click", () => toggleBuilderDrawer(drawerId));
+  $(drawerId).addEventListener("toggle", () => {
+    if ($(drawerId).open && $("workspace-build").classList.contains("state-actions-mode")) {
+      closeBuilderDrawers(drawerId);
+    }
+    syncBuilderDrawerControls();
+  });
+}
+
+$("builder-state-detail").addEventListener("wheel", (event) => {
+  if (event.target instanceof Element && event.target.closest(
+    ".builder-tool-palette, .builder-state-context",
+  )) return;
+  event.preventDefault();
+  const factor = Math.exp(-event.deltaY * 0.0015);
+  zoomBuilderActionCanvas(
+    state.builderActionViewport.zoom * factor,
+    event.clientX,
+    event.clientY,
+  );
+}, { passive: false });
+
+$("builder-state-detail").addEventListener("pointerdown", (event) => {
+  if (!(event.target instanceof Element) || event.button !== 0) return;
+  if (event.target.closest(
+    "button, input, select, textarea, summary, a, [data-builder-state-section], .builder-tool-palette, .builder-state-context, .builder-state-detail-heading",
+  )) return;
+  event.preventDefault();
+  cancelBuilderActionCentering();
+  const canvas = $("builder-state-detail");
+  state.builderCanvasPan = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: state.builderActionViewport.x,
+    originY: state.builderActionViewport.y,
+  };
+  canvas.classList.add("canvas-panning");
+  canvas.setPointerCapture?.(event.pointerId);
+});
+
+$("builder-state-detail").addEventListener("pointermove", (event) => {
+  const pan = state.builderCanvasPan;
+  if (!pan || pan.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  state.builderActionViewport.x = pan.originX + event.clientX - pan.startX;
+  state.builderActionViewport.y = pan.originY + event.clientY - pan.startY;
+  state.builderActionViewport.initialized = true;
+  scheduleBuilderActionViewportRender();
+});
+
+$("builder-state-detail").addEventListener("scroll", () => {
+  if (!$("workspace-build").classList.contains("state-actions-mode")) return;
+  const canvas = $("builder-state-detail");
+  if (canvas.scrollLeft) canvas.scrollLeft = 0;
+  if (canvas.scrollTop) canvas.scrollTop = 0;
+});
+
+function finishBuilderCanvasPan(event) {
+  if (state.builderCanvasPan?.pointerId !== event.pointerId) return;
+  state.builderCanvasPan = null;
+  $("builder-state-detail").classList.remove("canvas-panning");
+}
+
+$("builder-state-detail").addEventListener("pointerup", finishBuilderCanvasPan);
+$("builder-state-detail").addEventListener("pointercancel", finishBuilderCanvasPan);
+
+$("move-builder-action-library").addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  const library = $("builder-action-library");
+  const canvas = $("builder-state-detail");
+  const libraryBounds = library.getBoundingClientRect();
+  const canvasBounds = canvas.getBoundingClientRect();
+  event.preventDefault();
+  state.builderActionLibraryDrag = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX - libraryBounds.left,
+    offsetY: event.clientY - libraryBounds.top,
+    canvasLeft: canvasBounds.left,
+    canvasTop: canvasBounds.top,
+  };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+});
+
+$("move-builder-action-library").addEventListener("keydown", (event) => {
+  const deltas = {
+    ArrowUp: [0, -16],
+    ArrowRight: [16, 0],
+    ArrowDown: [0, 16],
+    ArrowLeft: [-16, 0],
+  };
+  const delta = deltas[event.key];
+  if (!delta) return;
+  event.preventDefault();
+  const library = $("builder-action-library");
+  moveBuilderActionLibrary(
+    Number.parseFloat(library.style.left || "16") + delta[0],
+    Number.parseFloat(library.style.top || "94") + delta[1],
+  );
 });
 
 $("builder-action-palette").addEventListener("dragstart", (event) => {
   if (!(event.target instanceof Element)) return;
   const button = event.target.closest("button[data-add-builder-action]");
-  if (!button || button.disabled || !state.selectedBuilderState) {
+  if (!button || button.disabled) {
     event.preventDefault();
     return;
   }
@@ -2540,60 +3340,57 @@ $("builder-action-palette").addEventListener("dragstart", (event) => {
   }
 });
 
-$("builder-action-list").addEventListener("dragstart", (event) => {
-  if (!(event.target instanceof Element)) return;
-  const button = event.target.closest("button[data-builder-action-index]");
-  if (!button || state.structuredMutationPending) {
-    event.preventDefault();
-    return;
-  }
-  state.builderDrag = {
-    kind: "action",
-    state: state.selectedBuilderState,
-    index: Number(button.dataset.builderActionIndex),
-  };
-  button.setAttribute("aria-grabbed", "true");
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData(
-      "text/plain",
-      `${state.selectedBuilderState}:${button.dataset.builderActionIndex}`,
-    );
-  }
-});
-
-$("builder-action-list").addEventListener("dragover", (event) => {
+$("builder-state-sections").addEventListener("dragover", (event) => {
   if (!state.builderDrag || state.structuredMutationPending) return;
+  if (!(event.target instanceof Element)) return;
+  const list = event.target.closest("ol[data-builder-action-state]");
+  if (!list) return;
   event.preventDefault();
-  const slot = builderDropSlot(event);
-  showBuilderDropIndicator(slot);
+  const slot = builderDropSlot(list, event.clientY);
+  state.builderDropState = list.dataset.builderActionState;
+  showBuilderDropIndicator(list, slot);
   autoScrollBuilderActionList(event.clientY);
   if (event.dataTransfer) {
     event.dataTransfer.dropEffect = state.builderDrag.kind === "palette" ? "copy" : "move";
   }
 });
 
-$("builder-action-list").addEventListener("drop", (event) => {
-  const drag = state.builderDrag;
-  if (!drag || state.structuredMutationPending) return;
-  event.preventDefault();
-  const slot = state.builderDropSlot ?? builderDropSlot(event);
-  clearBuilderDrag();
-  dropBuilderActionAtSlot(drag, slot);
+document.addEventListener("dragover", (event) => {
+  if (
+    state.builderDrag?.kind === "palette"
+    && !(event.target instanceof Element && event.target.closest("ol[data-builder-action-state]"))
+  ) {
+    stopBuilderActionAutoPan();
+  }
 });
 
-$("builder-action-list").addEventListener("dragend", () => clearBuilderDrag());
+$("builder-state-sections").addEventListener("drop", (event) => {
+  const drag = state.builderDrag;
+  if (!drag || state.structuredMutationPending) return;
+  if (!(event.target instanceof Element)) return;
+  const list = event.target.closest("ol[data-builder-action-state]");
+  if (!list) return;
+  event.preventDefault();
+  const targetState = list.dataset.builderActionState;
+  const slot = state.builderDropSlot ?? builderDropSlot(list, event.clientY);
+  clearBuilderDrag();
+  dropBuilderActionAtSlot(drag, slot, targetState);
+});
+
+$("builder-state-sections").addEventListener("dragend", () => clearBuilderDrag());
 $("builder-action-palette").addEventListener("dragend", () => clearBuilderDrag());
 
-$("builder-action-list").addEventListener("pointerdown", (event) => {
+$("builder-state-sections").addEventListener("pointerdown", (event) => {
   if (!(event.target instanceof Element) || event.button !== 0) return;
-  const handle = event.target.closest(".builder-drag-handle");
-  const button = handle?.closest("button[data-builder-action-index]");
-  if (!handle || !button || state.structuredMutationPending) return;
-  event.preventDefault();
+  const button = event.target.closest("button[data-builder-action-index]");
+  if (!button || state.structuredMutationPending) return;
+  const interactiveTarget = event.target.closest(
+    "button, input, select, textarea, a, summary, [contenteditable]",
+  );
+  if (interactiveTarget && interactiveTarget !== button) return;
   state.builderDrag = {
     kind: "action",
-    state: state.selectedBuilderState,
+    state: button.dataset.builderActionState,
     index: Number(button.dataset.builderActionIndex),
   };
   state.builderPointerDrag = {
@@ -2601,13 +3398,68 @@ $("builder-action-list").addEventListener("pointerdown", (event) => {
     startX: event.clientX,
     startY: event.clientY,
     active: false,
-    targetState: null,
   };
   button.setAttribute("aria-grabbed", "true");
-  handle.setPointerCapture?.(event.pointerId);
+  button.setPointerCapture?.(event.pointerId);
+});
+
+$("builder-state-sections").addEventListener("pointerdown", (event) => {
+  if (!(event.target instanceof Element) || event.button !== 0) return;
+  const roof = event.target.closest("[data-builder-state-section-handle]");
+  const section = event.target.closest("[data-builder-state-section]");
+  if (!section) return;
+  if (!roof && event.target.closest(
+    "button, input, select, textarea, a, summary, ol[data-builder-action-state]",
+  )) return;
+  const stateName = roof?.dataset.builderStateSectionHandle
+    || section.dataset.builderStateSection;
+  const position = state.builderActionLayout.positions[stateName];
+  if (!position) return;
+  event.preventDefault();
+  cancelBuilderActionCentering();
+  state.builderActionSectionDrag = {
+    pointerId: event.pointerId,
+    stateName,
+    handle: roof || section,
+    startX: event.clientX,
+    startY: event.clientY,
+    origin: { ...position },
+    moved: false,
+  };
+  if (roof) roof.setAttribute("aria-grabbed", "true");
+  section.classList.add("dragging");
+  (roof || section).setPointerCapture?.(event.pointerId);
 });
 
 document.addEventListener("pointermove", (event) => {
+  const libraryDrag = state.builderActionLibraryDrag;
+  if (libraryDrag?.pointerId === event.pointerId) {
+    event.preventDefault();
+    moveBuilderActionLibrary(
+      event.clientX - libraryDrag.canvasLeft - libraryDrag.offsetX,
+      event.clientY - libraryDrag.canvasTop - libraryDrag.offsetY,
+    );
+    return;
+  }
+  const sectionDrag = state.builderActionSectionDrag;
+  if (sectionDrag?.pointerId === event.pointerId) {
+    event.preventDefault();
+    const zoom = state.builderActionViewport.zoom || 1;
+    const position = state.builderActionLayout.positions[sectionDrag.stateName];
+    position.x = Math.max(0, Math.round(sectionDrag.origin.x + (event.clientX - sectionDrag.startX) / zoom));
+    position.y = Math.max(0, Math.round(sectionDrag.origin.y + (event.clientY - sectionDrag.startY) / zoom));
+    sectionDrag.moved = sectionDrag.moved
+      || Math.hypot(event.clientX - sectionDrag.startX, event.clientY - sectionDrag.startY) >= 4;
+    const section = document.querySelector(
+      `[data-builder-state-section="${CSS.escape(sectionDrag.stateName)}"]`,
+    );
+    if (section) {
+      section.style.left = `${position.x}px`;
+      section.style.top = `${position.y}px`;
+    }
+    scheduleBuilderActionViewportRender();
+    return;
+  }
   const pointer = state.builderPointerDrag;
   if (!pointer || pointer.pointerId !== event.pointerId || !state.builderDrag) return;
   const distance = Math.hypot(
@@ -2618,35 +3470,43 @@ document.addEventListener("pointermove", (event) => {
   pointer.active = true;
   event.preventDefault();
   const target = document.elementFromPoint(event.clientX, event.clientY);
-  const list = target?.closest?.("#builder-action-list");
-  if (list) {
-    pointer.targetState = null;
-    document.querySelectorAll(".builder-state-node.drag-target")
-      .forEach((node) => node.classList.remove("drag-target"));
-    showBuilderDropIndicator(builderDropSlot({
-      target,
-      clientY: event.clientY,
-    }));
+  const list = target?.closest?.("ol[data-builder-action-state]");
+  if (list && list.dataset.builderActionState === state.builderDrag.state) {
+    state.builderDropState = list.dataset.builderActionState;
+    showBuilderDropIndicator(list, builderDropSlot(list, event.clientY));
     autoScrollBuilderActionList(event.clientY);
     return;
   }
   document.querySelector("#builder-drop-indicator")?.remove();
   state.builderDropSlot = null;
-  const stateButton = target?.closest?.("button[data-builder-state]");
-  const targetState = stateButton?.dataset.builderState;
-  const validState = Boolean(targetState && targetState !== state.builderDrag.state);
-  pointer.targetState = validState ? targetState : null;
-  document.querySelectorAll(".builder-state-node.drag-target")
-    .forEach((node) => node.classList.remove("drag-target"));
-  if (validState) stateButton.classList.add("drag-target");
+  state.builderDropState = null;
+  stopBuilderActionAutoPan();
+  setBuilderActionDragStatus(
+    "Actions can only be reordered inside their owning State. Releasing here will not change the Draft.",
+  );
 });
 
 document.addEventListener("pointerup", (event) => {
+  if (state.builderActionLibraryDrag?.pointerId === event.pointerId) {
+    state.builderActionLibraryDrag = null;
+    return;
+  }
+  const sectionDrag = state.builderActionSectionDrag;
+  if (sectionDrag?.pointerId === event.pointerId) {
+    state.builderActionSectionDrag = null;
+    sectionDrag.handle.setAttribute?.("aria-grabbed", "false");
+    sectionDrag.handle.closest("[data-builder-state-section]")?.classList.remove("dragging");
+    state.selectedBuilderState = sectionDrag.stateName;
+    const actions = state.builderDocument?.states?.[sectionDrag.stateName]?.actions || [];
+    state.selectedBuilderActionIndex = actions.length ? 0 : null;
+    renderBuilderDocument();
+    return;
+  }
   const pointer = state.builderPointerDrag;
   if (!pointer || pointer.pointerId !== event.pointerId) return;
   const drag = state.builderDrag;
   const slot = state.builderDropSlot;
-  const targetState = pointer.targetState;
+  const targetState = state.builderDropState;
   const active = pointer.active;
   state.builderPointerDrag = null;
   clearBuilderDrag();
@@ -2655,33 +3515,26 @@ document.addEventListener("pointerup", (event) => {
   window.setTimeout(() => {
     state.builderSuppressActionClick = false;
   }, 0);
-  if (targetState) {
-    dropBuilderActionOnState(drag, targetState);
-  } else if (slot !== null) {
-    dropBuilderActionAtSlot(drag, slot);
+  if (slot !== null && targetState) {
+    dropBuilderActionAtSlot(drag, slot, targetState);
   }
 });
 
-$("builder-state-list").addEventListener("dragover", (event) => {
-  if (!(event.target instanceof Element) || state.builderDrag?.kind !== "action") return;
-  const button = event.target.closest("button[data-builder-state]");
-  if (!button || button.dataset.builderState === state.builderDrag.state) return;
-  event.preventDefault();
-  document.querySelectorAll(".builder-state-node.drag-target")
-    .forEach((node) => node.classList.remove("drag-target"));
-  button.classList.add("drag-target");
-  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-});
-
-$("builder-state-list").addEventListener("drop", (event) => {
-  if (!(event.target instanceof Element)) return;
-  const drag = state.builderDrag;
-  const button = event.target.closest("button[data-builder-state]");
-  if (!button || drag?.kind !== "action" || button.dataset.builderState === drag.state) return;
-  event.preventDefault();
-  const targetState = button.dataset.builderState;
-  clearBuilderDrag();
-  dropBuilderActionOnState(drag, targetState);
+document.addEventListener("pointercancel", (event) => {
+  if (state.builderActionLibraryDrag?.pointerId === event.pointerId) {
+    state.builderActionLibraryDrag = null;
+  }
+  const sectionDrag = state.builderActionSectionDrag;
+  if (sectionDrag?.pointerId === event.pointerId) {
+    state.builderActionLayout.positions[sectionDrag.stateName] = sectionDrag.origin;
+    state.builderActionSectionDrag = null;
+    sectionDrag.handle.setAttribute?.("aria-grabbed", "false");
+    renderBuilderStateSections();
+    return;
+  }
+  if (state.builderPointerDrag?.pointerId !== event.pointerId) return;
+  state.builderPointerDrag = null;
+  clearBuilderDrag({ restoreFocus: true });
 });
 
 $("builder-action-palette").addEventListener("click", (event) => runCommand(async () => {
@@ -2694,6 +3547,27 @@ $("builder-action-palette").addEventListener("click", (event) => runCommand(asyn
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (state.builderActionSectionDrag) {
+    event.preventDefault();
+    const drag = state.builderActionSectionDrag;
+    state.builderActionLayout.positions[drag.stateName] = drag.origin;
+    state.builderActionSectionDrag = null;
+    drag.handle.setAttribute?.("aria-grabbed", "false");
+    renderBuilderStateSections();
+    return;
+  }
+  if (state.builderCanvasPan) {
+    event.preventDefault();
+    state.builderCanvasPan = null;
+    $("builder-state-detail").classList.remove("canvas-panning");
+    return;
+  }
+  if (state.builderActionLibraryDrag) {
+    event.preventDefault();
+    state.builderActionLibraryDrag = null;
+    $("move-builder-action-library").focus();
+    return;
+  }
   if (state.builderFlowNodeDrag) {
     event.preventDefault();
     state.builderFlowLayout.positions = state.builderFlowNodeDrag.originalPositions;
@@ -2855,7 +3729,11 @@ $("builder-problem-list").addEventListener("click", (event) => {
     if (match?.[3]) {
       target = document.querySelector(`[data-builder-action-field="${match[3]}"]`);
     } else if (match) {
-      target = document.querySelector(`[data-builder-action-index="${match[2]}"]`);
+      centerBuilderActionState(state.selectedBuilderState);
+      target = document.querySelector(
+        `[data-builder-action-state="${CSS.escape(state.selectedBuilderState)}"]`
+        + `[data-builder-action-index="${match[2]}"]`,
+      );
     } else if (stateMatch?.[2] && stateFieldTargets[stateMatch[2]]) {
       target = $(stateFieldTargets[stateMatch[2]]);
     } else {
@@ -2907,6 +3785,17 @@ $("builder-target-preview-image").addEventListener("error", () => {
   $("builder-target-preview-image").hidden = true;
   $("builder-target-preview-empty").hidden = false;
   $("builder-target-preview-empty").textContent = "Target preview could not be displayed";
+});
+
+window.addEventListener("resize", () => {
+  if ($("workspace-build").classList.contains("state-actions-mode")) {
+    renderBuilderActionViewport();
+    const library = $("builder-action-library");
+    moveBuilderActionLibrary(
+      Number.parseFloat(library.style.left || "14"),
+      Number.parseFloat(library.style.top || "70"),
+    );
+  }
 });
 
 async function initialize() {
