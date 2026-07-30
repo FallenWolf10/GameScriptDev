@@ -43,7 +43,12 @@ const state = {
   // This arrangement deliberately lives only for the current browser session.
   // State/action changes remain Draft mutations; moving a roof never writes YAML.
   builderActionLayout: { profileId: null, positions: {} },
+  builderActionInitialLayoutProfileId: null,
+  builderActionInitialLayoutActivation: 0,
+  builderActionInitialLayoutCompletedActivation: null,
+  builderActionColumnLayoutMobile: null,
   builderActionSectionDrag: null,
+  builderActionNavigationCollapsed: true,
   builderActionOverviewOpen: false,
   builderStateMinimapSignature: "",
   builderCanvasPan: null,
@@ -138,6 +143,9 @@ async function validateSelectedProfile() {
 
 async function selectProfile(profileId, { skipInitialReadiness = false } = {}) {
   await flushBuilderAutosave();
+  if (state.selectedProfileId !== profileId) {
+    state.builderActionInitialLayoutActivation += 1;
+  }
   state.selectedProfileId = profileId;
   state.lastPreviewRefreshAt = 0;
   renderProfiles();
@@ -1693,15 +1701,35 @@ function renderBuilderState() {
   renderBuilderActionInspector();
 }
 
-const BUILDER_ACTIONS_PER_COLUMN = 5;
-const BUILDER_ACTION_SECTION_COLUMNS = 3;
-const BUILDER_ACTION_SECTION_X_GAP = 1120;
-const BUILDER_ACTION_SECTION_Y_GAP = 840;
+const BUILDER_ACTIONS_PER_DESKTOP_COLUMN = 5;
+const BUILDER_ACTION_LAYOUT_MAX_GROUPS = 3;
+const BUILDER_ACTION_LAYOUT_MOBILE_MAX_GROUPS = 1;
+const BUILDER_ACTION_SECTION_GUTTER_X = 64;
+const BUILDER_ACTION_SECTION_GUTTER_Y = 72;
 const BUILDER_ACTION_SECTION_ORIGIN_X = 72;
-const BUILDER_ACTION_SECTION_ORIGIN_Y = 72;
+const BUILDER_ACTION_RESERVED_TOP = 128;
+const BUILDER_ACTION_SECTION_ORIGIN_Y = BUILDER_ACTION_RESERVED_TOP + 24;
+const BUILDER_ACTION_VIEWPORT_PADDING_X = 72;
+const BUILDER_ACTION_VIEWPORT_PADDING_Y = 88;
+const BUILDER_ACTION_FIT_MIN_ZOOM = 0.25;
 
 function builderActionStateNames() {
   return Object.keys(state.builderDocument?.states || {});
+}
+
+function builderActionUsesSingleColumn() {
+  return window.matchMedia("(max-width: 720px)").matches;
+}
+
+function builderActionColumnStarts(actionCount) {
+  const count = Math.max(0, actionCount);
+  const actionsPerColumn = builderActionUsesSingleColumn()
+    ? Math.max(1, count)
+    : BUILDER_ACTIONS_PER_DESKTOP_COLUMN;
+  const columnCount = Math.max(1, Math.ceil(count / actionsPerColumn));
+  return Array.from({ length: columnCount }, (_unused, columnIndex) => (
+    columnIndex * actionsPerColumn
+  ));
 }
 
 function builderActionSectionPosition(stateName, index) {
@@ -1711,9 +1739,14 @@ function builderActionSectionPosition(stateName, index) {
     layout.positions = {};
   }
   if (!layout.positions[stateName]) {
+    const groupsPerRow = window.matchMedia("(max-width: 720px)").matches
+      ? BUILDER_ACTION_LAYOUT_MOBILE_MAX_GROUPS
+      : BUILDER_ACTION_LAYOUT_MAX_GROUPS;
     layout.positions[stateName] = {
-      x: BUILDER_ACTION_SECTION_ORIGIN_X + (index % BUILDER_ACTION_SECTION_COLUMNS) * BUILDER_ACTION_SECTION_X_GAP,
-      y: BUILDER_ACTION_SECTION_ORIGIN_Y + Math.floor(index / BUILDER_ACTION_SECTION_COLUMNS) * BUILDER_ACTION_SECTION_Y_GAP,
+      x: BUILDER_ACTION_SECTION_ORIGIN_X
+        + (index % groupsPerRow) * (326 + BUILDER_ACTION_SECTION_GUTTER_X),
+      y: BUILDER_ACTION_SECTION_ORIGIN_Y
+        + Math.floor(index / groupsPerRow) * (560 + BUILDER_ACTION_SECTION_GUTTER_Y),
     };
   }
   return layout.positions[stateName];
@@ -1734,13 +1767,23 @@ function renderBuilderStateSections() {
   const target = $("builder-state-sections");
   const states = state.builderDocument?.states || {};
   const stateNames = Object.keys(states);
+  const needsInitialLayout = Boolean(state.builderProfileId)
+    && (state.builderActionInitialLayoutProfileId !== state.builderProfileId
+      || state.builderActionInitialLayoutCompletedActivation
+        !== state.builderActionInitialLayoutActivation);
+  state.builderActionColumnLayoutMobile = builderActionUsesSingleColumn();
+  target.classList.toggle("initial-layout-pending", needsInitialLayout);
+  target.setAttribute("aria-busy", String(needsInitialLayout));
   target.innerHTML = stateNames.map((stateName, stateIndex) => {
     const stateValue = states[stateName] || {};
     const position = builderActionSectionPosition(stateName, stateIndex);
     const actionValues = stateValue.actions || [];
     const columns = [];
-    for (let start = 0; start < actionValues.length || (!actionValues.length && start === 0); start += BUILDER_ACTIONS_PER_COLUMN) {
-      const chunk = actionValues.slice(start, start + BUILDER_ACTIONS_PER_COLUMN);
+    for (const start of builderActionColumnStarts(actionValues.length)) {
+      const actionsPerColumn = builderActionUsesSingleColumn()
+        ? Math.max(1, actionValues.length)
+        : BUILDER_ACTIONS_PER_DESKTOP_COLUMN;
+      const chunk = actionValues.slice(start, start + actionsPerColumn);
       const actionItems = chunk.length
         ? chunk.map((action, offset) => renderBuilderActionBlock(stateName, action, start + offset)).join("")
         : '<li class="builder-state-section-empty muted">No Actions. Drop an Action here.</li>';
@@ -1750,9 +1793,10 @@ function renderBuilderStateSections() {
       ? "Terminal"
       : (stateName === state.builderDocument?.initial_state ? "Initial" : "State");
     const active = stateName === state.selectedBuilderState;
-    return `<section class="builder-state-section${active ? " active" : ""}" data-builder-state-section="${escapeHtml(stateName)}" role="listitem" aria-current="${active ? "true" : "false"}" style="left:${position.x}px;top:${position.y}px"><button type="button" class="builder-state-roof" data-builder-state-section-handle="${escapeHtml(stateName)}" aria-grabbed="false" aria-label="${escapeHtml(`Move ${stateName} layout only`)}"><strong class="builder-state-name">${escapeHtml(stateName)}</strong><span class="builder-state-kind">${kind}</span></button><svg class="builder-state-action-connectors" data-builder-state-connectors="${escapeHtml(stateName)}" aria-hidden="true"></svg><div class="builder-state-action-columns">${columns.join("")}</div></section>`;
+    return `<section class="builder-state-section${active ? " active" : ""}" data-builder-state-section="${escapeHtml(stateName)}" role="listitem" aria-current="${active ? "true" : "false"}" style="left:${position.x}px;top:${position.y}px"><button type="button" class="builder-state-roof" data-builder-state-section-handle="${escapeHtml(stateName)}" aria-grabbed="false" aria-label="${escapeHtml(`Move ${stateName} layout only`)}"><strong class="builder-state-name">${escapeHtml(stateName)}</strong><span class="builder-state-kind">${kind}</span></button><div class="builder-action-start" data-builder-action-start>Start</div><svg class="builder-state-action-connectors" data-builder-state-connectors="${escapeHtml(stateName)}" aria-hidden="true"></svg><div class="builder-state-action-columns">${columns.join("")}</div></section>`;
   }).join("");
   window.requestAnimationFrame(() => {
+    if (ensureInitialBuilderActionLayout()) return;
     renderBuilderActionConnectors();
     renderBuilderStateMinimap();
     renderBuilderActionViewport();
@@ -1769,9 +1813,15 @@ function builderOffsetWithin(element, ancestor) {
   return { x, y };
 }
 
+function builderActionManhattanPath(points) {
+  return points.map(([x, y], index) => `${index ? "L" : "M"} ${x} ${y}`).join(" ");
+}
+
 function renderBuilderActionConnectors() {
-  for (const section of document.querySelectorAll("[data-builder-state-section]")) {
+  const sections = [...document.querySelectorAll("[data-builder-state-section]")];
+  for (const [sectionIndex, section] of sections.entries()) {
     const svg = section.querySelector("[data-builder-state-connectors]");
+    const start = section.querySelector("[data-builder-action-start]");
     const blocks = [...section.querySelectorAll("[data-builder-action-index]")]
       .sort((left, right) => (
         Number(left.dataset.builderActionIndex) - Number(right.dataset.builderActionIndex)
@@ -1787,7 +1837,22 @@ function renderBuilderActionConnectors() {
     svg.setAttribute("width", String(section.offsetWidth));
     svg.setAttribute("height", String(section.offsetHeight));
     svg.setAttribute("viewBox", `0 0 ${section.offsetWidth} ${section.offsetHeight}`);
-    const paths = [];
+    const markerId = `builder-action-arrow-${sectionIndex}`;
+    const paths = [`<defs><marker id="${markerId}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 z" fill="var(--state-accent)"></path></marker></defs>`];
+    if (start && blocks.length) {
+      const first = blocks[0];
+      const startPosition = builderOffsetWithin(start, section);
+      const firstPosition = builderOffsetWithin(first, section);
+      const x1 = startPosition.x + start.offsetWidth / 2;
+      const y1 = startPosition.y + start.offsetHeight;
+      const x2 = firstPosition.x + first.offsetWidth / 2;
+      const y2 = firstPosition.y;
+      const routeY = y1 + Math.max(8, (y2 - y1) / 2);
+      const path = builderActionManhattanPath([
+        [x1, y1], [x1, routeY], [x2, routeY], [x2, y2],
+      ]);
+      paths.push(`<g class="builder-action-connector start" data-builder-action-connector-start><path d="${path}" fill="none" stroke="var(--state-accent)" stroke-width="2" vector-effect="non-scaling-stroke" marker-end="url(#${markerId})"></path></g>`);
+    }
     for (let index = 0; index < blocks.length - 1; index += 1) {
       const current = blocks[index];
       const next = blocks[index + 1];
@@ -1797,19 +1862,36 @@ function renderBuilderActionConnectors() {
       const y1 = currentPosition.y + current.offsetHeight;
       const x2 = nextPosition.x + next.offsetWidth / 2;
       const y2 = nextPosition.y;
-      const sameColumn = current.closest(".builder-action-column")
-        === next.closest(".builder-action-column");
+      const sameColumn = window.matchMedia("(max-width: 720px)").matches
+        || current.closest(".builder-action-column") === next.closest(".builder-action-column");
       let path;
       let label = "";
       if (sameColumn) {
-        path = `M ${x1} ${y1} L ${x2} ${y2}`;
+        const routeY = y1 + Math.max(8, (y2 - y1) / 2);
+        path = builderActionManhattanPath([
+          [x1, y1], [x1, routeY], [x2, routeY], [x2, y2],
+        ]);
       } else {
-        const routeY = Math.max(y1 + 22, y2 + 28);
-        path = `M ${x1} ${y1} L ${x1} ${routeY} L ${x2} ${routeY} L ${x2} ${y2}`;
-        label = `<text class="builder-action-connector-label" data-builder-action-connector-label x="${(x1 + x2) / 2}" y="${routeY - 7}" fill="var(--state-accent)" font-size="10" text-anchor="middle">Next</text>`;
+        const currentColumn = current.closest(".builder-action-column");
+        const nextColumn = next.closest(".builder-action-column");
+        const currentColumnPosition = builderOffsetWithin(currentColumn, section);
+        const nextColumnPosition = builderOffsetWithin(nextColumn, section);
+        const leftColumn = currentColumnPosition.x <= nextColumnPosition.x
+          ? { element: currentColumn, position: currentColumnPosition }
+          : { element: nextColumn, position: nextColumnPosition };
+        const rightColumn = leftColumn.element === currentColumn
+          ? { element: nextColumn, position: nextColumnPosition }
+          : { element: currentColumn, position: currentColumnPosition };
+        const gutterX = (leftColumn.position.x + leftColumn.element.offsetWidth
+          + rightColumn.position.x) / 2;
+        const routeY = Math.max(18, y2 - 18);
+        path = builderActionManhattanPath([
+          [x1, y1], [gutterX, y1], [gutterX, routeY], [x2, routeY], [x2, y2],
+        ]);
+        label = `<text class="builder-action-connector-label" data-builder-action-connector-label x="${gutterX}" y="${Math.max(12, routeY - 7)}" fill="var(--state-accent)" font-size="10" text-anchor="middle">Next</text>`;
       }
       paths.push(
-        `<g class="builder-action-connector${sameColumn ? " same-column" : " cross-column"}" data-builder-action-connector-from="${current.dataset.builderActionIndex}" data-builder-action-connector-to="${next.dataset.builderActionIndex}"><path d="${path}" fill="none" stroke="var(--state-accent)" stroke-width="2" vector-effect="non-scaling-stroke"></path>${label}</g>`,
+        `<g class="builder-action-connector${sameColumn ? " same-column" : " cross-column"}" data-builder-action-connector-from="${current.dataset.builderActionIndex}" data-builder-action-connector-to="${next.dataset.builderActionIndex}"><path d="${path}" fill="none" stroke="var(--state-accent)" stroke-width="2" vector-effect="non-scaling-stroke" marker-end="url(#${markerId})"></path>${label}</g>`,
       );
     }
     svg.innerHTML = paths.join("");
@@ -1872,39 +1954,56 @@ function renderBuilderStateMinimap() {
   }
 }
 
-function autoOrganizeBuilderActionLayout() {
+function autoOrganizeBuilderActionLayout({ announce = true } = {}) {
   const sections = [...document.querySelectorAll("[data-builder-state-section]")];
   if (!sections.length) return;
   const canvas = $("builder-state-detail");
-  const usableCanvasWidth = Math.max(540, canvas.clientWidth - 128);
-  const maximumRowWidth = BUILDER_ACTION_SECTION_ORIGIN_X + Math.max(
-    1200,
-    usableCanvasWidth / BUILDER_ACTION_MIN_ZOOM,
+  const groupsPerRow = window.matchMedia("(max-width: 720px)").matches
+    ? BUILDER_ACTION_LAYOUT_MOBILE_MAX_GROUPS
+    : BUILDER_ACTION_LAYOUT_MAX_GROUPS;
+  const maximumRowRight = Math.max(
+    BUILDER_ACTION_SECTION_ORIGIN_X + 1,
+    (canvas?.clientWidth || 0) - BUILDER_ACTION_SECTION_ORIGIN_X,
   );
   let x = BUILDER_ACTION_SECTION_ORIGIN_X;
   let y = BUILDER_ACTION_SECTION_ORIGIN_Y;
   let rowHeight = 0;
+  let groupsInRow = 0;
   const positions = {};
   for (const section of sections) {
     const width = section.offsetWidth;
     const height = section.offsetHeight;
-    if (x > BUILDER_ACTION_SECTION_ORIGIN_X
-      && x + width > maximumRowWidth) {
+    if (groupsInRow > 0 && (
+      groupsInRow === groupsPerRow || x + width > maximumRowRight
+    )) {
       x = BUILDER_ACTION_SECTION_ORIGIN_X;
-      y += rowHeight + 140;
+      y += rowHeight + BUILDER_ACTION_SECTION_GUTTER_Y;
       rowHeight = 0;
+      groupsInRow = 0;
     }
     positions[section.dataset.builderStateSection] = { x, y };
-    x += width + 120;
+    x += width + BUILDER_ACTION_SECTION_GUTTER_X;
     rowHeight = Math.max(rowHeight, height);
+    groupsInRow += 1;
   }
   state.builderActionLayout = {
     profileId: state.builderProfileId,
     positions,
   };
+  state.builderActionInitialLayoutProfileId = state.builderProfileId;
+  state.builderActionInitialLayoutCompletedActivation
+    = state.builderActionInitialLayoutActivation;
   renderBuilderStateSections();
   window.requestAnimationFrame(() => renderBuilderActionViewport({ reset: true }));
-  showNotice("State sections auto-organized for this browser session.", "good");
+  if (announce) showNotice("State sections auto-organized for this browser session.", "good");
+}
+
+function ensureInitialBuilderActionLayout() {
+  if (!state.builderProfileId
+    || state.builderActionInitialLayoutProfileId === state.builderProfileId
+    || !document.querySelector("[data-builder-state-section]")) return false;
+  autoOrganizeBuilderActionLayout({ announce: false });
+  return true;
 }
 
 function bestBuilderStateMatch(query) {
@@ -1963,6 +2062,13 @@ function renderBuilderActionCanvasControls() {
     "aria-expanded",
     String(!state.builderActionInspectorCollapsed),
   );
+  const navigationExpanded = !state.builderActionNavigationCollapsed;
+  $("builder-state-navigation-content").hidden = !navigationExpanded;
+  $("toggle-builder-state-navigation").textContent = navigationExpanded
+    ? "Hide State navigation"
+    : "Show State navigation";
+  $("toggle-builder-state-navigation").setAttribute("aria-expanded", String(navigationExpanded));
+  $("builder-selected-state-summary").textContent = state.selectedBuilderState || "No State selected";
   renderBuilderStateOverview();
 }
 
@@ -2027,13 +2133,19 @@ function renderBuilderActionViewport({ reset = false } = {}) {
   }
   if (reset || !viewport.initialized) {
     const content = builderActionContentBounds();
-    const availableWidth = Math.max(320, canvas.clientWidth - 96);
-    const availableHeight = Math.max(240, canvas.clientHeight - 190);
+    const availableWidth = Math.max(
+      240,
+      canvas.clientWidth - BUILDER_ACTION_VIEWPORT_PADDING_X * 2,
+    );
+    const availableHeight = Math.max(
+      180,
+      canvas.clientHeight - BUILDER_ACTION_VIEWPORT_PADDING_Y * 2,
+    );
     viewport.zoom = Math.min(
       1,
       BUILDER_ACTION_MAX_ZOOM,
       Math.max(
-        BUILDER_ACTION_MIN_ZOOM,
+        BUILDER_ACTION_FIT_MIN_ZOOM,
         Math.min(availableWidth / content.width, availableHeight / content.height),
       ),
     );
@@ -2114,7 +2226,7 @@ function centerBuilderActionState(stateName, { smooth = true } = {}) {
   const viewport = state.builderActionViewport;
   const canvasBounds = canvas.getBoundingClientRect();
   const selectorBounds = $("builder-state-list").getBoundingClientRect();
-  const headingBounds = canvas.querySelector(".builder-state-detail-heading")
+  const headingBounds = document.querySelector(".builder-workspace-toolbar")
     ?.getBoundingClientRect();
   const focusTop = Math.max(
     16,
@@ -3140,6 +3252,11 @@ $("toggle-builder-action-library").addEventListener("click", () => {
   renderBuilderActionCanvasControls();
 });
 
+$("toggle-builder-state-navigation").addEventListener("click", () => {
+  state.builderActionNavigationCollapsed = !state.builderActionNavigationCollapsed;
+  renderBuilderActionCanvasControls();
+});
+
 $("collapse-builder-action-library").addEventListener("click", () => {
   state.builderActionLibraryCollapsed = !state.builderActionLibraryCollapsed;
   renderBuilderActionCanvasControls();
@@ -3246,7 +3363,7 @@ $("builder-state-detail").addEventListener("wheel", (event) => {
 $("builder-state-detail").addEventListener("pointerdown", (event) => {
   if (!(event.target instanceof Element) || event.button !== 0) return;
   if (event.target.closest(
-    "button, input, select, textarea, summary, a, [data-builder-state-section], .builder-tool-palette, .builder-state-context, .builder-state-detail-heading",
+    "button, input, select, textarea, summary, a, [data-builder-state-section], .builder-tool-palette, .builder-state-context",
   )) return;
   event.preventDefault();
   cancelBuilderActionCentering();
@@ -3447,7 +3564,10 @@ document.addEventListener("pointermove", (event) => {
     const zoom = state.builderActionViewport.zoom || 1;
     const position = state.builderActionLayout.positions[sectionDrag.stateName];
     position.x = Math.max(0, Math.round(sectionDrag.origin.x + (event.clientX - sectionDrag.startX) / zoom));
-    position.y = Math.max(0, Math.round(sectionDrag.origin.y + (event.clientY - sectionDrag.startY) / zoom));
+    position.y = Math.max(
+      BUILDER_ACTION_RESERVED_TOP,
+      Math.round(sectionDrag.origin.y + (event.clientY - sectionDrag.startY) / zoom),
+    );
     sectionDrag.moved = sectionDrag.moved
       || Math.hypot(event.clientX - sectionDrag.startX, event.clientY - sectionDrag.startY) >= 4;
     const section = document.querySelector(
@@ -3787,9 +3907,22 @@ $("builder-target-preview-image").addEventListener("error", () => {
   $("builder-target-preview-empty").textContent = "Target preview could not be displayed";
 });
 
+let builderActionResizeFrame = null;
+
 window.addEventListener("resize", () => {
   if ($("workspace-build").classList.contains("state-actions-mode")) {
-    renderBuilderActionViewport();
+    if (state.builderActionColumnLayoutMobile !== null
+      && state.builderActionColumnLayoutMobile !== builderActionUsesSingleColumn()) {
+      renderBuilderStateSections();
+      return;
+    }
+    window.cancelAnimationFrame(builderActionResizeFrame);
+    builderActionResizeFrame = window.requestAnimationFrame(() => {
+      builderActionResizeFrame = null;
+      renderBuilderActionViewport();
+      renderBuilderActionConnectors();
+      renderBuilderStateMinimap();
+    });
     const library = $("builder-action-library");
     moveBuilderActionLibrary(
       Number.parseFloat(library.style.left || "14"),

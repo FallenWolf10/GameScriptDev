@@ -323,6 +323,20 @@ Opening a State switches the central workspace to State View with:
 
 This panel is the main authoring surface for most profile work.
 
+State Actions groups the ordered Action Blocks into desktop columns of at most
+five Actions each: 1–5 use one column, 6–10 use two, 11–15 use three, and
+additional Actions continue into further columns. The compact layout becomes
+one ordered vertical column on narrow screens. Connectors preserve order with
+arrowed horizontal/vertical routes through the gutters between columns.
+
+Each selected-Profile activation performs one silent, measured organization
+before its canvas is revealed. It uses profile order,
+the rendered State-group dimensions, available canvas width, and the tallest
+group in each row; desktop uses no more than three groups per row and narrow
+screens use one. The resulting browser-session placement remains manual until
+the author explicitly chooses **Auto-organize**; selection, resizing,
+navigation, and ordinary Draft edits do not silently rearrange it.
+
 ### 4. Action Palette And Timeline
 
 Actions should be added by dragging from a palette into a state's action list.

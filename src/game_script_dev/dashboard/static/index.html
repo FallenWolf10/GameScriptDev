@@ -225,11 +225,8 @@
           </dl>
         </section>
         <section class="panel builder-readonly-view" aria-labelledby="builder-canvas-title">
-          <div class="panel-heading builder-view-heading">
-            <div>
-              <span class="eyebrow">Structured Draft</span>
-              <h2 id="builder-canvas-title">State Actions</h2>
-            </div>
+          <div class="panel-heading builder-view-heading builder-workspace-toolbar">
+            <h2 id="builder-canvas-title" class="sr-only">State Actions</h2>
             <div class="builder-history-actions">
               <div class="builder-view-tabs" role="tablist" aria-label="Structured Draft view">
                 <button id="builder-state-view-tab" type="button" role="tab" aria-selected="true" aria-controls="builder-state-view">State Actions</button>
@@ -244,7 +241,38 @@
               <button id="redo-builder-action" type="button" disabled>Redo</button>
               <span id="builder-fingerprint" class="muted">No source loaded</span>
             </div>
+            <div class="builder-state-toolbar-context">
+              <div class="builder-state-navigation-summary">
+                <strong id="builder-selected-state-summary">No State selected</strong>
+              </div>
+              <button id="toggle-builder-state-navigation" type="button" aria-expanded="false" aria-controls="builder-state-navigation-content">Show State navigation</button>
+            </div>
+            <div class="builder-state-canvas-actions" aria-label="Selected State controls">
+              <span id="builder-state-kind" class="badge">State</span>
+              <div class="builder-canvas-zoom-controls builder-behavior-hooks" aria-label="Canvas zoom" aria-hidden="true">
+                <button id="builder-canvas-zoom-out" type="button" aria-label="Zoom out">−</button>
+                <button id="builder-canvas-zoom-reset" type="button" aria-label="Reset canvas view"><span id="builder-canvas-zoom-value">100%</span></button>
+                <button id="builder-canvas-zoom-in" type="button" aria-label="Zoom in">+</button>
+              </div>
+              <button id="toggle-builder-action-library" type="button" aria-expanded="true" aria-controls="builder-action-library">Hide Library</button>
+              <button id="toggle-builder-action-inspector" type="button" aria-expanded="false" aria-controls="builder-action-inspector">Show Inspector</button>
+            </div>
           </div>
+          <nav id="builder-state-navigation" class="builder-state-navigation" aria-label="State Actions navigation">
+            <div id="builder-state-navigation-content" class="builder-state-navigation-content" hidden>
+              <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
+              <div class="builder-canvas-recovery" aria-label="Canvas recovery">
+                <button id="builder-canvas-reset-view" type="button">Reset View</button>
+                <button id="builder-auto-organize" type="button">Auto-organize</button>
+              </div>
+            </div>
+            <div class="builder-behavior-hooks" aria-hidden="true">
+              <button id="builder-all-states-button" type="button" aria-expanded="false" aria-controls="builder-state-overview" tabindex="-1">All States</button>
+              <label for="builder-state-search">Find a State</label>
+              <input id="builder-state-search" type="search" placeholder="State name" autocomplete="off" tabindex="-1">
+              <button id="builder-find-state" type="button" tabindex="-1">Find State</button>
+            </div>
+          </nav>
           <div id="builder-empty" class="builder-empty">
             <span class="read-only-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 8h8M8 12h5M8 16h3" /></svg>
@@ -255,39 +283,11 @@
           <div id="builder-flow" class="builder-flow" hidden>
             <div id="builder-state-view" class="builder-state-view" role="tabpanel" aria-labelledby="builder-state-view-tab">
             <section class="builder-state-workspace" aria-live="polite">
-              <nav id="builder-state-navigation" class="builder-state-navigation" aria-label="State Actions navigation">
-                <div id="builder-state-list" class="builder-state-list" role="list" aria-label="Profile States"></div>
-                <div class="builder-canvas-recovery" aria-label="Canvas recovery">
-                <button id="builder-canvas-reset-view" type="button">Reset View</button>
-                <button id="builder-auto-organize" type="button">Auto-organize</button>
-                </div>
-                <div class="builder-behavior-hooks" aria-hidden="true">
-                  <button id="builder-all-states-button" type="button" aria-expanded="false" aria-controls="builder-state-overview" tabindex="-1">All States</button>
-                  <label for="builder-state-search">Find a State</label>
-                  <input id="builder-state-search" type="search" placeholder="State name" autocomplete="off" tabindex="-1">
-                  <button id="builder-find-state" type="button" tabindex="-1">Find State</button>
-                </div>
-              </nav>
               <section id="builder-state-overview" class="builder-state-overview" aria-label="All States overview" hidden>
                 <div id="builder-state-minimap" class="builder-state-minimap" role="group" aria-label="State canvas minimap"></div>
               </section>
               <section id="builder-state-detail" class="builder-state-detail">
-                <div class="builder-state-detail-heading">
-                  <div>
-                    <span class="eyebrow">Action Stack</span>
-                    <h2 id="builder-state-name">No State selected</h2>
-                  </div>
-                  <div class="builder-state-canvas-actions">
-                    <span id="builder-state-kind" class="badge">State</span>
-                    <div class="builder-canvas-zoom-controls builder-behavior-hooks" aria-label="Canvas zoom" aria-hidden="true">
-                      <button id="builder-canvas-zoom-out" type="button" aria-label="Zoom out">−</button>
-                      <button id="builder-canvas-zoom-reset" type="button" aria-label="Reset canvas view"><span id="builder-canvas-zoom-value">100%</span></button>
-                      <button id="builder-canvas-zoom-in" type="button" aria-label="Zoom in">+</button>
-                    </div>
-                    <button id="toggle-builder-action-library" type="button" aria-expanded="true" aria-controls="builder-action-library">Hide Library</button>
-                    <button id="toggle-builder-action-inspector" type="button" aria-expanded="false" aria-controls="builder-action-inspector">Show Inspector</button>
-                  </div>
-                </div>
+                <span id="builder-state-name" class="sr-only" aria-hidden="true">No State selected</span>
                 <details class="builder-state-context">
                   <summary>State context</summary>
                   <dl id="builder-state-transitions" class="builder-transition-list"></dl>
@@ -295,9 +295,9 @@
                   <ul id="builder-anchor-list" class="builder-anchor-list"></ul>
                 </details>
                 <div id="builder-action-world" class="builder-action-world" aria-label="All Profile State Actions virtual canvas">
-                  <p id="builder-action-canvas-help" class="builder-action-canvas-help">Drag a State heading to arrange its group, blank space to pan, or an Action card to reorder it. Use a State name, Reset View, or Auto-organize to recover the grouped view.</p>
                   <div id="builder-state-sections" class="builder-state-sections" role="list" aria-label="Profile State Action sections" aria-describedby="builder-action-canvas-help"></div>
                 </div>
+                <p id="builder-action-canvas-help" class="sr-only">Drag a State heading to arrange its group, blank space to pan, or an Action card to reorder it. State navigation reveals State cards; use Reset View or Auto-organize to recover the grouped view.</p>
                 <div id="builder-action-drag-status" class="sr-only" role="status" aria-live="polite"></div>
                 <aside id="builder-action-library" class="builder-tool-palette" aria-labelledby="builder-palette-title">
                   <div class="builder-library-heading">

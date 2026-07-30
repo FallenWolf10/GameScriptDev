@@ -1542,6 +1542,62 @@ class DashboardTests(unittest.TestCase):
             'aria-label="State Actions navigation"',
             html,
         )
+        # State Actions uses one contextual toolbar instead of repeating the
+        # Draft, State navigation, and Action Stack headings above the canvas.
+        self.assertIn(
+            'class="panel-heading builder-view-heading builder-workspace-toolbar"',
+            html,
+        )
+        self.assertNotIn('<span class="eyebrow">Structured Draft</span>', html)
+        self.assertNotIn('<span class="eyebrow">Action Stack</span>', html)
+        self.assertEqual(html.count('id="builder-canvas-title"'), 1)
+        self.assertIn(
+            '<h2 id="builder-canvas-title" class="sr-only">State Actions</h2>',
+            html,
+        )
+        toolbar_start = html.index('builder-workspace-toolbar')
+        toolbar_end = html.index('</div>\n          <nav id="builder-state-navigation"', toolbar_start)
+        toolbar = html[toolbar_start:toolbar_end]
+        self.assertIn('class="builder-history-actions"', toolbar)
+        self.assertIn('class="builder-state-toolbar-context"', toolbar)
+        self.assertIn('class="builder-state-canvas-actions"', toolbar)
+        self.assertLess(
+            toolbar.index('class="builder-history-actions"'),
+            toolbar.index('class="builder-state-toolbar-context"'),
+        )
+        self.assertLess(
+            toolbar.index('class="builder-state-toolbar-context"'),
+            toolbar.index('class="builder-state-canvas-actions"'),
+        )
+        self.assertLess(toolbar_end, html.index('id="builder-state-navigation"'))
+        self.assertLess(toolbar_start, html.index('id="toggle-builder-action-library"'))
+        self.assertIn(
+            '#workspace-build.state-actions-mode .builder-workspace-toolbar',
+            styles,
+        )
+        self.assertIn('flex-wrap: wrap;', styles)
+        self.assertIn(
+            '#workspace-build:not(.state-actions-mode) .builder-state-navigation',
+            styles,
+        )
+        self.assertIn(
+            '#workspace-build.state-actions-mode .builder-state-toolbar-context',
+            styles,
+        )
+        self.assertNotIn(
+            ':has(.builder-state-navigation-content:not([hidden]))',
+            styles,
+        )
+        self.assertIn(
+            'id="toggle-builder-state-navigation" type="button" '
+            'aria-expanded="false" aria-controls="builder-state-navigation-content"',
+            html,
+        )
+        self.assertIn(
+            'id="builder-state-navigation-content" class="builder-state-navigation-content" hidden',
+            html,
+        )
+        self.assertIn('id="builder-selected-state-summary"', html)
         self.assertIn(
             'id="builder-all-states-button" type="button" '
             'aria-expanded="false" aria-controls="builder-state-overview"',
@@ -1571,20 +1627,45 @@ class DashboardTests(unittest.TestCase):
         state_list_position = html.index('id="builder-state-list"')
         self.assertLess(navigation_start, state_list_position)
         self.assertLess(state_list_position, navigation_end)
+        navigation = html[navigation_start:navigation_end]
+        self.assertNotIn('id="builder-selected-state-summary"', navigation)
+        self.assertIn('class="builder-canvas-recovery"', navigation)
+        self.assertLess(
+            navigation.index('id="builder-state-list"'),
+            navigation.index('class="builder-canvas-recovery"'),
+        )
+        self.assertIn(
+            '<p id="builder-action-canvas-help" class="sr-only">',
+            html,
+        )
+        self.assertNotIn('class="builder-action-canvas-help"', html)
+        self.assertNotIn('.builder-action-canvas-help {', styles)
         self.assertIn(".builder-behavior-hooks,", styles)
         self.assertIn("#builder-state-overview {", styles)
         self.assertIn("display: none !important;", styles)
 
-        # Every document state renders as a distinct roof-led section. Long
-        # sequences split every five Actions, then measured SVG paths preserve
-        # unambiguous order both within and across columns.
+        # Every document state renders as a distinct roof-led section. Desktop
+        # Actions are split into reusable five-card columns; narrow screens
+        # keep their order in one column.
         self.assertIn("function renderBuilderStateSections()", app_js)
         self.assertIn(
             "const stateNames = Object.keys(states);",
             app_js,
         )
         self.assertIn(
-            "const BUILDER_ACTIONS_PER_COLUMN = 5;",
+            "const BUILDER_ACTIONS_PER_DESKTOP_COLUMN = 5;",
+            app_js,
+        )
+        self.assertIn(
+            "function builderActionColumnStarts(actionCount)",
+            app_js,
+        )
+        self.assertIn(
+            "Math.ceil(count / actionsPerColumn)",
+            app_js,
+        )
+        self.assertIn(
+            "const BUILDER_ACTIONS_PER_DESKTOP_COLUMN = 5;",
             app_js,
         )
         self.assertIn(
@@ -1599,6 +1680,7 @@ class DashboardTests(unittest.TestCase):
             'class="builder-state-action-connectors"',
             app_js,
         )
+        self.assertIn('class="builder-action-start" data-builder-action-start>Start</div>', app_js)
         self.assertIn(
             'data-builder-action-state="${escapeHtml(stateName)}"',
             app_js,
@@ -1621,7 +1703,12 @@ class DashboardTests(unittest.TestCase):
             styles,
         )
         self.assertIn("function builderOffsetWithin(element, ancestor)", app_js)
+        self.assertIn("function builderActionManhattanPath(points)", app_js)
         self.assertIn("function renderBuilderActionConnectors()", app_js)
+        self.assertIn(
+            'document.querySelector(".builder-workspace-toolbar")',
+            app_js,
+        )
         self.assertIn(
             "const currentPosition = builderOffsetWithin(current, section);",
             app_js,
@@ -1643,7 +1730,7 @@ class DashboardTests(unittest.TestCase):
             app_js,
         )
         self.assertIn(
-            '=== next.closest(".builder-action-column");',
+            'window.matchMedia("(max-width: 720px)").matches',
             app_js,
         )
         self.assertIn(
@@ -1651,9 +1738,19 @@ class DashboardTests(unittest.TestCase):
             app_js,
         )
         self.assertIn(
-            'x="${(x1 + x2) / 2}"',
+            "const gutterX = (leftColumn.position.x + leftColumn.element.offsetWidth",
             app_js,
         )
+        self.assertIn(
+            "[x1, y1], [gutterX, y1], [gutterX, routeY], [x2, routeY], [x2, y2]",
+            app_js,
+        )
+        self.assertNotIn(
+            "path = `M ${x1} ${y1} L ${x2} ${y2}`;",
+            app_js,
+        )
+        self.assertIn('marker-end="url(#${markerId})"', app_js)
+        self.assertIn('data-builder-action-connector-start', app_js)
         self.assertIn('text-anchor="middle"', app_js)
         self.assertIn(">Next</text>", app_js)
         self.assertIn(
@@ -1679,6 +1776,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("gap: 46px;", styles)
         self.assertIn("flex: 0 0 296px;", styles)
         self.assertIn("min-height: 68px;", styles)
+        self.assertIn(".builder-action-start {", styles)
+        self.assertIn("@media (max-width: 720px)", styles)
 
         # World dimensions support layout/minimap calculations; they do not
         # clamp the independently pannable viewport.
@@ -1695,7 +1794,7 @@ class DashboardTests(unittest.TestCase):
         )
         self.assertIn("function builderActionContentBounds()", app_js)
         self.assertIn(
-            "Math.max(\n        BUILDER_ACTION_MIN_ZOOM,",
+            "Math.max(\n        BUILDER_ACTION_FIT_MIN_ZOOM,",
             app_js,
         )
         self.assertIn(
@@ -1744,6 +1843,8 @@ class DashboardTests(unittest.TestCase):
             "handle: roof || section,",
             app_js,
         )
+        self.assertIn("const BUILDER_ACTION_RESERVED_TOP = 128;", app_js)
+        self.assertIn("BUILDER_ACTION_RESERVED_TOP,", app_js)
         self.assertNotIn("/state-actions-layout", app_js)
 
         # Find, overview/minimap, reset and auto-organize provide deterministic
@@ -1760,20 +1861,23 @@ class DashboardTests(unittest.TestCase):
         )
         self.assertIn("function bestBuilderStateMatch(query)", app_js)
         self.assertIn("function findAndCenterBuilderState()", app_js)
-        self.assertIn("function autoOrganizeBuilderActionLayout()", app_js)
-        self.assertIn(
-            "const usableCanvasWidth = Math.max(540, "
-            "canvas.clientWidth - 128);",
-            app_js,
-        )
-        self.assertIn(
-            "usableCanvasWidth / BUILDER_ACTION_MIN_ZOOM",
-            app_js,
-        )
-        self.assertIn(
-            "x + width > maximumRowWidth",
-            app_js,
-        )
+        self.assertIn("function autoOrganizeBuilderActionLayout({ announce = true } = {})", app_js)
+        self.assertIn("function ensureInitialBuilderActionLayout()", app_js)
+        self.assertIn("autoOrganizeBuilderActionLayout({ announce: false });", app_js)
+        self.assertIn("builderActionInitialLayoutProfileId", app_js)
+        self.assertIn("builderActionInitialLayoutActivation", app_js)
+        self.assertIn("builderActionInitialLayoutCompletedActivation", app_js)
+        self.assertIn("state.builderActionInitialLayoutActivation += 1;", app_js)
+        self.assertIn("initial-layout-pending", app_js)
+        self.assertIn('target.setAttribute("aria-busy", String(needsInitialLayout));', app_js)
+        self.assertIn(".builder-state-sections.initial-layout-pending", styles)
+        self.assertIn("const BUILDER_ACTION_LAYOUT_MAX_GROUPS = 3;", app_js)
+        self.assertIn("const BUILDER_ACTION_LAYOUT_MOBILE_MAX_GROUPS = 1;", app_js)
+        self.assertIn("const groupsPerRow = window.matchMedia(\"(max-width: 720px)\").matches", app_js)
+        self.assertIn("groupsInRow === groupsPerRow || x + width > maximumRowRight", app_js)
+        self.assertIn("(canvas?.clientWidth || 0) - BUILDER_ACTION_SECTION_ORIGIN_X", app_js)
+        self.assertIn("y += rowHeight + BUILDER_ACTION_SECTION_GUTTER_Y;", app_js)
+        self.assertNotIn("usableCanvasWidth / BUILDER_ACTION_MIN_ZOOM", app_js)
         self.assertIn(
             '$("builder-find-state")?.addEventListener('
             '"click", findAndCenterBuilderState);',
@@ -1786,6 +1890,14 @@ class DashboardTests(unittest.TestCase):
         self.assertIn(
             '$("builder-auto-organize")?.addEventListener('
             '"click", autoOrganizeBuilderActionLayout);',
+            app_js,
+        )
+        self.assertIn(
+            '$("toggle-builder-state-navigation").addEventListener("click", () => {',
+            app_js,
+        )
+        self.assertNotIn(
+            '$("builder-action-canvas-help").hidden = !navigationExpanded;',
             app_js,
         )
         self.assertIn(

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
 import {
   BrowserUiTimeoutError,
@@ -171,4 +173,51 @@ test("destructive action has a deadline rather than a fixed-count loop", async (
     }),
     BrowserUiTimeoutError,
   );
+});
+
+async function actionColumnStarts(actionCount, { mobile = false } = {}) {
+  const source = await readFile(
+    new URL("../src/game_script_dev/dashboard/static/app.js", import.meta.url),
+    "utf8",
+  );
+  const helper = source.match(
+    /function builderActionUsesSingleColumn\(\) \{[\s\S]*?\n\}\n\nfunction builderActionColumnStarts\(actionCount\) \{[\s\S]*?\n\}/,
+  )?.[0];
+  const actionLimit = source.match(
+    /const BUILDER_ACTIONS_PER_DESKTOP_COLUMN = \d+;/,
+  )?.[0];
+  assert.ok(helper, "the Action column layout helpers are present in app.js");
+  assert.ok(actionLimit, "the desktop Action column limit is present in app.js");
+  const context = {
+    window: { matchMedia: () => ({ matches: mobile }) },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${actionLimit}\n${helper}\nthis.starts = builderActionColumnStarts;`,
+    context,
+  );
+  return Array.from(context.starts(actionCount));
+}
+
+test("State Actions uses five-card desktop columns and one ordered mobile column", async () => {
+  await Promise.all([
+    [0, [0]],
+    [1, [0]],
+    [5, [0]],
+    [6, [0, 5]],
+    [10, [0, 5]],
+    [11, [0, 5, 10]],
+    [15, [0, 5, 10]],
+    [16, [0, 5, 10, 15]],
+    [27, [0, 5, 10, 15, 20, 25]],
+  ].map(async ([count, expected]) => {
+    const starts = await actionColumnStarts(count);
+    assert.deepEqual(starts, expected);
+    const lengths = starts.map((start, index) => (
+      (starts[index + 1] ?? count) - start
+    ));
+    assert.ok(lengths.every((length) => length <= 5));
+    assert.equal(lengths.reduce((total, length) => total + length, 0), count);
+  }));
+  assert.deepEqual(await actionColumnStarts(16, { mobile: true }), [0]);
 });
