@@ -259,7 +259,9 @@ class FishingCoreProfileTests(unittest.TestCase):
             event_handler=on_event,
             stop_requested=stop_requested,
         ).run()
-        states = [str(event["state"]) for event in events if event["event"] == "state_started"]
+        states = [
+            str(event["state"]) for event in events if event["event"] == "state_started"
+        ]
         return result, states, inputs, events
 
 
