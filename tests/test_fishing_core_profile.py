@@ -13,7 +13,7 @@ from game_script_dev.profile_loader import load_profile
 from game_script_dev.runtime import RuntimeContext
 from game_script_dev.schema import Anchor, ProfileValidationError, validate_profile
 
-PACK_DIR = Path("profiles/neverness_to_everness/fishing_core")
+PACK_DIR = Path("profiles/neverness_the_everness/fishing_core")
 PROFILE_PATH = PACK_DIR / "profile.yaml"
 
 
@@ -259,11 +259,7 @@ class FishingCoreProfileTests(unittest.TestCase):
             event_handler=on_event,
             stop_requested=stop_requested,
         ).run()
-        states = [
-            str(event["state"])
-            for event in events
-            if event["event"] == "state_started"
-        ]
+        states = [str(event["state"]) for event in events if event["event"] == "state_started"]
         return result, states, inputs, events
 
 
