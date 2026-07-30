@@ -1,0 +1,16 @@
+version: 1
+name: Invalid Unbounded Fishing Control Example
+target:
+  window_title_contains: Safe Placeholder Target
+window:
+  resolution:
+    width: 1280
+    height: 720
+initial_state: control
+states:
+  control:
+    actions:
+      - type: wait
+        seconds: 0.1
+    on_success: control
+    on_failure: control
