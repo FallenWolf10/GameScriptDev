@@ -1,0 +1,238 @@
+version: 1
+name: Neverness to Everness Fishing Core
+
+profile_pack:
+  game: Neverness to Everness
+  game_mode: Fishing Core
+  detection_strategy: template_matching
+  known_limitations:
+    - Safe placeholder templates only; no real-game image evidence is included.
+    - Target identity and 1280x720 geometry are assumptions and have not been live-validated.
+    - Left/right relation templates must be replaced by independently captured, mutually exclusive evidence before live use.
+    - The bounded controller makes at most three observation cycles and does not navigate, buy bait, sell items, or restart fishing.
+  compatibility:
+    target_identity: false
+    supported_resolution: false
+    required_assets: false
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: true
+    known_limitations: true
+    successful_validation_or_dry_run: true
+
+target:
+  window_title_contains: Neverness to Everness
+  input_mode: background_window_messages
+
+window:
+  resolution:
+    width: 1280
+    height: 720
+    policy: verify_only
+
+execution:
+  default_timeout_seconds: 1
+  max_retries: 2
+  allow_infinite_run: false
+  manual_stop_is_dry_run_success: false
+  skip_dry_run_requirement: false
+
+initial_state: fishing_option_confirmed
+
+states:
+  fishing_option_confirmed:
+    required_anchors:
+      - name: fishing_option_confirmed
+        type: template
+        asset: assets/fishing_option_confirmed.ppm
+    actions:
+      - type: log
+        message: Fishing option confirmed; entering the finite Fishing Core flow.
+    on_success: preparation_screen_confirmed
+    on_failure: confirmation_failed
+
+  preparation_screen_confirmed:
+    required_anchors:
+      - name: preparation_screen_confirmed
+        type: template
+        asset: assets/preparation_screen_confirmed.ppm
+    actions:
+      - type: log
+        message: Preparation screen confirmed.
+    on_success: fishing_minigame_confirmed
+    on_failure: confirmation_failed
+
+  fishing_minigame_confirmed:
+    required_anchors:
+      - name: fishing_minigame_visible
+        type: template
+        asset: assets/fishing_minigame_visible.ppm
+    actions:
+      - type: log
+        message: Fishing mini-game confirmed; starting three bounded observation cycles.
+    on_success: control_01
+    on_failure: confirmation_failed
+
+  control_01:
+    required_anchors:
+      - name: fishing_minigame_visible
+        type: template
+        asset: assets/fishing_minigame_visible.ppm
+    actions:
+      - type: wait
+        seconds: 0.12
+    on_success: caught_01
+    on_failure: caught_01
+
+  caught_01:
+    required_anchors:
+      - name: caught_outcome
+        type: template
+        asset: assets/caught_outcome.ppm
+    terminal: true
+    result: caught
+    on_failure: escaped_01
+
+  escaped_01:
+    required_anchors:
+      - name: escaped_outcome
+        type: template
+        asset: assets/escaped_outcome.ppm
+    terminal: true
+    result: escaped
+    on_failure: lost_01
+
+  lost_01:
+    required_anchors:
+      - name: lost_state_outcome
+        type: template
+        asset: assets/lost_state_outcome.ppm
+    terminal: true
+    result: lost_state
+    on_failure: control_02
+
+  control_02:
+    required_anchors:
+      - name: fishing_minigame_visible
+        type: template
+        asset: assets/fishing_minigame_visible.ppm
+    actions:
+      - type: wait
+        seconds: 0.12
+    on_success: caught_02
+    on_failure: caught_02
+
+  caught_02:
+    required_anchors:
+      - name: caught_outcome
+        type: template
+        asset: assets/caught_outcome.ppm
+    terminal: true
+    result: caught
+    on_failure: escaped_02
+
+  escaped_02:
+    required_anchors:
+      - name: escaped_outcome
+        type: template
+        asset: assets/escaped_outcome.ppm
+    terminal: true
+    result: escaped
+    on_failure: lost_02
+
+  lost_02:
+    required_anchors:
+      - name: lost_state_outcome
+        type: template
+        asset: assets/lost_state_outcome.ppm
+    terminal: true
+    result: lost_state
+    on_failure: control_03
+
+  control_03:
+    required_anchors:
+      - name: fishing_minigame_visible
+        type: template
+        asset: assets/fishing_minigame_visible.ppm
+    actions:
+      - type: wait
+        seconds: 0.12
+    on_success: caught_03
+    on_failure: caught_03
+
+  caught_03:
+    required_anchors:
+      - name: caught_outcome
+        type: template
+        asset: assets/caught_outcome.ppm
+    terminal: true
+    result: caught
+    on_failure: escaped_03
+
+  escaped_03:
+    required_anchors:
+      - name: escaped_outcome
+        type: template
+        asset: assets/escaped_outcome.ppm
+    terminal: true
+    result: escaped
+    on_failure: lost_03
+
+  lost_03:
+    required_anchors:
+      - name: lost_state_outcome
+        type: template
+        asset: assets/lost_state_outcome.ppm
+    terminal: true
+    result: lost_state
+    on_failure: control_exhausted
+
+  control_exhausted:
+    actions:
+      - type: log
+        message: Fishing control ended without a confirmed terminal outcome.
+    terminal: true
+    result: failed_control_timeout
+
+  confirmation_failed:
+    actions:
+      - type: log
+        message: A required pre-control fishing screen could not be confirmed.
+    terminal: true
+    result: failed_confirmation
+
+interruptions:
+  - name: cursor_left_of_dead_zone
+    required_anchors:
+      - name: fishing_minigame_visible
+        type: template
+        asset: assets/fishing_minigame_visible.ppm
+      - name: target_zone_visible
+        type: template
+        asset: assets/target_zone_visible.ppm
+      - name: cursor_left_of_dead_zone
+        type: template
+        asset: assets/cursor_left_of_dead_zone.ppm
+    recovery_actions:
+      - type: press_key
+        key: right
+        seconds: 0.08
+    max_retries: 8
+
+  - name: cursor_right_of_dead_zone
+    required_anchors:
+      - name: fishing_minigame_visible
+        type: template
+        asset: assets/fishing_minigame_visible.ppm
+      - name: target_zone_visible
+        type: template
+        asset: assets/target_zone_visible.ppm
+      - name: cursor_right_of_dead_zone
+        type: template
+        asset: assets/cursor_right_of_dead_zone.ppm
+    recovery_actions:
+      - type: press_key
+        key: left
+        seconds: 0.08
+    max_retries: 8
