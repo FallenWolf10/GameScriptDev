@@ -12,6 +12,15 @@
   complete and no further edits are expected, ask the user whether they want
   to commit and push the repository before moving on.
 
+## Distillation Safeguards
+
+- When distilling screenshots or other images from scripts or repositories,
+  store each final image artifact as PNG. Do not retain PPM, JPG, or another
+  format as the final artifact.
+- When distilling or accepting a profile, require at least one Action, such as
+  a log-message or click Action. If a profile has no Actions, explicitly report
+  that finding and remove the empty profile without waiting for approval.
+
 ## Recording-To-Profile Tasks
 
 When the task involves any of the following:
