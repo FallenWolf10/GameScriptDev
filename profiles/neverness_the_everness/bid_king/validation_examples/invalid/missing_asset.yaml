@@ -1,0 +1,28 @@
+version: 1
+name: Invalid Bid King Missing Asset
+
+target:
+  window_title_contains: SAFE PLACEHOLDER
+
+window:
+  resolution:
+    width: 1
+    height: 1
+    policy: ignore
+
+execution:
+  max_retries: 1
+  allow_infinite_run: false
+
+initial_state: home
+states:
+  home:
+    required_anchors:
+      - name: missing_placeholder
+        type: template
+        asset: assets/not_present.ppm
+    on_success: done
+    on_failure: done
+  done:
+    terminal: true
+    result: invalid_example_done

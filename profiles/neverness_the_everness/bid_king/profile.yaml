@@ -1,0 +1,343 @@
+version: 1
+name: Neverness to Everness Bid King Safety Model
+
+profile_pack:
+  game: Neverness to Everness
+  game_mode: Bid King Safety Model
+  detection_strategy: template_matching
+  known_limitations:
+    - All template assets are synthetic 2x2 PPM placeholders; no real-game image evidence is included.
+    - The 64x64 resolution and 1x1 click regions are synthetic authoring geometry, not target coordinates.
+    - Only the source default of one round is represented; arbitrary user counts from 1 through 9999 are unsupported.
+    - The bid return path is capped at two bid cycles as a conservative authoring bound, not a target fact.
+    - No source ROI, threshold, timing, target identity, input compatibility, or resolution evidence is retained.
+    - NOT LIVE VALIDATED; this pack is intentionally blocked from live readiness.
+  compatibility:
+    target_identity: false
+    supported_resolution: false
+    required_assets: false
+    full_state_graph: true
+    terminal_states: true
+    failure_transitions: true
+    interruption_recovery: false
+    known_limitations: true
+    successful_validation_or_dry_run: false
+
+target:
+  window_title_contains: SAFE PLACEHOLDER BID KING TARGET - DO NOT RUN
+  input_mode: background_window_messages
+
+window:
+  resolution:
+    width: 64
+    height: 64
+    policy: verify_only
+
+execution:
+  default_timeout_seconds: 1
+  max_retries: 1
+  allow_infinite_run: false
+  manual_stop_is_dry_run_success: false
+  skip_dry_run_requirement: false
+
+regions:
+  placeholder_start_click:
+    x: 1
+    y: 1
+    width: 1
+    height: 1
+  placeholder_confirmation_click:
+    x: 2
+    y: 2
+    width: 1
+    height: 1
+  placeholder_skip_click:
+    x: 3
+    y: 3
+    width: 1
+    height: 1
+  placeholder_bid_click:
+    x: 4
+    y: 4
+    width: 1
+    height: 1
+  placeholder_select_one_click:
+    x: 5
+    y: 5
+    width: 1
+    height: 1
+  placeholder_bid_confirm_click:
+    x: 6
+    y: 6
+    width: 1
+    height: 1
+  placeholder_exit_click:
+    x: 7
+    y: 7
+    width: 1
+    height: 1
+
+initial_state: entry
+
+states:
+  entry:
+    actions:
+      - type: log
+        message: Entering the isolated, finite Bid King safety model.
+    on_success: round_01
+    on_failure: failure
+
+  round_01:
+    actions:
+      - type: log
+        message: Executing exactly one round, matching the source default count of one.
+    on_success: start
+    on_failure: failure
+
+  start:
+    required_anchors:
+      - name: placeholder_start_visible
+        type: template
+        asset: assets/placeholder_start.ppm
+    actions:
+      - type: click_point
+        region: placeholder_start_click
+      - type: wait_for_state
+        state: confirmation
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: confirmation
+    on_failure: failure
+
+  confirmation:
+    required_anchors:
+      - name: placeholder_confirmation_visible
+        type: template
+        asset: assets/placeholder_confirmation.ppm
+    actions:
+      - type: click_point
+        region: placeholder_confirmation_click
+      - type: wait_for_state
+        state: ready
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: ready
+    on_failure: failure
+
+  ready:
+    required_anchors:
+      - name: placeholder_ready_visible
+        type: template
+        asset: assets/placeholder_ready.ppm
+    actions:
+      - type: log
+        message: Placeholder ready marker confirmed; beginning bounded priority checks.
+    on_success: bid_or_skip_01
+    on_failure: failure
+
+  bid_or_skip_01:
+    actions:
+      - type: wait
+        seconds: 0.1
+      - type: log
+        message: Priority check 1 of 2; test skip before bid.
+    on_success: skip_check_01
+    on_failure: failure
+
+  skip_check_01:
+    required_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    on_success: skip_01
+    on_failure: bid_check_01
+
+  skip_01:
+    required_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    actions:
+      - type: click_point
+        region: placeholder_skip_click
+      - type: wait_for_state
+        state: exit
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: exit
+    on_failure: failure
+
+  bid_check_01:
+    required_anchors:
+      - name: placeholder_bid_available
+        type: template
+        asset: assets/placeholder_bid.ppm
+    forbidden_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    on_success: bid_01
+    on_failure: failure
+
+  bid_01:
+    required_anchors:
+      - name: placeholder_bid_available
+        type: template
+        asset: assets/placeholder_bid.ppm
+    forbidden_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    actions:
+      - type: click_point
+        region: placeholder_bid_click
+      - type: wait_for_state
+        state: select_one_01
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: select_one_01
+    on_failure: failure
+
+  select_one_01:
+    required_anchors:
+      - name: placeholder_select_one_visible
+        type: template
+        asset: assets/placeholder_select_one.ppm
+    actions:
+      - type: click_point
+        region: placeholder_select_one_click
+      - type: wait_for_state
+        state: bid_confirm_01
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: bid_confirm_01
+    on_failure: failure
+
+  bid_confirm_01:
+    required_anchors:
+      - name: placeholder_bid_confirm_visible
+        type: template
+        asset: assets/placeholder_bid_confirm.ppm
+    actions:
+      - type: click_point
+        region: placeholder_bid_confirm_click
+      - type: wait
+        seconds: 0.1
+    on_success: bid_or_skip_02
+    on_failure: failure
+
+  bid_or_skip_02:
+    actions:
+      - type: wait
+        seconds: 0.1
+      - type: log
+        message: Priority check 2 of 2; test skip before the final bounded bid.
+    on_success: skip_check_02
+    on_failure: failure
+
+  skip_check_02:
+    required_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    on_success: skip_02
+    on_failure: bid_check_02
+
+  skip_02:
+    required_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    actions:
+      - type: click_point
+        region: placeholder_skip_click
+      - type: wait_for_state
+        state: exit
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: exit
+    on_failure: failure
+
+  bid_check_02:
+    required_anchors:
+      - name: placeholder_bid_available
+        type: template
+        asset: assets/placeholder_bid.ppm
+    forbidden_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    on_success: bid_02
+    on_failure: failure
+
+  bid_02:
+    required_anchors:
+      - name: placeholder_bid_available
+        type: template
+        asset: assets/placeholder_bid.ppm
+    forbidden_anchors:
+      - name: placeholder_skip_available
+        type: template
+        asset: assets/placeholder_skip.ppm
+    actions:
+      - type: click_point
+        region: placeholder_bid_click
+      - type: wait_for_state
+        state: select_one_02
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: select_one_02
+    on_failure: failure
+
+  select_one_02:
+    required_anchors:
+      - name: placeholder_select_one_visible
+        type: template
+        asset: assets/placeholder_select_one.ppm
+    actions:
+      - type: click_point
+        region: placeholder_select_one_click
+      - type: wait_for_state
+        state: bid_confirm_02
+        timeout_seconds: 1
+        poll_interval_seconds: 0.1
+    on_success: bid_confirm_02
+    on_failure: failure
+
+  bid_confirm_02:
+    required_anchors:
+      - name: placeholder_bid_confirm_visible
+        type: template
+        asset: assets/placeholder_bid_confirm.ppm
+    actions:
+      - type: click_point
+        region: placeholder_bid_confirm_click
+      - type: wait
+        seconds: 0.1
+    on_success: bid_limit_reached
+    on_failure: failure
+
+  exit:
+    required_anchors:
+      - name: placeholder_exit_visible
+        type: template
+        asset: assets/placeholder_exit.ppm
+    actions:
+      - type: click_point
+        region: placeholder_exit_click
+      - type: wait
+        seconds: 0.1
+    on_success: round_complete
+    on_failure: failure
+
+  round_complete:
+    terminal: true
+    result: completed
+
+  bid_limit_reached:
+    terminal: true
+    result: failed_bid_limit_reached
+
+  failure:
+    terminal: true
+    result: failed_detection_or_action

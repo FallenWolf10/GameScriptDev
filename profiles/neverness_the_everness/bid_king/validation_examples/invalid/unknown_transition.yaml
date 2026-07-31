@@ -1,0 +1,27 @@
+version: 1
+name: Invalid Bid King Unknown Transition
+
+target:
+  window_title_contains: SAFE PLACEHOLDER
+
+window:
+  resolution:
+    width: 1
+    height: 1
+    policy: ignore
+
+execution:
+  max_retries: 1
+  allow_infinite_run: false
+
+initial_state: home
+states:
+  home:
+    actions:
+      - type: log
+        message: This fixture references an unknown success state.
+    on_success: missing_state
+    on_failure: done
+  done:
+    terminal: true
+    result: invalid_example_done

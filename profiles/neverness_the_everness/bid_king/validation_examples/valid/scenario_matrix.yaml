@@ -1,0 +1,20 @@
+version: 1
+profile: ../../profile.yaml
+purpose: Safe adapter-driven expectations for the bounded Bid King model.
+safety_bounds:
+  rounds: 1
+  bid_cycles: 2
+  branch_priority: [skip, bid]
+scenarios:
+  skip_immediately:
+    expected_result: completed
+    expected_bid_cycles: 0
+  bid_then_skip:
+    expected_result: completed
+    expected_bid_cycles: 1
+  bid_limit:
+    expected_result: failed_bid_limit_reached
+    expected_bid_cycles: 2
+  detection_failure:
+    expected_result: failed_detection_or_action
+    expected_bid_cycles: 0
