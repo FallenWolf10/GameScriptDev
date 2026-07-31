@@ -3,9 +3,11 @@ from __future__ import annotations
 import runpy
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
+from game_script_dev.authoring import scaffold_profile_pack
 from game_script_dev.cli import main
 
 PROFILE_YAML = """
@@ -68,6 +70,71 @@ class CliEntrypointTests(unittest.TestCase):
             )
 
             self.assertEqual(result, 0)
+
+    def test_distill_repository_cli_writes_dry_run_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            workspace = root / "workspace"
+            source.mkdir()
+            workspace.mkdir()
+            report_path = workspace / "reports" / "distillation.json"
+
+            result = main(
+                [
+                    "distill-repository",
+                    "--source-repository",
+                    str(source),
+                    "--workspace",
+                    str(workspace),
+                    "--destination",
+                    "profiles/imported",
+                    "--report",
+                    str(report_path),
+                ]
+            )
+
+            self.assertEqual(result, 1)
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertFalse(payload["applied"])
+            self.assertEqual(payload["summary"]["failed"], 1)
+
+    def test_distill_repository_cli_preflights_report_before_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            workspace = root / "workspace"
+            workspace.mkdir()
+            scaffold_profile_pack(
+                source / "profiles" / "example" / "daily",
+                game="Example",
+                mode="Daily",
+            )
+            report_path = workspace / "reports" / "distillation.json"
+            report_path.parent.mkdir()
+            report_path.write_text("preserve report", encoding="utf-8")
+
+            result = main(
+                [
+                    "distill-repository",
+                    "--source-repository",
+                    str(source),
+                    "--workspace",
+                    str(workspace),
+                    "--destination",
+                    "profiles/imported",
+                    "--report",
+                    str(report_path),
+                    "--apply",
+                ]
+            )
+
+            self.assertEqual(result, 2)
+            self.assertFalse((workspace / "profiles" / "imported").exists())
+            self.assertEqual(
+                report_path.read_text(encoding="utf-8"),
+                "preserve report",
+            )
 
     def test_live_cli_can_relaunch_as_admin(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

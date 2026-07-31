@@ -169,7 +169,28 @@ game-script-dev check-pack --profile profiles/example_game/daily_task/profile.ya
 ```
 
 The check validates folder shape, profile schema, notes, compatibility evidence,
-and known limitations.
+known limitations, and the presence of at least one Action.
+
+Distill compatible declarative packs from an explicitly selected local
+repository in report-only mode first:
+
+```powershell
+game-script-dev distill-repository `
+  --source-repository C:\path\to\source-repository `
+  --workspace C:\path\to\GameScriptDev `
+  --destination profiles\imported `
+  --report reports\distillation-preview.json
+```
+
+Review the JSON report, then repeat with `--apply` and a new report path to
+write validated packs. The command never executes source scripts, follows
+symbolic links, writes outside the explicit workspace, overwrites an existing
+destination pack, or publishes Git changes. It imports declarative
+`profile.yaml` packs and their focused documentation and image evidence,
+converts every retained image to PNG, and updates matching profile asset
+references. Actionless profiles are reported and rejected before destination
+writes. Arbitrary source-code automation requires a separate reviewed
+translation into the declarative profile schema.
 
 For a full annotated `profile.yaml` example that includes every supported field,
 see [docs/PROFILE_TEMPLATE.md](docs/PROFILE_TEMPLATE.md).

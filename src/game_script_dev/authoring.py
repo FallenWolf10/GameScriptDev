@@ -45,6 +45,9 @@ states:
       - name: {initial_state}_title
         type: text
         text: {initial_state_label}
+    actions:
+      - type: log
+        message: Profile scaffold reached its initial state.
     terminal: true
     result: success
 """
@@ -143,6 +146,13 @@ def check_profile_pack(pack_dir: Path) -> PackCheckResult:
         try:
             profile = load_profile(profile_path)
             validate_profile(profile, pack_dir)
+            action_count = sum(len(state.actions) for state in profile.states.values())
+            action_count += sum(
+                len(interruption.recovery_actions)
+                for interruption in profile.interruptions
+            )
+            if action_count == 0:
+                errors.append("profile must contain at least one Action")
             if profile.profile_pack is None:
                 errors.append("profile_pack metadata is required")
             else:
@@ -158,7 +168,9 @@ def check_profile_pack(pack_dir: Path) -> PackCheckResult:
         except (ProfileLoadError, ProfileValidationError, ValueError) as error:
             errors.append(str(error))
 
-    return PackCheckResult(path=pack_dir, ok=not errors, errors=errors, warnings=warnings)
+    return PackCheckResult(
+        path=pack_dir, ok=not errors, errors=errors, warnings=warnings
+    )
 
 
 def _yaml_string(value: str) -> str:

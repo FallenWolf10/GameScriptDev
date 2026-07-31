@@ -5,6 +5,13 @@ import sys
 from pathlib import Path
 
 from game_script_dev.authoring import check_profile_pack, scaffold_profile_pack
+from game_script_dev.distillation import (
+    DistillationError,
+    distill_repository,
+    format_distillation_report,
+    validate_distillation_report_path,
+    write_distillation_report,
+)
 from game_script_dev.engine import Engine, LiveModeUnavailable
 from game_script_dev.logging_setup import create_run_logger
 from game_script_dev.operator_package import run_startup_checks
@@ -31,6 +38,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     check = subparsers.add_parser("check-pack")
     check.add_argument("--profile", required=True, type=Path)
+
+    distill = subparsers.add_parser("distill-repository")
+    distill.add_argument("--source-repository", required=True, type=Path)
+    distill.add_argument("--workspace", required=True, type=Path)
+    distill.add_argument("--destination", required=True, type=Path)
+    distill.add_argument("--report", required=True, type=Path)
+    distill.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write validated packs. Without this flag, only a report is produced.",
+    )
+    distill.add_argument(
+        "--overwrite-report",
+        action="store_true",
+        help="Replace an existing report file; destination packs are never overwritten.",
+    )
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--workspace", type=Path, default=Path.cwd())
@@ -82,6 +105,32 @@ def main(argv: list[str] | None = None) -> int:
         for message in result.warnings:
             print(f"WARNING: {message}")
         return 0 if result.ok else 1
+
+    if args.command == "distill-repository":
+        try:
+            validate_distillation_report_path(
+                args.workspace,
+                args.destination,
+                args.report,
+                overwrite=args.overwrite_report,
+            )
+            report = distill_repository(
+                args.source_repository,
+                args.workspace,
+                args.destination,
+                apply=args.apply,
+            )
+            report_path = write_distillation_report(
+                report,
+                args.report,
+                overwrite=args.overwrite_report,
+            )
+        except DistillationError as error:
+            print(f"Distillation error: {error}", file=sys.stderr)
+            return 2
+        print(format_distillation_report(report))
+        print(f"Report: {report_path}")
+        return 0 if report.ok else 1
 
     if args.command == "doctor":
         report = run_startup_checks(args.workspace, args.logs)
